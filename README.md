@@ -1,4 +1,4 @@
-# 🐱 KuroCat — 全状态键盘鼠标桌面萌猫 (macOS & Windows)
+# 🐱 KuroCat — 全状态键盘鼠标桌面萌猫 (macOS / Windows / Linux / 统信 UOS)
 
 <p align="center">
   <img src="assets/demo_typing.gif" width="265" alt="敲键盘打字"/>
@@ -8,7 +8,7 @@
 
 <p align="center">
   <b>超轻量级原生桌面宠物 · 打字 & 玩游戏全状态硬件级监听 · 2.5D 球面转头 · 捕猎大圆眼 · 双皮肤自由切换</b><br/>
-  Native macOS (Swift + AppKit/CoreGraphics + IOHIDManager) & Windows (C++17 + Win32/GDI+ + Raw Input)
+  Native macOS (Swift + CoreGraphics + IOHIDManager) · Windows (C++17 + GDI+ + Raw Input) · Linux / 统信 UOS (C++17 + GTK3/Cairo + XInput2/evdev)
 </p>
 
 ---
@@ -18,6 +18,7 @@
 - **🎮 打字 & 玩游戏全状态接收（真正全键无冲 NKRO）**
   - **macOS**：双层架构 `IOHIDManager`（内核 HID 硬件层）+ `CGEventTap`，不受中英文输入法干扰，完整支持游戏里长按 `WASD`、组合快捷键、单独修饰键（`⌘ / ⇧ / ⌥ / ⌃ / Fn`）、方向键与 `F1–F12`。
   - **Windows**：原生 `Raw Input API (RIDEV_INPUTSINK)` 硬件扫描码监听，打字与 DirectX/Vulkan 游戏内按键、鼠标锁定微动均可全局捕获。
+  - **Linux & 统信 UOS**：双层 `XInput2 (XI_RawKeyPress/Motion)` + 内核 `evdev (/dev/input/event*)`，**在统信 UOS / Deepin / Ubuntu X11 桌面下双击即用、免 sudo 即可全局监听打字与游戏按键**；Wayland 下加入 `input` 组即可开启硬件级全状态监听。
 - **🌀 2.5D 球面转头 & 真实面向视角**
   - 采用 Live2D 同款球面投影算法，猫头、双耳、双眼与胡须随鼠标光标产生真实的 2.5D 透视转头与视差；键盘与鼠标 180° 朝向小猫摆放，玩游戏时左手键盘、右手鼠标自然不交叉。
 - **⚡ 捕猎大圆眼模式**
@@ -70,26 +71,42 @@ cd windows
 cmake -B build && cmake --build build --config Release
 ```
 
+### 🐧 Linux & 统信 UOS / 银河麒麟 (x86_64 & ARM64)
+支持 **Ubuntu 20.04+ / Debian 11+ / Deepin / 统信 UOS（x86_64 & ARM64 飞腾/鲲鹏）/ 银河麒麟 / Arch / Fedora**：
+
+1. **统信 UOS / Deepin / Ubuntu / Debian（推荐直接装 `.deb`）**：
+   - 下载对应架构安装包：`KuroCat-Linux-amd64.deb`（Intel/AMD/兆芯/海光）或 `KuroCat-Linux-arm64.deb`（飞腾/鲲鹏/树莓派等 ARM64）。
+   - 统信 UOS 直接**双击 `.deb` 用软件包安装器安装**，或终端执行：
+     ```bash
+     sudo apt install ./KuroCat-Linux-amd64.deb
+     ```
+   - 安装后在开始菜单搜索 **KuroCat** 或终端输入 `kurocat` 启动。**统信 UOS 默认 X11 桌面开箱即用，无需额外权限即可全局监听打字和游戏！**
+2. **其他 Linux 发行版（Arch / Fedora 等）**：
+   - 下载 `KuroCat-Linux-x86_64.tar.gz` 或 `KuroCat-Linux-arm64.tar.gz` 解压直接运行 `./kurocat`。
+   - 若使用纯 **Wayland** 会话，执行一次 `sudo usermod -aG input $USER` 并重新登录即可启用 `evdev` 内核级全局监听。
+3. **龙芯（LoongArch）或老版本 UOS 本地源码编译**：
+   ```bash
+   sudo apt install g++ pkg-config libgtk-3-dev libcairo2-dev libx11-dev libxi-dev
+   cd linux && chmod +x build.sh build_deb.sh
+   ./build.sh        # 编译可执行文件
+   ./build_deb.sh    # 一键打成 .deb 安装包
+   ```
+
 ---
 
 ## 📁 项目结构
 
 ```text
 KuroCat/
-├── Sources/                   # macOS 原生 Swift 源码 (AppKit + CoreGraphics + IOHIDManager)
-├── Resources/Info.plist       # macOS Bundle 配置
-├── build.sh                   # macOS 一键编译脚本
-├── windows/
-│   ├── src/
-│   │   ├── KeyMap.hpp         # 65% 朝猫键位映射 & Windows 硬件扫描码表
-│   │   ├── InputEngine.hpp    # Windows Raw Input API 全状态键盘/鼠标引擎
-│   │   ├── CatPhysics.hpp     # 60fps 弹簧物理、2.5D 转头、捕猎大圆眼、3 键用脚按
-│   │   ├── CatRenderer.hpp    # GDI+ 32-bit 透明抗锯齿矢量渲染器（黑猫 + 暹罗）
-│   │   └── main.cpp           # Win32 LayeredWindow、智能穿透、托盘菜单、注册表配置
-│   ├── app.manifest           # Per-Monitor V2 高分屏 DPI 适配
-│   ├── build.bat              # Windows 一键编译脚本
-│   └── CMakeLists.txt
-└── .github/workflows/build.yml # macOS & Windows 双平台自动构建与发版工作流
+├── Sources/                   # macOS 原生 Swift 源码 (Apple Silicon + Intel 通用)
+├── Resources/                 # macOS Info.plist & AppIcon.icns
+├── build.sh                   # macOS 一键通用二进制编译脚本
+├── windows/                   # Windows 原生 C++17 (Win32 + GDI+ + Raw Input)
+├── linux/                     # Linux & 统信 UOS 原生 C++17 (GTK3 + Cairo + XInput2 + evdev)
+│   ├── src/                   # KeyMap / InputEngine / CatPhysics / CatRenderer / main.cpp
+│   ├── build.sh               # 本地编译脚本
+│   └── build_deb.sh           # 一键打包 Debian / 统信 UOS .deb 安装包
+└── .github/workflows/build.yml # macOS + Windows + Linux (x86_64 & arm64) 全平台自动发版
 ```
 
 ---
