@@ -430,11 +430,15 @@ private:
             g.SetClip(&path);
 
             LinearGradientBrush bodyGrad(
-                PointF(seatX, headCenter.y - 34.0f),
-                PointF(seatX, seatY + 18.0f),
+                PointF(seatX, headCenter.y - 54.0f),
+                PointF(seatX, seatY + 38.0f),
                 siameseCream(),
                 siameseLatte()
             );
+            bodyGrad.SetWrapMode(WrapModeTileFlipXY);
+            Color bodyCols[4] = { siameseCream(), siameseCream(), siameseLatte(), siameseLatte() };
+            REAL bodyPos[4] = { 0.0f, 0.22f, 0.80f, 1.0f };
+            bodyGrad.SetInterpolationColors(bodyCols, bodyPos, 4);
             g.FillPath(&bodyGrad, &path);
 
             // 2.5D Rotating Seal-Point "挖煤" Face Mask!
@@ -657,10 +661,14 @@ private:
         if (coat == CatCoatTheme::Siamese) {
             GraphicsPath lp;
             addRoundedRect(lp, bottom.x - 7.5f, top.y, 15.0f, bottom.y - top.y + 1.0f, 6.5f);
-            LinearGradientBrush grad(PointF(top.x, top.y), PointF(bottom.x, bottom.y + 2.0f), siameseCream(0), siamesePoint(255));
-            Color cols[3] = { siameseCream(0), siameseMocha(190), siamesePoint(255) };
-            REAL pos[3] = { 0.0f, 0.52f, 1.0f };
-            grad.SetInterpolationColors(cols, pos, 3);
+            float pad = 10.0f;
+            float span = std::max(1.0f, (bottom.y + 2.0f) - top.y);
+            float total = span + pad * 2.0f;
+            LinearGradientBrush grad(PointF(bottom.x, top.y - pad), PointF(bottom.x, bottom.y + 2.0f + pad), siameseCream(0), siamesePoint(255));
+            grad.SetWrapMode(WrapModeTileFlipXY);
+            Color cols[5] = { siameseCream(0), siameseCream(0), siameseMocha(190), siamesePoint(255), siamesePoint(255) };
+            REAL pos[5] = { 0.0f, pad / total, (pad + span * 0.52f) / total, (pad + span * 0.85f) / total, 1.0f };
+            grad.SetInterpolationColors(cols, pos, 5);
             g.FillPath(&grad, &lp);
         }
 
@@ -708,10 +716,40 @@ private:
             g.FillPath(&b, &limbPath);
             g.FillEllipse(&b, pawRect);
         } else {
-            LinearGradientBrush grad(PointF(start.x, start.y), PointF(end.x, end.y), siameseCream(0), siamesePoint(255));
-            Color cols[4] = { siameseCream(0), siameseCream(255), siameseMocha(255), siamesePoint(255) };
-            REAL pos[4] = { 0.0f, 0.16f, 0.48f, 1.0f };
-            grad.SetInterpolationColors(cols, pos, 4);
+            // Pad gradient endpoints beyond limb geometry + use WrapModeTileFlipXY so GDI+
+            // NEVER wraps t < 0 shoulder corners around to t = 1.0 dark espresso!
+            float dx = end.x - start.x;
+            float dy = end.y - start.y;
+            float dist = std::hypot(dx, dy);
+            float ux = (dist > 1.0f) ? (dx / dist) : 0.0f;
+            float uy = (dist > 1.0f) ? (dy / dist) : 1.0f;
+            dist = std::max(1.0f, dist);
+            float padStart = startW + 18.0f;
+            float padEnd = endW + 18.0f;
+            float totalLen = padStart + dist + padEnd;
+
+            PointF gStart(start.x - ux * padStart, start.y - uy * padStart);
+            PointF gEnd(end.x + ux * padEnd, end.y + uy * padEnd);
+
+            LinearGradientBrush grad(gStart, gEnd, siameseCream(0), siamesePoint(255));
+            grad.SetWrapMode(WrapModeTileFlipXY);
+            Color cols[6] = {
+                siameseCream(0),
+                siameseCream(0),
+                siameseCream(255),
+                siameseMocha(255),
+                siamesePoint(255),
+                siamesePoint(255)
+            };
+            REAL pos[6] = {
+                0.0f,
+                padStart / totalLen,
+                (padStart + dist * 0.16f) / totalLen,
+                (padStart + dist * 0.48f) / totalLen,
+                (padStart + dist * 0.78f) / totalLen,
+                1.0f
+            };
+            grad.SetInterpolationColors(cols, pos, 6);
             g.FillPath(&grad, &limbPath);
 
             SolidBrush pawBrush(siamesePoint());
