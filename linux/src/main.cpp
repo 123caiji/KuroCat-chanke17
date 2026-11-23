@@ -16,7 +16,8 @@
 #include "CatPhysics.hpp"
 #include "CatRenderer.hpp"
 
-static constexpr const char* APP_VERSION = "1.3.0";
+static constexpr const char* APP_VERSION = "1.3.1";
+static constexpr const char* UPDATE_PAGE_URL = "https://kurocat-download.app.workbuddy.host/?sharecode=JVAABIVZ7L";
 
 struct LinuxApp {
     GtkWidget* window = nullptr;
@@ -212,30 +213,71 @@ static bool isSemVerNewer(const std::string& lhs, const std::string& rhs) {
     return false;
 }
 
+static std::string extractVersionFromHtml(const std::string& html) {
+    auto parseVerAt = [&](size_t pos) -> std::string {
+        if (pos >= html.size() || (html[pos] != 'v' && html[pos] != 'V')) return "";
+        size_t i = pos + 1;
+        int dots = 0;
+        std::string ver = "v";
+        while (i < html.size()) {
+            char c = html[i];
+            if (c >= '0' && c <= '9') { ver.push_back(c); }
+            else if (c == '.') { dots++; ver.push_back(c); }
+            else break;
+            i++;
+        }
+        return (dots >= 2 && ver.size() > 5) ? ver : "";
+    };
+
+    size_t mPos = html.find("已发布");
+    if (mPos != std::string::npos) {
+        size_t searchStart = (mPos > 32) ? (mPos - 32) : 0;
+        for (size_t i = mPos; i > searchStart; --i) {
+            if (html[i - 1] == 'v' || html[i - 1] == 'V') {
+                std::string v = parseVerAt(i - 1);
+                if (!v.empty()) return v;
+            }
+        }
+    }
+    size_t vPos = html.find("版本 ");
+    if (vPos != std::string::npos) {
+        std::string v = parseVerAt(vPos + 7);
+        if (!v.empty()) return v;
+    }
+    return "";
+}
+
+static std::string fetchUrlBody(const char* url) {
+    std::string cmd = std::string("curl -fsSL --max-time 8 -A KuroCat/1.3.1 '") + url +
+        "' 2>/dev/null || wget -qO- --timeout=8 '" + url + "' 2>/dev/null";
+    std::string body;
+    if (FILE* fp = popen(cmd.c_str(), "r")) {
+        char buf[1024];
+        while (size_t n = std::fread(buf, 1, sizeof(buf), fp)) body.append(buf, n);
+        pclose(fp);
+    }
+    return body;
+}
+
 static void startAsyncUpdateCheck(bool manual, int delayMs = 0) {
     std::thread([manual, delayMs]() {
         if (delayMs > 0) usleep((useconds_t)delayMs * 1000);
         auto* res = new LinuxUpdateResult();
         res->manual = manual;
 
-        const char* cmd =
-            "curl -fsSL --max-time 8 -A KuroCat/1.3.0 "
-            "-H 'Accept: application/vnd.github+json' "
-            "'https://api.github.com/repos/chanke17/KuroCat/releases/latest' 2>/dev/null "
-            "|| wget -qO- --timeout=8 --header='Accept: application/vnd.github+json' "
-            "'https://api.github.com/repos/chanke17/KuroCat/releases/latest' 2>/dev/null";
-        std::string body;
-        if (FILE* fp = popen(cmd, "r")) {
-            char buf[1024];
-            while (size_t n = std::fread(buf, 1, sizeof(buf), fp)) body.append(buf, n);
-            pclose(fp);
-        }
+        std::string body = fetchUrlBody("https://kurocat-download.app.workbuddy.host/version.json?sharecode=JVAABIVZ7L");
         std::string tag = extractJsonField(body, "tag_name");
         std::string url = extractJsonField(body, "html_url");
+
+        if (tag.empty()) {
+            std::string html = fetchUrlBody(UPDATE_PAGE_URL);
+            tag = extractVersionFromHtml(html);
+        }
+
         if (!tag.empty()) {
             res->ok = true;
             res->latestTag = tag;
-            res->releaseUrl = url.empty() ? "https://github.com/chanke17/KuroCat/releases/latest" : url;
+            res->releaseUrl = url.empty() ? UPDATE_PAGE_URL : url;
             res->hasUpdate = isSemVerNewer(tag, APP_VERSION);
         }
 
@@ -249,7 +291,7 @@ static void startAsyncUpdateCheck(bool manual, int delayMs = 0) {
                     "发现 KuroCat 新版本 %s", r->latestTag.c_str());
                 gtk_message_dialog_format_secondary_text(
                     GTK_MESSAGE_DIALOG(dlg),
-                    "当前版本：v%s\n最新版本：%s\n\n是否前往 GitHub Releases 下载更新？",
+                    "当前版本：v%s\n最新版本：%s\n\n是否前往 KuroCat 下载页下载更新？",
                     APP_VERSION, r->latestTag.c_str());
                 int resp = gtk_dialog_run(GTK_DIALOG(dlg));
                 gtk_widget_destroy(dlg);
@@ -263,7 +305,7 @@ static void startAsyncUpdateCheck(bool manual, int delayMs = 0) {
                     "%s", r->ok ? "已是最新版本" : "检查更新失败");
                 gtk_message_dialog_format_secondary_text(
                     GTK_MESSAGE_DIALOG(dlg),
-                    "%s", r->ok ? "当前版本已是最新版本。" : "无法连接到 GitHub，请稍后重试或检查网络连接。");
+                    "%s", r->ok ? "当前版本已是最新版本。" : "无法连接到更新服务器，请稍后重试或检查网络连接。");
                 gtk_dialog_run(GTK_DIALOG(dlg));
                 gtk_widget_destroy(dlg);
             }
@@ -480,7 +522,7 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
         std::string lbl = "🆕 发现新版本 " + app.availableUpdateVersion + " (点击更新)";
         addAction(lbl.c_str(), G_CALLBACK(+[](GtkMenuItem*, gpointer) {
             std::string url = g_app->availableUpdateUrl.empty()
-                ? "https://github.com/chanke17/KuroCat/releases/latest"
+                ? UPDATE_PAGE_URL
                 : g_app->availableUpdateUrl;
             openUrlInBrowser(url);
         }));

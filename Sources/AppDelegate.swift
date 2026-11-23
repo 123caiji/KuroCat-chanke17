@@ -11,7 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var availableUpdateURL: URL?
 
     private var currentAppVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.0"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.1"
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -423,47 +423,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.terminate(nil)
     }
 
-    // MARK: - Auto Update Checker (GitHub Releases)
+    // MARK: - Auto Update Checker (WorkBuddy Download Mirror)
+
+    private static let updatePageURLString = "https://kurocat-download.app.workbuddy.host/?sharecode=JVAABIVZ7L"
+    private static let updateVersionJSONURLString = "https://kurocat-download.app.workbuddy.host/version.json?sharecode=JVAABIVZ7L"
 
     @objc private func manualCheckForUpdates() {
         checkForUpdates(manual: true)
     }
 
     @objc private func openUpdateDownload() {
-        let fallback = URL(string: "https://github.com/chanke17/KuroCat/releases/latest")!
+        let fallback = URL(string: Self.updatePageURLString)!
         NSWorkspace.shared.open(availableUpdateURL ?? fallback)
     }
 
-    private func checkForUpdates(manual: Bool) {
-        guard let url = URL(string: "https://api.github.com/repos/chanke17/KuroCat/releases/latest") else { return }
+    private func parseUpdateInfo(from data: Data) -> (tag: String, url: URL?)? {
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let tagName = json["tag_name"] as? String, !tagName.isEmpty {
+            let urlString = (json["html_url"] as? String) ?? Self.updatePageURLString
+            return (tagName, URL(string: urlString))
+        }
+        if let html = String(data: data, encoding: .utf8) {
+            let patterns = [
+                #"v(\d+\.\d+\.\d+)\s*已发布"#,
+                #"版本\s*v(\d+\.\d+\.\d+)"#
+            ]
+            for pattern in patterns {
+                if let regex = try? NSRegularExpression(pattern: pattern),
+                   let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
+                   let r = Range(match.range(at: 1), in: html) {
+                    return ("v" + String(html[r]), URL(string: Self.updatePageURLString))
+                }
+            }
+        }
+        return nil
+    }
+
+    private func fetchUpdateEndpoint(_ urlString: String, completion: @escaping ((tag: String, url: URL?)?) -> Void) {
+        guard let url = URL(string: urlString) else {
+            completion(nil)
+            return
+        }
         var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
         req.setValue("KuroCat/\(currentAppVersion)", forHTTPHeaderField: "User-Agent")
-        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
 
         URLSession.shared.dataTask(with: req) { [weak self] data, _, error in
             guard let self else { return }
-            DispatchQueue.main.async {
-                guard error == nil, let data,
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let tagName = json["tag_name"] as? String else {
-                    if manual {
-                        self.showInfoAlert(title: "检查更新失败", message: "无法连接到 GitHub，请稍后重试或检查网络连接。")
+            guard error == nil, let data, let parsed = self.parseUpdateInfo(from: data) else {
+                completion(nil)
+                return
+            }
+            completion(parsed)
+        }.resume()
+    }
+
+    private func checkForUpdates(manual: Bool) {
+        fetchUpdateEndpoint(Self.updateVersionJSONURLString) { [weak self] primary in
+            guard let self else { return }
+            if let info = primary {
+                DispatchQueue.main.async { self.handleUpdateResult(info, manual: manual) }
+                return
+            }
+            self.fetchUpdateEndpoint(Self.updatePageURLString) { [weak self] fallback in
+                guard let self else { return }
+                DispatchQueue.main.async {
+                    if let info = fallback {
+                        self.handleUpdateResult(info, manual: manual)
+                    } else if manual {
+                        self.showInfoAlert(title: "检查更新失败", message: "无法连接到更新服务器，请稍后重试或检查网络连接。")
                     }
-                    return
-                }
-
-                let releaseURLString = (json["html_url"] as? String) ?? "https://github.com/chanke17/KuroCat/releases/latest"
-                let releaseURL = URL(string: releaseURLString)
-
-                if self.isVersion(tagName, newerThan: self.currentAppVersion) {
-                    self.availableUpdateVersion = tagName
-                    self.availableUpdateURL = releaseURL
-                    self.promptUpdateAvailable(latestTag: tagName, releaseURL: releaseURL)
-                } else if manual {
-                    self.showInfoAlert(title: "已是最新版本", message: "当前版本 v\(self.currentAppVersion) 已是最新版本。")
                 }
             }
-        }.resume()
+        }
+    }
+
+    private func handleUpdateResult(_ info: (tag: String, url: URL?), manual: Bool) {
+        if isVersion(info.tag, newerThan: currentAppVersion) {
+            availableUpdateVersion = info.tag
+            availableUpdateURL = info.url
+            promptUpdateAvailable(latestTag: info.tag, releaseURL: info.url)
+        } else if manual {
+            showInfoAlert(title: "已是最新版本", message: "当前版本 v\(currentAppVersion) 已是最新版本。")
+        }
     }
 
     private func isVersion(_ lhs: String, newerThan rhs: String) -> Bool {
@@ -487,11 +528,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let alert = NSAlert()
         alert.alertStyle = .informational
         alert.messageText = "发现 KuroCat 新版本 \(latestTag)"
-        alert.informativeText = "当前版本：v\(currentAppVersion)\n最新版本：\(latestTag)\n\n点击「前往更新」打开 GitHub Releases 下载最新版本。"
+        alert.informativeText = "当前版本：v\(currentAppVersion)\n最新版本：\(latestTag)\n\n点击「前往更新」打开 KuroCat 下载页下载最新版本。"
         alert.addButton(withTitle: "前往更新")
         alert.addButton(withTitle: "稍后再说")
         if alert.runModal() == .alertFirstButtonReturn {
-            let fallback = URL(string: "https://github.com/chanke17/KuroCat/releases/latest")!
+            let fallback = URL(string: Self.updatePageURLString)!
             NSWorkspace.shared.open(releaseURL ?? fallback)
         }
     }
