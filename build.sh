@@ -85,23 +85,38 @@ shutil.rmtree(iconset)
 PYEOF
 fi
 
-swiftc \
-    -swift-version 5 \
-    -O \
-    -target arm64-apple-macos13.0 \
-    -framework AppKit \
-    -framework CoreGraphics \
-    -framework QuartzCore \
-    -framework IOKit \
-    -framework ApplicationServices \
-    "$ROOT/Sources/KeyMap.swift" \
-    "$ROOT/Sources/InputEngine.swift" \
-    "$ROOT/Sources/CatPhysics.swift" \
-    "$ROOT/Sources/CatRenderer.swift" \
-    "$ROOT/Sources/OverlayWindow.swift" \
-    "$ROOT/Sources/AppDelegate.swift" \
-    "$ROOT/Sources/main.swift" \
-    -o "$MACOS_DIR/$APP_NAME"
+SWIFT_SOURCES=(
+    "$ROOT/Sources/KeyMap.swift"
+    "$ROOT/Sources/InputEngine.swift"
+    "$ROOT/Sources/CatPhysics.swift"
+    "$ROOT/Sources/CatRenderer.swift"
+    "$ROOT/Sources/OverlayWindow.swift"
+    "$ROOT/Sources/AppDelegate.swift"
+    "$ROOT/Sources/main.swift"
+)
+
+COMMON_FLAGS=(
+    -swift-version 5
+    -O
+    -framework AppKit
+    -framework CoreGraphics
+    -framework QuartzCore
+    -framework IOKit
+    -framework ApplicationServices
+)
+
+TMP_BIN_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_BIN_DIR"' EXIT
+
+echo "==> Compiling arm64 slice..."
+swiftc "${COMMON_FLAGS[@]}" -target arm64-apple-macos13.0 "${SWIFT_SOURCES[@]}" -o "$TMP_BIN_DIR/${APP_NAME}_arm64"
+
+echo "==> Compiling x86_64 (Intel) slice..."
+swiftc "${COMMON_FLAGS[@]}" -target x86_64-apple-macos13.0 "${SWIFT_SOURCES[@]}" -o "$TMP_BIN_DIR/${APP_NAME}_x86_64"
+
+echo "==> Creating Universal binary (arm64 + x86_64)..."
+lipo -create "$TMP_BIN_DIR/${APP_NAME}_arm64" "$TMP_BIN_DIR/${APP_NAME}_x86_64" -output "$MACOS_DIR/$APP_NAME"
+lipo -info "$MACOS_DIR/$APP_NAME"
 
 # Prefer a real local Apple Development certificate so macOS TCC preserves Input Monitoring
 # permission permanently across future rebuilds! Fallback to ad-hoc only if none exists.

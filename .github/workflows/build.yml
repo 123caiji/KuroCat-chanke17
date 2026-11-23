@@ -42,18 +42,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build KuroCat.app
+      - name: Build Universal KuroCat.app (Apple Silicon + Intel)
         run: |
           chmod +x build.sh
           ./build.sh
-          ditto -c -k --sequesterRsrc --keepParent KuroCat.app KuroCat-macOS-arm64.zip
-          ls -lh KuroCat-macOS-arm64.zip
+          ditto -c -k --sequesterRsrc --keepParent KuroCat.app KuroCat-macOS-universal.zip
+          ls -lh KuroCat-macOS-universal.zip
 
-      - name: Upload macOS app artifact
+      - name: Upload macOS universal app artifact
         uses: actions/upload-artifact@v4
         with:
-          name: KuroCat-macOS-arm64
-          path: KuroCat-macOS-arm64.zip
+          name: KuroCat-macOS-universal
+          path: KuroCat-macOS-universal.zip
 
   release:
     needs: [ build-windows, build-macos ]
@@ -69,7 +69,7 @@ jobs:
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
-          name: KuroCat-macOS-arm64
+          name: KuroCat-macOS-universal
           path: dist
 
       - name: Rename Windows binary
@@ -81,4 +81,4 @@ jobs:
           generate_release_notes: true
           files: |
             dist/KuroCat-Windows-x64.exe
-            dist/KuroCat-macOS-arm64.zip
+            dist/KuroCat-macOS-universal.zip
