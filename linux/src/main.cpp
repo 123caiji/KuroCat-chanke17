@@ -2,8 +2,13 @@
 #include <gdk/gdk.h>
 #include <cairo.h>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <limits.h>
 #include <string>
 #include <algorithm>
+#include <unistd.h>
 #include "KeyMap.hpp"
 #include "InputEngine.hpp"
 #include "CatPhysics.hpp"
@@ -22,6 +27,7 @@ struct LinuxApp {
 
     bool isVisible = true;
     bool isDragging = false;
+    bool clickThroughTemporarilyUnlocked = false;
     double dragStartRootX = 0.0, dragStartRootY = 0.0;
     int dragStartWinX = 0, dragStartWinY = 0;
 
@@ -36,9 +42,59 @@ struct LinuxApp {
 
 static LinuxApp* g_app = nullptr;
 
+// MARK: - Launch at Login (Freedesktop XDG Autostart: Ubuntu/Debian/Deepin/统信 UOS/KDE/GNOME)
+
+static std::string getAutostartDir() {
+    const char* xdg = std::getenv("XDG_CONFIG_HOME");
+    if (xdg && xdg[0] != '\0') return std::string(xdg) + "/autostart";
+    const char* home = std::getenv("HOME");
+    return std::string(home ? home : "/tmp") + "/.config/autostart";
+}
+
+static std::string getAutostartFilePath() {
+    return getAutostartDir() + "/kurocat.desktop";
+}
+
+static std::string getSelfExePath() {
+    char buf[PATH_MAX] = {0};
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len > 0) {
+        buf[len] = '\0';
+        return std::string(buf);
+    }
+    return "kurocat";
+}
+
+static bool isAutoStartEnabled() {
+    return access(getAutostartFilePath().c_str(), F_OK) == 0;
+}
+
+static bool setAutoStartEnabled(bool enable) {
+    std::string path = getAutostartFilePath();
+    if (!enable) {
+        std::remove(path.c_str());
+        return true;
+    }
+    std::string dir = getAutostartDir();
+    g_mkdir_with_parents(dir.c_str(), 0755);
+    std::string exe = getSelfExePath();
+    std::ofstream f(path);
+    if (!f.is_open()) return false;
+    f << "[Desktop Entry]\n"
+      << "Type=Application\n"
+      << "Name=KuroCat\n"
+      << "Name[zh_CN]=KuroCat 黑猫桌宠\n"
+      << "Comment=Native desktop keyboard & mouse cat pet\n"
+      << "Exec=\"" << exe << "\"\n"
+      << "Icon=kurocat\n"
+      << "Terminal=false\n"
+      << "X-GNOME-Autostart-enabled=true\n";
+    return f.good();
+}
+
 static void updateInputShape(LinuxApp& app) {
     if (!app.window || !gtk_widget_get_realized(app.window)) return;
-    if (app.settings.fullClickThrough) {
+    if (app.settings.fullClickThrough && !app.clickThroughTemporarilyUnlocked) {
         cairo_region_t* empty = cairo_region_create();
         gtk_widget_input_shape_combine_region(app.window, empty);
         cairo_region_destroy(empty);
@@ -160,7 +216,7 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
         else gtk_widget_hide(g_app->window);
     }));
 
-    addCheck("完全鼠标穿透 (游戏防误触)", app.settings.fullClickThrough, G_CALLBACK(+[](GtkCheckMenuItem* item, gpointer) {
+    addCheck("完全鼠标穿透 (按住 Alt 可临时右键/拖动)", app.settings.fullClickThrough, G_CALLBACK(+[](GtkCheckMenuItem* item, gpointer) {
         g_app->settings.fullClickThrough = gtk_check_menu_item_get_active(item);
         updateInputShape(*g_app);
         g_app->settings.save();
@@ -169,6 +225,10 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
     addCheck("窗口置顶显示", app.settings.alwaysOnTop, G_CALLBACK(+[](GtkCheckMenuItem* item, gpointer) {
         g_app->settings.alwaysOnTop = gtk_check_menu_item_get_active(item);
         applyWindowScaleAndPos(*g_app, false);
+    }));
+
+    addCheck("开机自动启动", isAutoStartEnabled(), G_CALLBACK(+[](GtkCheckMenuItem* item, gpointer) {
+        setAutoStartEnabled(gtk_check_menu_item_get_active(item));
     }));
 
     addSep();
@@ -317,7 +377,7 @@ static gboolean onButtonPress(GtkWidget*, GdkEventButton* evt, gpointer) {
         showPopupMenu(*g_app, evt);
         return TRUE;
     }
-    if (evt->button == 1 && !g_app->settings.fullClickThrough) {
+    if (evt->button == 1 && (!g_app->settings.fullClickThrough || g_app->clickThroughTemporarilyUnlocked)) {
         g_app->isDragging = true;
         g_app->dragStartRootX = evt->x_root;
         g_app->dragStartRootY = evt->y_root;
@@ -355,20 +415,37 @@ static gboolean onFrameTick(gpointer) {
     g_app->lastTickTime = now;
     if (dt <= 0.0f || dt > 0.2f) dt = 1.0f / 60.0f;
 
-    // Fallback GDK cursor query (for Wayland / non-X11)
+    // Fallback GDK cursor query (for Wayland / non-X11) + Alt-key hold check
     float fbX = 0.0f, fbY = 0.0f;
     bool hasFb = false;
+    bool gdkAltHeld = false;
     if (GdkDisplay* dpy = gdk_display_get_default()) {
         if (GdkSeat* seat = gdk_display_get_default_seat(dpy)) {
             if (GdkDevice* ptr = gdk_seat_get_pointer(seat)) {
                 gint gx = 0, gy = 0;
                 gdk_device_get_position(ptr, nullptr, &gx, &gy);
                 fbX = (float)gx; fbY = (float)gy; hasFb = true;
+                if (GdkWindow* gw = gtk_widget_get_window(g_app->window)) {
+                    GdkModifierType mask = (GdkModifierType)0;
+                    gdk_window_get_device_position(gw, ptr, nullptr, nullptr, &mask);
+                    if (mask & GDK_MOD1_MASK) gdkAltHeld = true;
+                }
             }
         }
     }
 
     g_app->input.pollAndDrain(dt, fbX, fbY, hasFb);
+
+    // Hold Alt to temporarily unlock Full Click-Through so the user can always right-click/drag!
+    bool altHeld = gdkAltHeld
+        || g_app->input.activeKeys.count(PhysicalKey::LeftOption) > 0
+        || g_app->input.activeKeys.count(PhysicalKey::RightOption) > 0;
+    if (altHeld != g_app->clickThroughTemporarilyUnlocked) {
+        g_app->clickThroughTemporarilyUnlocked = altHeld;
+        if (g_app->settings.fullClickThrough) {
+            updateInputShape(*g_app);
+        }
+    }
 
     if (g_app->demoActive) {
         static const PhysicalKey demoKeys[] = {
@@ -425,6 +502,10 @@ int main(int argc, char** argv) {
     LinuxApp app;
     g_app = &app;
     app.settings.load();
+    if (isAutoStartEnabled()) {
+        // Keep Exec path updated if user moved portable kurocat binary
+        setAutoStartEnabled(true);
+    }
 
     app.input.onKeyDown = [&](PhysicalKey k) { app.physics.triggerKeyDown(k, app.settings); };
     app.input.onMouseClick = [&](int btn, bool down) { app.physics.triggerMouseClick(btn, down); };

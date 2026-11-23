@@ -76,8 +76,9 @@ final class CatCanvasView: NSView {
             lastHoverCanvasPt = nil
         }
 
-        // Smart Click-Through logic
-        if CatSettings.shared.fullClickThrough {
+        // Smart Click-Through logic (hold Option ⌥ to temporarily unlock Full Click-Through!)
+        let optionHeld = NSEvent.modifierFlags.contains(.option)
+        if CatSettings.shared.fullClickThrough && !optionHeld {
             // Keep permission pill clickable only if permission isn't granted yet
             win.ignoresMouseEvents = (zone != .permissionPill)
             resetCursorIfNeeded()

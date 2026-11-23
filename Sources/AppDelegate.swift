@@ -39,6 +39,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         engine.start()
 
         setupStatusItem()
+        if isAutoStartEnabled() {
+            // Keep LaunchAgent path updated if user moved KuroCat.app into /Applications
+            _ = setAutoStartEnabled(true)
+        }
         startRenderLoop()
     }
 
@@ -119,7 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         visItem.target = self
         menu.addItem(visItem)
 
-        let clickThroughItem = NSMenuItem(title: "完全鼠标穿透 (游戏防误触)", action: #selector(toggleClickThrough), keyEquivalent: "")
+        let clickThroughItem = NSMenuItem(title: "完全鼠标穿透 (按住 ⌥Option 可临时右键/拖动)", action: #selector(toggleClickThrough), keyEquivalent: "")
         clickThroughItem.target = self
         clickThroughItem.state = settings.fullClickThrough ? .on : .off
         menu.addItem(clickThroughItem)
@@ -128,6 +132,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fullscreenItem.target = self
         fullscreenItem.state = settings.fullScreenOverlay ? .on : .off
         menu.addItem(fullscreenItem)
+
+        let autoStartItem = NSMenuItem(title: "开机自动启动", action: #selector(toggleAutoStart), keyEquivalent: "")
+        autoStartItem.target = self
+        autoStartItem.state = isAutoStartEnabled() ? .on : .off
+        menu.addItem(autoStartItem)
 
         menu.addItem(.separator())
 
@@ -253,6 +262,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleFullScreenOverlay() {
         CatSettings.shared.fullScreenOverlay.toggle()
         overlayWindow.applyWindowLevelAndBehavior()
+    }
+
+    // MARK: - Launch at Login (macOS LaunchAgent — works reliably for signed & ad-hoc builds)
+
+    private var launchAgentURL: URL {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
+        return dir.appendingPathComponent("com.chanke.kurocat.plist")
+    }
+
+    private func isAutoStartEnabled() -> Bool {
+        FileManager.default.fileExists(atPath: launchAgentURL.path)
+    }
+
+    @discardableResult
+    private func setAutoStartEnabled(_ enable: Bool) -> Bool {
+        let fm = FileManager.default
+        let url = launchAgentURL
+        if enable {
+            do {
+                try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                let appPath = Bundle.main.bundlePath
+                let plist: [String: Any] = [
+                    "Label": "com.chanke.kurocat",
+                    "ProgramArguments": ["/usr/bin/open", "-a", appPath],
+                    "RunAtLoad": true,
+                    "KeepAlive": false
+                ]
+                let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+                try data.write(to: url, options: .atomic)
+                return true
+            } catch {
+                return false
+            }
+        } else {
+            do {
+                if fm.fileExists(atPath: url.path) {
+                    try fm.removeItem(at: url)
+                }
+                return true
+            } catch {
+                return false
+            }
+        }
+    }
+
+    @objc private func toggleAutoStart() {
+        _ = setAutoStartEnabled(!isAutoStartEnabled())
     }
 
     @objc private func toggleKeyBadges() {

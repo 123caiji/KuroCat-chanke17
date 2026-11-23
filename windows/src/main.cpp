@@ -22,12 +22,16 @@
 namespace {
 
 constexpr UINT WM_TRAYICON = WM_APP + 1;
+constexpr UINT WM_WAKE_EXISTING = WM_APP + 2;
 constexpr UINT_PTR TIMER_RENDER = 1;
+constexpr int HOTKEY_CLICKTHROUGH_ID = 101;
+UINT g_msgTaskbarCreated = 0;
 
 enum MenuCmd : UINT {
     CMD_TOGGLE_VISIBLE = 1001,
     CMD_TOGGLE_CLICKTHROUGH,
     CMD_TOGGLE_TOPMOST,
+    CMD_TOGGLE_AUTOSTART,
     CMD_TOGGLE_BADGES,
     CMD_TOGGLE_FOOT,
     CMD_TOGGLE_PET,
@@ -52,6 +56,7 @@ enum MenuCmd : UINT {
 
 struct AppState {
     HWND hwnd = nullptr;
+    HWND menuOwnerHwnd = nullptr; // Non-NOACTIVATE helper window so TrackPopupMenu from tray NEVER fails!
     HICON trayIcon = nullptr;
     NOTIFYICONDATAW nid = {};
 
@@ -113,6 +118,69 @@ struct AppState {
 };
 
 AppState* g_app = nullptr;
+
+HICON createCatTrayIcon();
+
+// MARK: - Windows Auto-Start (HKCU\Software\Microsoft\Windows\CurrentVersion\Run)
+
+std::wstring getCurrentExeQuotedPath() {
+    wchar_t buf[MAX_PATH * 2] = {};
+    DWORD len = GetModuleFileNameW(nullptr, buf, (DWORD)(sizeof(buf) / sizeof(buf[0]) - 1));
+    if (len == 0) return L"";
+    return L"\"" + std::wstring(buf, len) + L"\"";
+}
+
+bool isAutoStartEnabled() {
+    HKEY hKey = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
+        return false;
+    }
+    DWORD type = 0, size = 0;
+    bool exists = (RegQueryValueExW(hKey, L"KuroCat", nullptr, &type, nullptr, &size) == ERROR_SUCCESS && size > 0);
+    RegCloseKey(hKey);
+    return exists;
+}
+
+bool setAutoStartEnabled(bool enable) {
+    HKEY hKey = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, nullptr, 0, KEY_WRITE, nullptr, &hKey, nullptr) != ERROR_SUCCESS) {
+        return false;
+    }
+    bool ok = false;
+    if (enable) {
+        std::wstring cmd = getCurrentExeQuotedPath();
+        if (!cmd.empty()) {
+            ok = (RegSetValueExW(hKey, L"KuroCat", 0, REG_SZ, (const BYTE*)cmd.c_str(), (DWORD)((cmd.size() + 1) * sizeof(wchar_t))) == ERROR_SUCCESS);
+        }
+    } else {
+        LSTATUS st = RegDeleteValueW(hKey, L"KuroCat");
+        ok = (st == ERROR_SUCCESS || st == ERROR_FILE_NOT_FOUND);
+    }
+    RegCloseKey(hKey);
+    return ok;
+}
+
+void showTrayBalloon(AppState& app, const wchar_t* title, const wchar_t* body) {
+    NOTIFYICONDATAW b = app.nid;
+    b.uFlags = NIF_INFO;
+    b.dwInfoFlags = NIIF_INFO | NIIF_NOSOUND;
+    wcsncpy_s(b.szInfoTitle, title, _TRUNCATE);
+    wcsncpy_s(b.szInfo, body, _TRUNCATE);
+    Shell_NotifyIconW(NIM_MODIFY, &b);
+}
+
+void registerTrayIcon(AppState& app) {
+    if (!app.trayIcon) app.trayIcon = createCatTrayIcon();
+    app.nid = {};
+    app.nid.cbSize = sizeof(app.nid);
+    app.nid.hWnd = app.menuOwnerHwnd ? app.menuOwnerHwnd : app.hwnd;
+    app.nid.uID = 1;
+    app.nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    app.nid.uCallbackMessage = WM_TRAYICON;
+    app.nid.hIcon = app.trayIcon;
+    wcscpy_s(app.nid.szTip, L"KuroCat \u9ED1\u732B\u952E\u76D8\u684C\u5BA0 (\u53F3\u952E/\u5DE6\u952E\u6253\u5F00\u83DC\u5355)");
+    Shell_NotifyIconW(NIM_ADD, &app.nid);
+}
 
 HICON createCatTrayIcon() {
     using namespace Gdiplus;
@@ -206,8 +274,9 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
     AppendMenuW(menu, MF_STRING, CMD_TOGGLE_VISIBLE, app.isVisible ? L"\u9690\u85CF\u5C0F\u732B" : L"\u663E\u793A\u5C0F\u732B");
-    AppendMenuW(menu, MF_STRING | (app.settings.fullClickThrough ? MF_CHECKED : 0), CMD_TOGGLE_CLICKTHROUGH, L"\u5B8C\u5168\u9F20\u6807\u7A7F\u900F (\u6E38\u620F\u9632\u8BEF\u89E6)");
+    AppendMenuW(menu, MF_STRING | (app.settings.fullClickThrough ? MF_CHECKED : 0), CMD_TOGGLE_CLICKTHROUGH, L"\u5B8C\u5168\u9F20\u6807\u7A7F\u900F (Ctrl+Alt+Shift+P / \u6309\u4F4FAlt\u53EF\u53F3\u952E)");
     AppendMenuW(menu, MF_STRING | (app.settings.alwaysOnTop ? MF_CHECKED : 0), CMD_TOGGLE_TOPMOST, L"\u7A97\u53E3\u7F6E\u9876\u663E\u793A");
+    AppendMenuW(menu, MF_STRING | (isAutoStartEnabled() ? MF_CHECKED : 0), CMD_TOGGLE_AUTOSTART, L"\u5F00\u673A\u81EA\u52A8\u542F\u52A8");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
     AppendMenuW(menu, MF_STRING | (app.settings.showKeyBadges ? MF_CHECKED : 0), CMD_TOGGLE_BADGES, L"\u663E\u793A\u6309\u952E\u6C14\u6CE1 ([S] [W] [\u21E7])");
@@ -252,8 +321,10 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, CMD_QUIT, L"\u9000\u51FA KuroCat");
 
-    SetForegroundWindow(app.hwnd);
-    UINT cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screenPt.x, screenPt.y, 0, app.hwnd, nullptr);
+    HWND menuOwner = app.menuOwnerHwnd ? app.menuOwnerHwnd : app.hwnd;
+    SetForegroundWindow(menuOwner);
+    UINT cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screenPt.x, screenPt.y, 0, menuOwner, nullptr);
+    PostMessageW(menuOwner, WM_NULL, 0, 0);
     DestroyMenu(menu);
 
     switch (cmd) {
@@ -264,10 +335,18 @@ void showContextMenu(AppState& app, POINT screenPt) {
         case CMD_TOGGLE_CLICKTHROUGH:
             app.settings.fullClickThrough = !app.settings.fullClickThrough;
             app.settings.saveToRegistry();
+            if (app.settings.fullClickThrough) {
+                showTrayBalloon(app,
+                    L"KuroCat \u5DF2\u5F00\u542F\u5B8C\u5168\u9F20\u6807\u7A7F\u900F",
+                    L"\u53D6\u6D88\u65B9\u5F0F\uFF1A\u6309 Ctrl+Alt+Shift+P\uFF0C\u6216\u6309\u4F4F Alt \u952E\u53F3\u952E\u5C0F\u732B\uFF0C\u6216\u70B9\u53F3\u4E0B\u89D2\u6258\u76D8\u5C0F\u732B\u56FE\u6807\uFF0C\u6216\u518D\u6B21\u53CC\u51FB KuroCat.exe");
+            }
             break;
         case CMD_TOGGLE_TOPMOST:
             app.settings.alwaysOnTop = !app.settings.alwaysOnTop;
             applyWindowScaleAndPosition(app, false);
+            break;
+        case CMD_TOGGLE_AUTOSTART:
+            setAutoStartEnabled(!isAutoStartEnabled());
             break;
         case CMD_TOGGLE_BADGES:
             app.settings.showKeyBadges = !app.settings.showKeyBadges;
@@ -373,7 +452,9 @@ void tickAndRender(AppState& app) {
             } else {
                 app.hasLastHover = false;
             }
-            bool clickThrough = app.settings.fullClickThrough || (zone == CatHitZone::None);
+            // Holding Alt temporarily unlocks click-through so user can ALWAYS right-click or drag the cat!
+            bool altHeld = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+            bool clickThrough = (app.settings.fullClickThrough && !altHeld) || (zone == CatHitZone::None);
             setClickThrough(app.hwnd, clickThrough);
         } else {
             app.hasLastHover = false;
@@ -422,8 +503,9 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             break;
 
-        case WM_LBUTTONDOWN:
-            if (app && !app->settings.fullClickThrough) {
+        case WM_LBUTTONDOWN: {
+            bool altHeld = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+            if (app && (!app->settings.fullClickThrough || altHeld)) {
                 app->isDragging = true;
                 GetCursorPos(&app->dragStartCursor);
                 RECT wr = {};
@@ -432,6 +514,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 SetCapture(hwnd);
             }
             return 0;
+        }
 
         case WM_MOUSEMOVE:
             if (app && app->isDragging) {
@@ -464,7 +547,40 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
 
         case WM_TRAYICON:
-            if (app && (lParam == WM_RBUTTONUP || lParam == WM_LBUTTONUP)) {
+            if (app && (lParam == WM_RBUTTONUP || lParam == WM_LBUTTONUP || lParam == WM_CONTEXTMENU)) {
+                POINT pt = {};
+                GetCursorPos(&pt);
+                showContextMenu(*app, pt);
+            }
+            return 0;
+
+        case WM_HOTKEY:
+            if (app && wParam == HOTKEY_CLICKTHROUGH_ID) {
+                app->settings.fullClickThrough = !app->settings.fullClickThrough;
+                app->settings.saveToRegistry();
+                if (app->settings.fullClickThrough) {
+                    showTrayBalloon(*app,
+                        L"KuroCat \u5DF2\u5F00\u542F\u5B8C\u5168\u9F20\u6807\u7A7F\u900F",
+                        L"\u518D\u6B21\u6309 Ctrl+Alt+Shift+P \u6216\u6309\u4F4F Alt \u53F3\u952E\u5C0F\u732B\u5373\u53EF\u53D6\u6D88");
+                } else {
+                    showTrayBalloon(*app,
+                        L"KuroCat \u5DF2\u53D6\u6D88\u5B8C\u5168\u9F20\u6807\u7A7F\u900F",
+                        L"\u73B0\u5728\u53EF\u4EE5\u6B63\u5E38\u62D6\u52A8\u3001\u6478\u5934\u548C\u53F3\u952E\u6253\u5F00\u83DC\u5355\u4E86");
+                }
+            }
+            return 0;
+
+        case WM_WAKE_EXISTING:
+            if (app) {
+                // Re-launching KuroCat.exe unlocks click-through, restores visibility & opens settings menu!
+                if (app->settings.fullClickThrough) {
+                    app->settings.fullClickThrough = false;
+                    app->settings.saveToRegistry();
+                }
+                if (!app->isVisible) {
+                    app->isVisible = true;
+                    ShowWindow(app->hwnd, SW_SHOWNOACTIVATE);
+                }
                 POINT pt = {};
                 GetCursorPos(&pt);
                 showContextMenu(*app, pt);
@@ -472,14 +588,25 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
 
         case WM_DESTROY:
-            KillTimer(hwnd, TIMER_RENDER);
-            if (app) {
-                Shell_NotifyIconW(NIM_DELETE, &app->nid);
-                if (app->trayIcon) DestroyIcon(app->trayIcon);
-                app->destroyBuffer();
+            if (hwnd == (app ? app->hwnd : nullptr)) {
+                KillTimer(hwnd, TIMER_RENDER);
+                if (app) {
+                    if (app->menuOwnerHwnd) {
+                        UnregisterHotKey(app->menuOwnerHwnd, HOTKEY_CLICKTHROUGH_ID);
+                        DestroyWindow(app->menuOwnerHwnd);
+                        app->menuOwnerHwnd = nullptr;
+                    }
+                    Shell_NotifyIconW(NIM_DELETE, &app->nid);
+                    if (app->trayIcon) DestroyIcon(app->trayIcon);
+                    app->destroyBuffer();
+                }
+                PostQuitMessage(0);
             }
-            PostQuitMessage(0);
             return 0;
+    }
+    if (g_msgTaskbarCreated != 0 && msg == g_msgTaskbarCreated && app && hwnd == app->menuOwnerHwnd) {
+        registerTrayIcon(*app);
+        return 0;
     }
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
@@ -490,12 +617,18 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     // Enable crisp Per-Monitor V2 DPI awareness on Windows 10/11
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
-    // Single-instance guard
+    // Single-instance guard: re-launching KuroCat.exe wakes the existing cat,
+    // cancels full click-through, and pops up the menu so users NEVER get stuck!
     HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"Local\\KuroCatDesktopPetSingleInstance");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        if (HWND existing = FindWindowW(L"KuroCatTrayOwnerClass", nullptr)) {
+            PostMessageW(existing, WM_WAKE_EXISTING, 0, 0);
+        }
         if (hMutex) CloseHandle(hMutex);
         return 0;
     }
+
+    g_msgTaskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
 
     Gdiplus::GdiplusStartupInput gdipInput;
     ULONG_PTR gdipToken = 0;
@@ -504,6 +637,11 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     AppState app;
     g_app = &app;
     app.settings.loadFromRegistry();
+
+    // Refresh auto-start exe path if user enabled auto-start and moved KuroCat.exe
+    if (isAutoStartEnabled()) {
+        setAutoStartEnabled(true);
+    }
 
     app.input.onKeyDown = [&](PhysicalKey k) { app.physics.triggerKeyDown(k, app.settings); };
     app.input.onMouseClick = [&](int btn, bool down) { app.physics.triggerMouseClick(btn, down); };
@@ -515,6 +653,23 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     wc.lpszClassName = L"KuroCatOverlayWindowClass";
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     RegisterClassExW(&wc);
+
+    // Dedicated hidden tray/menu owner window (NO WS_EX_NOACTIVATE / WS_EX_TRANSPARENT)
+    WNDCLASSEXW trayWc = {};
+    trayWc.cbSize = sizeof(trayWc);
+    trayWc.lpfnWndProc = wndProc;
+    trayWc.hInstance = hInst;
+    trayWc.lpszClassName = L"KuroCatTrayOwnerClass";
+    RegisterClassExW(&trayWc);
+
+    app.menuOwnerHwnd = CreateWindowExW(
+        WS_EX_TOOLWINDOW,
+        trayWc.lpszClassName,
+        L"KuroCatTray",
+        WS_POPUP,
+        0, 0, 0, 0,
+        nullptr, nullptr, hInst, nullptr
+    );
 
     int initW = (int)std::round(CatPhysics::CanvasWidth * app.settings.scale);
     int initH = (int)std::round(CatPhysics::CanvasHeight * app.settings.scale);
@@ -537,6 +692,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         nullptr, nullptr, hInst, nullptr
     );
     if (!app.hwnd) {
+        if (app.menuOwnerHwnd) DestroyWindow(app.menuOwnerHwnd);
         Gdiplus::GdiplusShutdown(gdipToken);
         if (hMutex) CloseHandle(hMutex);
         return 1;
@@ -544,17 +700,12 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
 
     applyWindowScaleAndPosition(app, false);
     app.input.registerRawInput(app.hwnd);
+    registerTrayIcon(app);
 
-    // System tray icon
-    app.trayIcon = createCatTrayIcon();
-    app.nid.cbSize = sizeof(app.nid);
-    app.nid.hWnd = app.hwnd;
-    app.nid.uID = 1;
-    app.nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-    app.nid.uCallbackMessage = WM_TRAYICON;
-    app.nid.hIcon = app.trayIcon;
-    wcscpy_s(app.nid.szTip, L"KuroCat \u9ED1\u732B\u952E\u76D8\u684C\u5BA0");
-    Shell_NotifyIconW(NIM_ADD, &app.nid);
+    // Global shortcut Ctrl+Alt+Shift+P to toggle full click-through anytime!
+    if (app.menuOwnerHwnd) {
+        RegisterHotKey(app.menuOwnerHwnd, HOTKEY_CLICKTHROUGH_ID, MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'P');
+    }
 
     ShowWindow(app.hwnd, SW_SHOWNOACTIVATE);
     app.lastTickTime = nowSeconds();

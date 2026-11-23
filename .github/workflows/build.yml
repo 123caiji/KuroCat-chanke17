@@ -87,7 +87,9 @@ jobs:
           chmod +x linux/build.sh linux/build_deb.sh
           cd linux
           ./build.sh
-          ./build_deb.sh 1.1.0
+          DEB_VER="${GITHUB_REF_NAME#v}"
+          if [[ ! "$DEB_VER" =~ ^[0-9]+\.[0-9]+ ]]; then DEB_VER="1.2.0"; fi
+          ./build_deb.sh "$DEB_VER"
           tar -czf "KuroCat-Linux-${{ matrix.tar_arch }}.tar.gz" kurocat kurocat.desktop kurocat.svg
           ls -lh "KuroCat-Linux-${{ matrix.arch }}.deb" "KuroCat-Linux-${{ matrix.tar_arch }}.tar.gz"
 
