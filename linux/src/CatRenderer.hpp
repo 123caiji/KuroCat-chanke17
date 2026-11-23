@@ -272,10 +272,10 @@ private:
             case PhysicalKey::RightShift: return "⇧";
             case PhysicalKey::LeftControl:
             case PhysicalKey::RightControl: return "Ctrl";
-            case PhysicalKey::LeftAlt:
-            case PhysicalKey::RightAlt: return "Alt";
-            case PhysicalKey::LeftWin:
-            case PhysicalKey::RightWin: return "Super";
+            case PhysicalKey::LeftOption:
+            case PhysicalKey::RightOption: return "Alt";
+            case PhysicalKey::LeftCommand:
+            case PhysicalKey::RightCommand: return "Super";
             case PhysicalKey::Backspace: return "⌫";
             case PhysicalKey::Enter: return "↵";
             case PhysicalKey::Space: return "";

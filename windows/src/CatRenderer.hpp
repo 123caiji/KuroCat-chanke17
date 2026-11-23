@@ -262,10 +262,10 @@ private:
             case PhysicalKey::RightShift: return L"\u21E7";
             case PhysicalKey::LeftControl:
             case PhysicalKey::RightControl: return L"Ctrl";
-            case PhysicalKey::LeftAlt:
-            case PhysicalKey::RightAlt: return L"Alt";
-            case PhysicalKey::LeftWin:
-            case PhysicalKey::RightWin: return L"Win";
+            case PhysicalKey::LeftOption:
+            case PhysicalKey::RightOption: return L"Alt";
+            case PhysicalKey::LeftCommand:
+            case PhysicalKey::RightCommand: return L"Win";
             case PhysicalKey::Backspace: return L"\u232B";
             case PhysicalKey::Enter: return L"\u21B5";
             case PhysicalKey::Space: return L"";
