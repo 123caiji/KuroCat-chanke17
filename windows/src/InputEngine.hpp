@@ -60,17 +60,50 @@ public:
         return isRawInputRegistered;
     }
 
+    /// Drops every held key / mouse button and re-syncs the cursor. Called after Win+L unlock,
+    /// sleep/resume and display changes: the key-up events for Win+L (and anything held while the
+    /// secure desktop was up) never reach us, so stale state would otherwise pin the cat's paws.
+    void resetAllState() {
+        std::vector<PhysicalKey> held(activeKeys.begin(), activeKeys.end());
+        rawKeys_.clear();
+        asyncKeys_.clear();
+        for (PhysicalKey k : held) recomputeUnifiedKeys(k);
+        activeKeys.clear();
+        pressedOrder.clear();
+        if (leftMouseDown) updateMouseButton(0, false);
+        if (rightMouseDown) updateMouseButton(1, false);
+        if (otherMouseDown) updateMouseButton(2, false);
+        rawDeltaAccumX = 0.0f;
+        rawDeltaAccumY = 0.0f;
+        mouseVelocity = { 0.0f, 0.0f };
+        GetCursorPos(&lastCursorPos);
+        lastRawKbTime_ = 0.0;
+        lastRawMouseTime_ = 0.0;
+    }
+
+    /// Seconds since the last keyboard WM_INPUT arrived (used to spot UIPI-blocked games).
+    double secondsSinceRawKeyboard(double now) const {
+        return lastRawKbTime_ > 0.0 ? now - lastRawKbTime_ : 1e9;
+    }
+
     void handleRawInput(LPARAM lParam) {
         UINT size = 0;
         if (GetRawInputData((HRAWINPUT)lParam, RID_INPUT, nullptr, &size, sizeof(RAWINPUTHEADER)) != 0 || size == 0) {
             return;
         }
-        std::vector<BYTE> buffer(size);
-        if (GetRawInputData((HRAWINPUT)lParam, RID_INPUT, buffer.data(), &size, sizeof(RAWINPUTHEADER)) != size) {
+        // Gaming mice can post 1000–8000 WM_INPUT/s: avoid a heap allocation per message.
+        alignas(8) BYTE stackBuf[256];
+        std::vector<BYTE> heapBuf;
+        BYTE* data = stackBuf;
+        if (size > sizeof(stackBuf)) {
+            heapBuf.resize(size);
+            data = heapBuf.data();
+        }
+        if (GetRawInputData((HRAWINPUT)lParam, RID_INPUT, data, &size, sizeof(RAWINPUTHEADER)) != size) {
             return;
         }
 
-        const RAWINPUT* raw = reinterpret_cast<const RAWINPUT*>(buffer.data());
+        const RAWINPUT* raw = reinterpret_cast<const RAWINPUT*>(data);
         if (raw->header.dwType == RIM_TYPEKEYBOARD) {
             const RAWKEYBOARD& kb = raw->data.keyboard;
             // Ignore synthetic overrun / pause prefix

@@ -74,7 +74,11 @@ open KuroCat.app
    - Temporary unlock: hold **`Alt`** and right-click the cat to uncheck or left-drag to move;
    - System tray: click the black cat icon in the **`^` hidden icons area** on the taskbar;
    - Fallback: **double-click `KuroCat.exe` again** to disable click-through and open the settings menu at your cursor.
-   > If a game runs as Administrator, right-click `KuroCat.exe` and choose **Run as administrator** to capture in-game keys.
+   > **Cat follows the mouse but not the keyboard in a game?** The game (or its launcher) runs as Administrator, and Windows withholds its keystrokes from normal apps. Right-click the cat → **Restart as administrator**, or tick **Always run as administrator**. KuroCat shows a tray tip when it detects such a game.
+   >
+   > **Cat disappears in games?** KuroCat now re-asserts always-on-top when a fullscreen/borderless game comes to the front and moves back on-screen after resolution changes. True *exclusive fullscreen* cannot be overlaid by any desktop window — switch the game to borderless/windowed fullscreen.
+   >
+   > **Still told to update after downloading the new version?** An old copy was still running. A newer KuroCat now shuts down older running copies on launch, and the update prompt shows which exe is running.
 
 **Build from source (MSVC / MinGW):**
 ```bat
@@ -90,17 +94,19 @@ cmake -B build && cmake --build build --config Release
 ### 🐧 Linux & UOS / Kylin (x86_64 & ARM64)
 Supports **Ubuntu 20.04+ / Debian 11+ / Deepin / UOS (x86_64 & ARM64) / Kylin / Arch / Fedora**:
 
-1. **UOS / Deepin / Ubuntu / Debian (`.deb` recommended)**:
-   - Download `KuroCat-Linux-amd64.deb` or `KuroCat-Linux-arm64.deb`.
-   - Double-click the `.deb` in UOS or run:
+1. **No-password install (recommended on UOS / Kylin)**: extract `KuroCat-Linux-x86_64.tar.gz` or `KuroCat-Linux-arm64.tar.gz` and run `bash install.sh` in that folder. It installs into `~/.local` for the current user only (no sudo); `bash uninstall.sh` removes it.
+2. **`.deb` package (UOS / Deepin / Ubuntu / Debian / Kylin)**:
+   - Download `KuroCat-Linux-amd64.deb` or `KuroCat-Linux-arm64.deb`, double-click it or run:
      ```bash
      sudo apt install ./KuroCat-Linux-amd64.deb
      ```
-   - Launch **KuroCat** from the application menu or run `kurocat` in terminal.
-2. **Other Linux distros (Arch / Fedora, etc.)**:
-   - Download `KuroCat-Linux-x86_64.tar.gz` or `KuroCat-Linux-arm64.tar.gz`, extract, and run `./kurocat`.
+   - Packages are built on Debian 10 (glibc 2.28), so older UOS 20 / Kylin V10 systems can run them. In-app updates install per-user and no longer ask for a password.
+   - Kylin refuses to install? Set *Security Center → App Protection / Execution Control* to Off or Warn, or use the no-password install.
+3. **Other Linux distros (Arch / Fedora, etc.)**:
+   - Extract the tar.gz and run `bash install.sh`, or simply run `./kurocat`.
+   - Desktop lagging? KuroCat uses an adaptive 30/20/10 fps by default; the **60fps** option in the menu should stay off on low-end machines.
    - On pure **Wayland** sessions, run `sudo usermod -aG input $USER` once and re-login to enable kernel-level `evdev` capture.
-3. **Build from source (including LoongArch / older UOS)**:
+4. **Build from source (including LoongArch)**:
    ```bash
    sudo apt install g++ pkg-config libgtk-3-dev libcairo2-dev libx11-dev libxi-dev
    cd linux && chmod +x build.sh build_deb.sh

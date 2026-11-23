@@ -11,13 +11,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var availableUpdateURL: URL?
     private var availableAssetURL: URL?
     private var isUpdating = false
+    private var isHandingOverToNewerCopy = false
 
     private var currentAppVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.2"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.3"
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        if resolveDuplicateRunningCopies() { return }
 
         overlayWindow = OverlayWindow()
         overlayWindow.orderFrontRegardless()
@@ -60,9 +62,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // Quitting during launch because a newer copy is running: leave its stats alone.
+        if isHandingOverToNewerCopy { return }
         renderTimer?.invalidate()
         InputEngine.shared.flushStats()
         InputEngine.shared.stop()
+    }
+
+    // MARK: - One KuroCat at a time (newest copy wins)
+
+    /// Users often download a new KuroCat.app while an older copy is still running (or is started
+    /// by the login item from another folder). That old process kept running and kept announcing
+    /// "new version available" even though they had already updated. Keep only the newest copy:
+    /// quit older ones, or hand over to an already-running newer one. Returns true if THIS process quits.
+    private func resolveDuplicateRunningCopies() -> Bool {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return false }
+        let myPID = ProcessInfo.processInfo.processIdentifier
+        let myURL = Bundle.main.bundleURL.standardizedFileURL
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .filter { $0.processIdentifier != myPID }
+        if others.isEmpty { return false }
+
+        for other in others {
+            guard let otherURL = other.bundleURL?.standardizedFileURL, otherURL != myURL,
+                  let otherVersion = Self.shortVersion(ofAppAt: otherURL) else { continue }
+            if isVersion(otherVersion, newerThan: currentAppVersion) {
+                isHandingOverToNewerCopy = true
+                _ = other.activate(options: [])
+                NSApp.terminate(nil)
+                return true
+            }
+        }
+        for other in others {
+            // Same path (replaced in place by an update) or an older/equal copy elsewhere.
+            if !other.terminate() { _ = other.forceTerminate() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                if !other.isTerminated { _ = other.forceTerminate() }
+            }
+        }
+        return false
+    }
+
+    /// Reads CFBundleShortVersionString straight from disk (Bundle(url:) may return cached info).
+    private static func shortVersion(ofAppAt url: URL) -> String? {
+        let plistURL = url.appendingPathComponent("Contents/Info.plist")
+        guard let dict = NSDictionary(contentsOf: plistURL) as? [String: Any] else { return nil }
+        return dict["CFBundleShortVersionString"] as? String
+    }
+
+    /// A newer KuroCat.app that is already on disk (e.g. downloaded to ~/Downloads but never
+    /// launched because LaunchServices just re-activated this running copy).
+    private func newestDownloadedCopy() -> (url: URL, version: String)? {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return nil }
+        let myURL = Bundle.main.bundleURL.standardizedFileURL
+        var best: (url: URL, version: String)?
+        for url in NSWorkspace.shared.urlsForApplications(withBundleIdentifier: bundleID) {
+            let std = url.standardizedFileURL
+            guard std != myURL, !std.path.contains("/.Trash/"),
+                  let v = Self.shortVersion(ofAppAt: std),
+                  isVersion(v, newerThan: best?.version ?? currentAppVersion) else { continue }
+            best = (std, v)
+        }
+        return best
+    }
+
+    private func switchToDownloadedCopy(_ url: URL) {
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
+            DispatchQueue.main.async {
+                if error == nil { NSApp.terminate(nil) }
+            }
+        }
     }
 
     // MARK: - 60 FPS Render Loop
@@ -504,6 +575,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func handleUpdateResult(_ info: (tag: String, pageURL: URL?, assetURL: URL?), manual: Bool) {
+        if isVersion(info.tag, newerThan: currentAppVersion),
+           let local = newestDownloadedCopy(), !isVersion(info.tag, newerThan: local.version) {
+            // The user already downloaded the latest version; they are just still running the old copy.
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.alertStyle = .informational
+            alert.messageText = "你已经下载了新版本 v\(local.version)"
+            alert.informativeText = "但现在运行的还是旧版 v\(currentAppVersion)：\n\(Bundle.main.bundlePath)\n\n新版本位置：\n\(local.url.path)\n\n点击「切换到新版本」会关闭旧版并打开新版。建议把新版拖进「应用程序」文件夹并删除旧版。"
+            alert.addButton(withTitle: "切换到新版本")
+            alert.addButton(withTitle: "稍后再说")
+            if alert.runModal() == .alertFirstButtonReturn {
+                switchToDownloadedCopy(local.url)
+            }
+            return
+        }
         if isVersion(info.tag, newerThan: currentAppVersion) {
             availableUpdateVersion = info.tag
             availableUpdateURL = info.pageURL
@@ -535,7 +621,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let alert = NSAlert()
         alert.alertStyle = .informational
         alert.messageText = "发现 KuroCat 新版本 \(latestTag)"
-        alert.informativeText = "当前版本：v\(currentAppVersion)\n最新版本：\(latestTag)\n\n点击「立即更新」将在后台自动下载安装包并重启应用。"
+        alert.informativeText = "当前版本：v\(currentAppVersion)\n最新版本：\(latestTag)\n当前运行位置：\(Bundle.main.bundlePath)\n\n点击「立即更新」将在后台自动下载安装包并重启应用。"
         alert.addButton(withTitle: "立即更新")
         alert.addButton(withTitle: "打开下载页")
         alert.addButton(withTitle: "稍后再说")

@@ -335,11 +335,20 @@ enum CatRenderer {
             ctx.addPath(kPath)
             ctx.strokePath()
 
-            if showLegends && cap.key != .space {
-                let legend = keycapLegend(cap.key)
+            if showLegends {
+                let isSpace = cap.key == .space
+                let legend = isSpace ? "space" : keycapLegend(cap.key)
                 if !legend.isEmpty {
-                    let cx = (kTL.x + kTR.x + kBR.x + kBL.x) * 0.25
-                    let cy = (kTL.y + kTR.y + kBR.y + kBL.y) * 0.25
+                    var cx = (kTL.x + kTR.x + kBR.x + kBL.x) * 0.25
+                    var cy = (kTL.y + kTR.y + kBR.y + kBL.y) * 0.25
+                    if isSpace {
+                        // The spacebar sits right under the cat: its legs hide the middle, and an
+                        // unlabeled visible end looked like an odd blank patch beside the cat.
+                        // Label the end that stays visible instead.
+                        let sp = KeyboardLayout.screenQuadPoint(su: su0 + (su1 - su0) * 0.82, sv: (sv0 + sv1) * 0.5)
+                        cx = sp.x
+                        cy = sp.y + pressDy
+                    }
                     let textColor: NSColor
                     if cap.isAmberAccent || theme != .midnightHacker {
                         textColor = NSColor(calibratedRed: 0.14, green: 0.14, blue: 0.16, alpha: 0.78)
@@ -355,7 +364,8 @@ enum CatRenderer {
                     let sz = str.size()
                     ctx.saveGState()
                     ctx.translateBy(x: cx, y: cy)
-                    ctx.rotate(by: 0.052)
+                    // Keyboard faces the cat (180°), so legends read upright from the cat's seat.
+                    ctx.rotate(by: .pi + 0.052)
                     NSGraphicsContext.saveGraphicsState()
                     NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
                     str.draw(at: CGPoint(x: -sz.width * 0.5, y: -sz.height * 0.5))

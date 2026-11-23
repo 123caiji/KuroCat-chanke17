@@ -74,7 +74,11 @@ open KuroCat.app
    - 临时解锁：按住 **`Alt`** 键，再直接右键小猫取消勾选或左键拖动；
    - 系统托盘：点击任务栏右下角 **`^` 隐藏图标区** 中的黑猫图标（左键或右键均可弹出菜单）；
    - 保底方式：**再次双击 `KuroCat.exe`**，会自动取消穿透并直接在鼠标处弹出设置菜单。
-   > 若部分网游以管理员权限运行，右键「以管理员身份运行」`KuroCat.exe` 即可同步捕获游戏内按键。
+   > **游戏里小猫只跟鼠标、不跟键盘？** 这类游戏（及 WeGame 等启动器）以管理员权限运行，Windows 会拦截它的键盘输入。右键小猫 →「以管理员身份重新启动」即可；想一劳永逸可勾选「每次启动都以管理员身份运行」。小猫检测到这种游戏时也会在托盘弹出提示。
+   >
+   > **进游戏小猫消失？** 小猫会在全屏/无边框游戏切到前台后自动重新置顶，游戏切换分辨率后也会自动回到屏幕内。如果游戏用的是「独占全屏」，任何桌面窗口都无法盖在上面，请在游戏设置里改成「无边框窗口 / 窗口化全屏」。
+   >
+   > **下载了新版却还提示更新？** 旧版小猫还在后台运行。新版启动时会自动结束旧版并接管；更新提示里也会显示当前运行的程序路径，方便找到并删除旧的 exe。
 
 **本地源码编译（MSVC / MinGW）：**
 ```bat
@@ -90,17 +94,22 @@ cmake -B build && cmake --build build --config Release
 ### 🐧 Linux & 统信 UOS / 银河麒麟 (x86_64 & ARM64)
 支持 **Ubuntu 20.04+ / Debian 11+ / Deepin / 统信 UOS（x86_64 & ARM64 飞腾/鲲鹏）/ 银河麒麟 / Arch / Fedora**：
 
-1. **统信 UOS / Deepin / Ubuntu / Debian（推荐直接装 `.deb`）**：
-   - 下载对应架构安装包：`KuroCat-Linux-amd64.deb`（Intel/AMD/兆芯/海光）或 `KuroCat-Linux-arm64.deb`（飞腾/鲲鹏/树莓派等 ARM64）。
-   - 统信 UOS 直接**双击 `.deb` 用软件包安装器安装**，或终端执行：
+1. **免密码安装（推荐统信 UOS / 银河麒麟，不需要开机密码）**：
+   - 下载 `KuroCat-Linux-x86_64.tar.gz`（Intel/AMD/兆芯/海光）或 `KuroCat-Linux-arm64.tar.gz`（飞腾/鲲鹏等 ARM64），解压。
+   - 在解压出的文件夹里右键「在终端中打开」，执行 `bash install.sh`。程序只装到当前用户的 `~/.local`，装完自动启动，开始菜单可搜到 **KuroCat**；卸载执行 `bash uninstall.sh`。
+   - 压缩包里的 `安装说明.txt` 有麒麟「应用执行控制」、统信「开发者模式」、CPU 架构不匹配等常见问题的处理方法。
+2. **`.deb` 安装包（统信 UOS / Deepin / Ubuntu / Debian / 麒麟）**：
+   - 双击 `KuroCat-Linux-amd64.deb` / `KuroCat-Linux-arm64.deb` 用软件包安装器安装（系统会要求输入开机密码），或终端执行：
      ```bash
      sudo apt install ./KuroCat-Linux-amd64.deb
      ```
-   - 安装后在开始菜单搜索 **KuroCat** 或终端输入 `kurocat` 启动。**统信 UOS 默认 X11 桌面开箱即用，无需额外权限即可全局监听打字和游戏！**
-2. **其他 Linux 发行版（Arch / Fedora 等）**：
-   - 下载 `KuroCat-Linux-x86_64.tar.gz` 或 `KuroCat-Linux-arm64.tar.gz` 解压直接运行 `./kurocat`。
+   - 安装包在 Debian 10（glibc 2.28）环境中编译，统信 UOS 20、银河麒麟 V10 等较老的系统也能运行；之后在软件内「检查更新」会装到当前用户目录，**不再需要输入密码**。
+   - **麒麟安装失败**：「安全中心」→「应用保护 / 应用执行控制」改为「关闭」或「警告」后再装，或直接用上面的免密码安装。
+3. **其他 Linux 发行版（Arch / Fedora 等）**：
+   - 解压 tar.gz 后运行 `bash install.sh`，或直接运行 `./kurocat`。
    - 若使用纯 **Wayland** 会话，执行一次 `sudo usermod -aG input $USER` 并重新登录即可启用 `evdev` 内核级全局监听。
-3. **龙芯（LoongArch）或老版本 UOS 本地源码编译**：
+4. **电脑变卡？** 默认使用省电自适应帧率（打字/移动鼠标时 30fps、空闲 20fps、睡觉 10fps）；右键小猫可开启「高帧率 60fps」，低配电脑请保持关闭。
+5. **龙芯（LoongArch / MIPS）本地源码编译**：
    ```bash
    sudo apt install g++ pkg-config libgtk-3-dev libcairo2-dev libx11-dev libxi-dev
    cd linux && chmod +x build.sh build_deb.sh

@@ -350,11 +350,20 @@ private:
             cairo_set_line_width(cr, 0.65);
             cairo_stroke(cr);
 
-            if (showLegends && cap.key != PhysicalKey::Space) {
-                std::string legend = keycapLegend(cap.key);
+            if (showLegends) {
+                bool isSpace = (cap.key == PhysicalKey::Space);
+                std::string legend = isSpace ? std::string("space") : keycapLegend(cap.key);
                 if (!legend.empty()) {
                     double cx = (kTL.x + kTR.x + kBR.x + kBL.x) * 0.25;
                     double cy = (kTL.y + kTR.y + kBR.y + kBL.y) * 0.25;
+                    if (isSpace) {
+                        // The spacebar sits right under the cat: its legs hide the middle, and an
+                        // unlabeled visible end looked like an odd blank patch beside the cat.
+                        // Label the end that stays visible instead.
+                        Pt sp = KeyboardLayout::screenQuadPoint(su0 + (su1 - su0) * 0.82f, (sv0 + sv1) * 0.5f);
+                        cx = sp.x;
+                        cy = sp.y + dy;
+                    }
                     if (cap.isAmberAccent || theme != KeyboardTheme::MidnightHacker) {
                         cairo_set_source_rgba(cr, 0.14, 0.14, 0.16, 0.78);
                     } else {
@@ -366,7 +375,8 @@ private:
                     cairo_text_extents(cr, legend.c_str(), &ext);
                     cairo_save(cr);
                     cairo_translate(cr, cx, cy);
-                    cairo_rotate(cr, 0.052);
+                    // Keyboard faces the cat (180°), so legends read upright from the cat's seat.
+                    cairo_rotate(cr, 3.14159265358979 + 0.052);
                     cairo_move_to(cr, -(ext.width * 0.5 + ext.x_bearing), -(ext.height * 0.5 + ext.y_bearing));
                     cairo_show_text(cr, legend.c_str());
                     cairo_restore(cr);

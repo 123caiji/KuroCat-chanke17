@@ -39,6 +39,7 @@ struct CatSettings {
     bool petInteraction = true;
     bool fullClickThrough = false;
     bool alwaysOnTop = true;
+    bool runAsAdmin = false; // relaunch elevated so keys typed into admin-level games are visible (UIPI)
     float scale = 1.0f;
     CatCoatTheme coatTheme = CatCoatTheme::ClassicBlack;
     KeyboardTheme keyboardTheme = KeyboardTheme::ClassicMilk;
@@ -61,6 +62,7 @@ struct CatSettings {
         petInteraction   = readDword(L"PetInteraction", 1) != 0;
         fullClickThrough = readDword(L"FullClickThrough", 0) != 0;
         alwaysOnTop      = readDword(L"AlwaysOnTop", 1) != 0;
+        runAsAdmin       = readDword(L"RunAsAdmin", 0) != 0;
         scale            = std::clamp((float)readDword(L"ScalePct", 100) / 100.0f, 0.5f, 2.0f);
         coatTheme        = (CatCoatTheme)std::clamp((int)readDword(L"CoatTheme", 0), 0, 3);
         keyboardTheme    = (KeyboardTheme)std::clamp((int)readDword(L"KeyboardTheme", 0), 0, 2);
@@ -86,6 +88,7 @@ struct CatSettings {
         writeDword(L"PetInteraction", petInteraction ? 1 : 0);
         writeDword(L"FullClickThrough", fullClickThrough ? 1 : 0);
         writeDword(L"AlwaysOnTop", alwaysOnTop ? 1 : 0);
+        writeDword(L"RunAsAdmin", runAsAdmin ? 1 : 0);
         writeDword(L"ScalePct", (DWORD)(scale * 100.0f + 0.5f));
         writeDword(L"CoatTheme", (DWORD)coatTheme);
         writeDword(L"KeyboardTheme", (DWORD)keyboardTheme);

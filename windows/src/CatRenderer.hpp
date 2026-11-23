@@ -354,11 +354,20 @@ private:
             g.FillPath(&kb, &kp);
             g.DrawPath(&keyBorderPen, &kp);
 
-            if (showLegends && cap.key != PhysicalKey::Space) {
-                std::wstring legend = keycapLegend(cap.key);
+            if (showLegends) {
+                bool isSpace = (cap.key == PhysicalKey::Space);
+                std::wstring legend = isSpace ? std::wstring(L"space") : keycapLegend(cap.key);
                 if (!legend.empty()) {
                     float cx = (kTL.x + kTR.x + kBR.x + kBL.x) * 0.25f;
                     float cy = (kTL.y + kTR.y + kBR.y + kBL.y) * 0.25f;
+                    if (isSpace) {
+                        // The spacebar sits right under the cat: its legs hide the middle, and an
+                        // unlabeled visible end looked like an odd blank patch beside the cat.
+                        // Label the end that stays visible instead.
+                        Pt sp = KeyboardLayout::screenQuadPoint(su0 + (su1 - su0) * 0.82f, (sv0 + sv1) * 0.5f);
+                        cx = sp.x;
+                        cy = sp.y + dy;
+                    }
                     Color txtCol = (cap.isAmberAccent || theme != KeyboardTheme::MidnightHacker)
                         ? Color(198, 36, 36, 41)
                         : Color(210, 224, 230, 235);
@@ -367,7 +376,9 @@ private:
                     Font kf(&kbFF, fSz, FontStyleBold, UnitPixel);
                     GraphicsState ks = g.Save();
                     g.TranslateTransform(cx, cy);
-                    g.RotateTransform(3.0f);
+                    // The keyboard is laid out 180° to face the cat, so the legends must be too
+                    // (upside-down to the viewer, upright from the cat's seat). +3° follows the deck slope.
+                    g.RotateTransform(180.0f + 3.0f);
                     g.DrawString(legend.c_str(), -1, &kf, RectF(-14.0f, -7.0f, 28.0f, 14.0f), &kbSF, &tb);
                     g.Restore(ks);
                 }

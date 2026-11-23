@@ -41,6 +41,9 @@ struct CatSettings {
     bool petInteraction = true;
     bool fullClickThrough = false;
     bool alwaysOnTop = true;
+    // 60fps redraws of a translucent window overload software compositors (统信 UOS / 麒麟 on
+    // integrated or 国产 GPUs, VMs) and made the whole desktop lag. Default is adaptive 30/20/10fps.
+    bool highFrameRate = false;
     float scale = 1.0f;
     CatCoatTheme coatTheme = CatCoatTheme::ClassicBlack;
     KeyboardTheme keyboardTheme = KeyboardTheme::ClassicMilk;
@@ -76,6 +79,7 @@ struct CatSettings {
                 else if (k == "petInteraction") petInteraction = (std::stoi(v) != 0);
                 else if (k == "fullClickThrough") fullClickThrough = (std::stoi(v) != 0);
                 else if (k == "alwaysOnTop") alwaysOnTop = (std::stoi(v) != 0);
+                else if (k == "highFrameRate") highFrameRate = (std::stoi(v) != 0);
                 else if (k == "scale") scale = std::clamp(std::stof(v), 0.5f, 2.0f);
                 else if (k == "coatTheme") coatTheme = (CatCoatTheme)std::clamp(std::stoi(v), 0, 3);
                 else if (k == "keyboardTheme") keyboardTheme = (KeyboardTheme)std::clamp(std::stoi(v), 0, 2);
@@ -100,6 +104,7 @@ struct CatSettings {
           << "petInteraction=" << (petInteraction ? 1 : 0) << "\n"
           << "fullClickThrough=" << (fullClickThrough ? 1 : 0) << "\n"
           << "alwaysOnTop=" << (alwaysOnTop ? 1 : 0) << "\n"
+          << "highFrameRate=" << (highFrameRate ? 1 : 0) << "\n"
           << "scale=" << scale << "\n"
           << "coatTheme=" << (int)coatTheme << "\n"
           << "keyboardTheme=" << (int)keyboardTheme << "\n"
