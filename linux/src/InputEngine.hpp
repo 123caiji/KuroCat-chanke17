@@ -18,6 +18,9 @@
 #include <linux/input.h>
 #include <X11/Xlib.h>
 #include <X11/extensions/XInput2.h>
+#ifdef None
+#undef None
+#endif
 #include "KeyMap.hpp"
 
 inline double nowSeconds() {
