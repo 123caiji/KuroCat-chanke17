@@ -49,7 +49,7 @@ public:
         };
 
         drawMouse(cr, physics, settings.keyboardTheme);
-        drawKeyboard(cr, physics, settings.keyboardTheme, settings.eyeTheme);
+        drawKeyboard(cr, physics, settings.keyboardTheme, settings.eyeTheme, settings.showKeyLegends);
         drawTail(cr, seatX, seatY, physics, settings.coatTheme);
         drawEarsLayer(cr, headCenter, physics, settings.coatTheme);
         drawUnifiedSilhouette(cr, seatX, seatY, headCenter, breath, physics, settings.coatTheme);
@@ -61,7 +61,7 @@ public:
         drawHeadFeatures(cr, headCenter, physics, settings.eyeTheme, settings.coatTheme);
         drawFrontPaws(cr, seatX, seatY, breath, physics, settings.coatTheme);
 
-        if (settings.showKeyBadges) {
+        if (!physics.floatingKeycaps.empty()) {
             drawFloatingKeycaps(cr, physics);
         }
         drawSparkles(cr, physics, settings.eyeTheme);
@@ -263,12 +263,32 @@ private:
         cairo_close_path(cr);
     }
 
-    static void drawKeyboard(cairo_t* cr, const CatPhysics& physics, KeyboardTheme theme, EyeColorTheme eyeTheme) {
-        Pt tl = KeyboardLayout::screenQuadPoint(-0.025f, -0.08f);
-        Pt tr = KeyboardLayout::screenQuadPoint(1.025f, -0.08f);
-        Pt bl = KeyboardLayout::screenQuadPoint(-0.032f, 1.08f);
-        Pt br = KeyboardLayout::screenQuadPoint(1.032f, 1.08f);
-        constexpr float depth = 6.5f;
+    static std::string keycapLegend(PhysicalKey k) {
+        switch (k) {
+            case PhysicalKey::Escape: return "ESC";
+            case PhysicalKey::Tab: return "⇥";
+            case PhysicalKey::CapsLock: return "⇪";
+            case PhysicalKey::LeftShift:
+            case PhysicalKey::RightShift: return "⇧";
+            case PhysicalKey::LeftControl:
+            case PhysicalKey::RightControl: return "Ctrl";
+            case PhysicalKey::LeftAlt:
+            case PhysicalKey::RightAlt: return "Alt";
+            case PhysicalKey::LeftWin:
+            case PhysicalKey::RightWin: return "Super";
+            case PhysicalKey::Backspace: return "⌫";
+            case PhysicalKey::Enter: return "↵";
+            case PhysicalKey::Space: return "";
+            default: return keyBadgeLabel(k);
+        }
+    }
+
+    static void drawKeyboard(cairo_t* cr, const CatPhysics& physics, KeyboardTheme theme, EyeColorTheme eyeTheme, bool showLegends) {
+        Pt tl = KeyboardLayout::screenQuadPoint(-0.012f, -0.04f);
+        Pt tr = KeyboardLayout::screenQuadPoint(1.012f, -0.04f);
+        Pt bl = KeyboardLayout::screenQuadPoint(-0.016f, 1.04f);
+        Pt br = KeyboardLayout::screenQuadPoint(1.016f, 1.04f);
+        constexpr float depth = 4.5f;
 
         drawQuadPath(cr, {tl.x, tl.y + depth + 2}, {tr.x, tr.y + depth + 2},
                          {br.x, br.y + depth + 3}, {bl.x, bl.y + depth + 3});
@@ -291,13 +311,13 @@ private:
         drawQuadPath(cr, {tl.x, tl.y + depth}, {tr.x, tr.y + depth}, {br.x, br.y + depth}, {bl.x, bl.y + depth});
         setCol(cr, baseCol);
         cairo_fill_preserve(cr);
-        cairo_set_line_width(cr, 5.0);
+        cairo_set_line_width(cr, 2.5);
         cairo_stroke(cr);
 
         drawQuadPath(cr, tl, tr, br, bl);
         setCol(cr, deckCol);
         cairo_fill_preserve(cr);
-        cairo_set_line_width(cr, 4.0);
+        cairo_set_line_width(cr, 2.0);
         cairo_stroke(cr);
 
         constexpr float padU = 0.0028f;
@@ -327,8 +347,31 @@ private:
             setCol(cr, fill);
             cairo_fill_preserve(cr);
             setCol(cr, borderCol);
-            cairo_set_line_width(cr, 0.7);
+            cairo_set_line_width(cr, 0.65);
             cairo_stroke(cr);
+
+            if (showLegends && cap.key != PhysicalKey::Space) {
+                std::string legend = keycapLegend(cap.key);
+                if (!legend.empty()) {
+                    double cx = (kTL.x + kTR.x + kBR.x + kBL.x) * 0.25;
+                    double cy = (kTL.y + kTR.y + kBR.y + kBL.y) * 0.25;
+                    if (cap.isAmberAccent || theme != KeyboardTheme::MidnightHacker) {
+                        cairo_set_source_rgba(cr, 0.14, 0.14, 0.16, 0.78);
+                    } else {
+                        cairo_set_source_rgba(cr, 0.88, 0.90, 0.92, 0.82);
+                    }
+                    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+                    cairo_set_font_size(cr, legend.size() <= 1 ? 5.2 : 3.8);
+                    cairo_text_extents_t ext;
+                    cairo_text_extents(cr, legend.c_str(), &ext);
+                    cairo_save(cr);
+                    cairo_translate(cr, cx, cy);
+                    cairo_rotate(cr, 0.052);
+                    cairo_move_to(cr, -(ext.width * 0.5 + ext.x_bearing), -(ext.height * 0.5 + ext.y_bearing));
+                    cairo_show_text(cr, legend.c_str());
+                    cairo_restore(cr);
+                }
+            }
         }
 
         // Backlit keycap glow halos
@@ -874,8 +917,12 @@ private:
 
             // Estimate display glyph count (UTF-8 multi-byte symbols count as 1 char)
             size_t glyphLen = 0;
-            for (unsigned char c : b.label) if ((c & 0xC0) != 0x80) glyphLen++;
-            double w = glyphLen <= 1 ? 23.0 : (glyphLen == 2 ? 30.0 : 38.0);
+            bool hasNonAscii = false;
+            for (unsigned char c : b.label) {
+                if ((c & 0xC0) != 0x80) glyphLen++;
+                if (c >= 0x80) hasNonAscii = true;
+            }
+            double w = glyphLen <= 1 ? 23.0 : (glyphLen == 2 ? (hasNonAscii ? 34.0 : 30.0) : 38.0);
             double h = 22.0;
 
             cairo_save(cr);

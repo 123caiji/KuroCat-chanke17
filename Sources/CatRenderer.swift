@@ -94,7 +94,7 @@ enum CatRenderer {
         drawMouse(in: ctx, physics: physics, theme: settings.keyboardTheme)
 
         // 2. Mini Angled 65% Mechanical Keyboard + Dynamic Keycap Glow
-        drawKeyboard(in: ctx, physics: physics, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme)
+        drawKeyboard(in: ctx, physics: physics, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme, showLegends: settings.showKeyLegends)
 
         // 3. Cat Tail (behind body)
         drawTail(in: ctx, seatX: seatX, seatY: seatY, physics: physics, coat: coat)
@@ -128,8 +128,8 @@ enum CatRenderer {
         // 8. Front Arms / Paws (over torso & keyboard/mouse with crisp separation outlines / Siamese chocolate socks!)
         drawFrontPaws(in: ctx, seatX: seatX, seatY: seatY, breath: breath, physics: physics, coat: coat)
 
-        // 8. Floating Mechanical Keycap Badges
-        if settings.showKeyBadges {
+        // 8. Floating Mechanical Keycap Badges (keyboard + mouse clicks)
+        if !physics.floatingKeycaps.isEmpty {
             drawFloatingKeycaps(in: ctx, physics: physics)
         }
 
@@ -232,14 +232,15 @@ enum CatRenderer {
         in ctx: CGContext,
         physics: CatPhysics,
         theme: KeyboardTheme,
-        eyeTheme: EyeColorTheme
+        eyeTheme: EyeColorTheme,
+        showLegends: Bool
     ) {
-        let tl = KeyboardLayout.screenQuadPoint(su: -0.025, sv: -0.08)
-        let tr = KeyboardLayout.screenQuadPoint(su: 1.025, sv: -0.08)
-        let bl = KeyboardLayout.screenQuadPoint(su: -0.032, sv: 1.08)
-        let br = KeyboardLayout.screenQuadPoint(su: 1.032, sv: 1.08)
+        let tl = KeyboardLayout.screenQuadPoint(su: -0.012, sv: -0.04)
+        let tr = KeyboardLayout.screenQuadPoint(su: 1.012, sv: -0.04)
+        let bl = KeyboardLayout.screenQuadPoint(su: -0.016, sv: 1.04)
+        let br = KeyboardLayout.screenQuadPoint(su: 1.016, sv: 1.04)
 
-        let caseDepth: CGFloat = 6.5
+        let caseDepth: CGFloat = 4.5
 
         // Soft ambient drop shadow beneath keyboard
         ctx.saveGState()
@@ -333,6 +334,35 @@ enum CatRenderer {
             ctx.setLineWidth(0.65)
             ctx.addPath(kPath)
             ctx.strokePath()
+
+            if showLegends && cap.key != .space {
+                let legend = keycapLegend(cap.key)
+                if !legend.isEmpty {
+                    let cx = (kTL.x + kTR.x + kBR.x + kBL.x) * 0.25
+                    let cy = (kTL.y + kTR.y + kBR.y + kBL.y) * 0.25
+                    let textColor: NSColor
+                    if cap.isAmberAccent || theme != .midnightHacker {
+                        textColor = NSColor(calibratedRed: 0.14, green: 0.14, blue: 0.16, alpha: 0.78)
+                    } else {
+                        textColor = NSColor(calibratedRed: 0.88, green: 0.90, blue: 0.92, alpha: 0.82)
+                    }
+                    let fontSize: CGFloat = legend.count <= 1 ? 5.2 : 4.2
+                    let attrs: [NSAttributedString.Key: Any] = [
+                        .font: NSFont.systemFont(ofSize: fontSize, weight: .semibold),
+                        .foregroundColor: textColor
+                    ]
+                    let str = NSAttributedString(string: legend, attributes: attrs)
+                    let sz = str.size()
+                    ctx.saveGState()
+                    ctx.translateBy(x: cx, y: cy)
+                    ctx.rotate(by: 0.052)
+                    NSGraphicsContext.saveGraphicsState()
+                    NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+                    str.draw(at: CGPoint(x: -sz.width * 0.5, y: -sz.height * 0.5))
+                    NSGraphicsContext.restoreGraphicsState()
+                    ctx.restoreGState()
+                }
+            }
         }
 
         // Signature soft chartreuse backlit glow halos on active keys!
@@ -1162,7 +1192,15 @@ enum CatRenderer {
             let alpha: CGFloat = progress < 0.62 ? 1.0 : max(0, 1.0 - (progress - 0.62) / 0.38)
 
             let charCount = badge.label.count
-            let w: CGFloat = charCount <= 1 ? 23 : (charCount == 2 ? 30 : 38)
+            let fontSize: CGFloat = charCount <= 1 ? 11.5 : 10.0
+            let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: NSColor(calibratedRed: 0.12, green: 0.12, blue: 0.14, alpha: 1.0)
+            ]
+            let attrStr = NSAttributedString(string: badge.label, attributes: attrs)
+            let strSize = attrStr.size()
+            let w: CGFloat = max(23, ceil(strSize.width) + 12)
             let h: CGFloat = 22
 
             ctx.saveGState()
@@ -1191,14 +1229,6 @@ enum CatRenderer {
             ctx.strokePath()
 
             // Centered bold key label
-            let fontSize: CGFloat = charCount <= 1 ? 11.5 : 10.0
-            let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: NSColor(calibratedRed: 0.12, green: 0.12, blue: 0.14, alpha: 1.0)
-            ]
-            let attrStr = NSAttributedString(string: badge.label, attributes: attrs)
-            let strSize = attrStr.size()
             let drawPt = CGPoint(x: -strSize.width * 0.5, y: -strSize.height * 0.5 - 0.5)
             NSGraphicsContext.saveGraphicsState()
             let nsCtx = NSGraphicsContext(cgContext: ctx, flipped: true)
@@ -1278,6 +1308,22 @@ enum CatRenderer {
     }
 
     // MARK: - Geometry & Color Helpers
+
+    private static func keycapLegend(_ key: PhysicalKey) -> String {
+        switch key {
+        case .escape: return "ESC"
+        case .tab: return "⇥"
+        case .capsLock: return "⇪"
+        case .leftShift, .rightShift: return "⇧"
+        case .leftControl, .rightControl: return "⌃"
+        case .leftOption, .rightOption: return "⌥"
+        case .leftCommand, .rightCommand: return "⌘"
+        case .backspace: return "⌫"
+        case .enter: return "↵"
+        case .space: return ""
+        default: return key.badgeLabel
+        }
+    }
 
     private static func offsetY(_ pt: CGPoint, _ dy: CGFloat) -> CGPoint {
         CGPoint(x: pt.x, y: pt.y + dy)

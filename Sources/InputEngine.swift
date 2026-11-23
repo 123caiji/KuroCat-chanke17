@@ -104,6 +104,8 @@ final class InputEngine {
             }
             if !self.isTapActive && (self.hasInputMonitoringPermission || self.hasAccessibilityPermission) {
                 self.tryStartEventTap()
+            } else if self.isTapActive, let tap = self.eventTap, !CGEvent.tapIsEnabled(tap: tap) {
+                CGEvent.tapEnable(tap: tap, enable: true)
             }
             if self.status != prevStatus {
                 self.notifyStatus()

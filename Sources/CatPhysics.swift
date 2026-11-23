@@ -58,6 +58,12 @@ final class CatSettings {
     var showKeyBadges: Bool {
         didSet { UserDefaults.standard.set(showKeyBadges, forKey: "KuroCat.ShowKeyBadges") }
     }
+    var showMouseBadges: Bool {
+        didSet { UserDefaults.standard.set(showMouseBadges, forKey: "KuroCat.ShowMouseBadges") }
+    }
+    var showKeyLegends: Bool {
+        didSet { UserDefaults.standard.set(showKeyLegends, forKey: "KuroCat.ShowKeyLegends") }
+    }
     var footEasterEgg: Bool {
         didSet { UserDefaults.standard.set(footEasterEgg, forKey: "KuroCat.FootEasterEgg") }
     }
@@ -86,6 +92,8 @@ final class CatSettings {
     private init() {
         let d = UserDefaults.standard
         showKeyBadges = d.object(forKey: "KuroCat.ShowKeyBadges") as? Bool ?? true
+        showMouseBadges = d.object(forKey: "KuroCat.ShowMouseBadges") as? Bool ?? true
+        showKeyLegends = d.object(forKey: "KuroCat.ShowKeyLegends") as? Bool ?? true
         footEasterEgg = d.object(forKey: "KuroCat.FootEasterEgg") as? Bool ?? true
         petInteraction = d.object(forKey: "KuroCat.PetInteraction") as? Bool ?? true
         fullClickThrough = d.object(forKey: "KuroCat.FullClickThrough") as? Bool ?? false
@@ -309,6 +317,7 @@ final class CatPhysics {
     func triggerMouseClick(button: Int, isDown: Bool) {
         sleepiness = 0
         if isDown {
+            let now = CACurrentMediaTime()
             if button == 0 {
                 mousePressLeft.target = 1.0
                 leftPaw.y.velocity += 130
@@ -318,6 +327,14 @@ final class CatPhysics {
             }
             pupilScale.target = 1.12
             earTwitch.velocity -= 2.2
+            if CatSettings.shared.showMouseBadges {
+                let label = button == 0 ? "左键" : (button == 1 ? "右键" : "中键")
+                let pt = CGPoint(
+                    x: CatPhysics.mouseBaseCenter.x + mouseOffset.point.x,
+                    y: CatPhysics.mouseBaseCenter.y + mouseOffset.point.y - 6
+                )
+                spawnFloatingKeycap(label: label, near: pt, now: now)
+            }
         } else {
             if button == 0 { mousePressLeft.target = 0 }
             else { mousePressRight.target = 0 }

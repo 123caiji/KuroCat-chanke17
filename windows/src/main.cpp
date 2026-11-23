@@ -3,9 +3,12 @@
 #define _UNICODE
 #include <windows.h>
 #include <shellapi.h>
+#include <winhttp.h>
 #include <objidl.h>
 #include <gdiplus.h>
 #include <string>
+#include <vector>
+#include <thread>
 #include <cmath>
 #include <algorithm>
 #include "KeyMap.hpp"
@@ -18,11 +21,14 @@
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "winhttp.lib")
 
 namespace {
 
+constexpr const wchar_t* APP_VERSION = L"1.3.0";
 constexpr UINT WM_TRAYICON = WM_APP + 1;
 constexpr UINT WM_WAKE_EXISTING = WM_APP + 2;
+constexpr UINT WM_UPDATE_CHECK_DONE = WM_APP + 3;
 constexpr UINT_PTR TIMER_RENDER = 1;
 constexpr int HOTKEY_CLICKTHROUGH_ID = 101;
 UINT g_msgTaskbarCreated = 0;
@@ -33,6 +39,8 @@ enum MenuCmd : UINT {
     CMD_TOGGLE_TOPMOST,
     CMD_TOGGLE_AUTOSTART,
     CMD_TOGGLE_BADGES,
+    CMD_TOGGLE_MOUSE_BADGES,
+    CMD_TOGGLE_KEY_LEGENDS,
     CMD_TOGGLE_FOOT,
     CMD_TOGGLE_PET,
     CMD_COAT_BLACK,
@@ -55,6 +63,8 @@ enum MenuCmd : UINT {
     CMD_SCALE_150,
     CMD_DEMO_BURST,
     CMD_RESET_POS,
+    CMD_CHECK_UPDATE,
+    CMD_OPEN_UPDATE,
     CMD_QUIT
 };
 
@@ -87,6 +97,9 @@ struct AppState {
     bool demoActive = false;
     double demoStartTime = 0.0;
     int demoStepIdx = 0;
+
+    std::wstring availableUpdateVersion;
+    std::wstring availableUpdateUrl;
 
     void destroyBuffer() {
         if (memDC && oldBmp) SelectObject(memDC, oldBmp);
@@ -171,6 +184,120 @@ void showTrayBalloon(AppState& app, const wchar_t* title, const wchar_t* body) {
     wcsncpy_s(b.szInfoTitle, title, _TRUNCATE);
     wcsncpy_s(b.szInfo, body, _TRUNCATE);
     Shell_NotifyIconW(NIM_MODIFY, &b);
+}
+
+// MARK: - Auto Update Checker (GitHub Releases via WinHTTP)
+
+struct UpdateCheckResult {
+    bool ok = false;
+    bool manual = false;
+    bool hasUpdate = false;
+    std::wstring latestTag;
+    std::wstring releaseUrl;
+};
+
+std::wstring utf8ToWide(const std::string& s) {
+    if (s.empty()) return L"";
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0);
+    if (n <= 0) return L"";
+    std::wstring w(n, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), &w[0], n);
+    return w;
+}
+
+std::string extractJsonStringField(const std::string& json, const char* fieldName) {
+    std::string key = std::string("\"") + fieldName + "\"";
+    size_t pos = json.find(key);
+    if (pos == std::string::npos) return "";
+    pos = json.find(':', pos + key.size());
+    if (pos == std::string::npos) return "";
+    pos = json.find('"', pos + 1);
+    if (pos == std::string::npos) return "";
+    size_t end = json.find('"', pos + 1);
+    if (end == std::string::npos) return "";
+    return json.substr(pos + 1, end - pos - 1);
+}
+
+bool isSemVerNewer(const std::wstring& lhs, const std::wstring& rhs) {
+    auto parse = [](const std::wstring& v) {
+        std::vector<int> parts;
+        size_t i = 0;
+        while (i < v.size() && (v[i] == L'v' || v[i] == L'V' || v[i] == L' ')) i++;
+        int cur = 0; bool inNum = false;
+        for (; i < v.size(); ++i) {
+            if (v[i] >= L'0' && v[i] <= L'9') {
+                cur = cur * 10 + (v[i] - L'0');
+                inNum = true;
+            } else if (v[i] == L'.') {
+                parts.push_back(inNum ? cur : 0);
+                cur = 0; inNum = false;
+            } else {
+                break;
+            }
+        }
+        if (inNum) parts.push_back(cur);
+        return parts;
+    };
+    auto a = parse(lhs);
+    auto b = parse(rhs);
+    size_t n = std::max(a.size(), b.size());
+    for (size_t i = 0; i < n; ++i) {
+        int va = i < a.size() ? a[i] : 0;
+        int vb = i < b.size() ? b[i] : 0;
+        if (va != vb) return va > vb;
+    }
+    return false;
+}
+
+void startAsyncUpdateCheck(HWND notifyHwnd, bool manual, int delayMs = 0) {
+    std::thread([notifyHwnd, manual, delayMs]() {
+        if (delayMs > 0) Sleep((DWORD)delayMs);
+        auto* res = new UpdateCheckResult();
+        res->manual = manual;
+
+        HINTERNET hSession = WinHttpOpen(L"KuroCat/1.3.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        if (hSession) {
+            WinHttpSetTimeouts(hSession, 8000, 8000, 8000, 8000);
+            HINTERNET hConnect = WinHttpConnect(hSession, L"api.github.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
+            if (hConnect) {
+                HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", L"/repos/chanke17/KuroCat/releases/latest", nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+                if (hRequest) {
+                    LPCWSTR headers = L"Accept: application/vnd.github+json\r\n";
+                    if (WinHttpSendRequest(hRequest, headers, (DWORD)-1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+                        WinHttpReceiveResponse(hRequest, nullptr)) {
+                        std::string body;
+                        DWORD avail = 0;
+                        while (WinHttpQueryDataAvailable(hRequest, &avail) && avail > 0) {
+                            std::vector<char> buf(avail);
+                            DWORD readBytes = 0;
+                            if (WinHttpReadData(hRequest, buf.data(), avail, &readBytes) && readBytes > 0) {
+                                body.append(buf.data(), readBytes);
+                            } else {
+                                break;
+                            }
+                        }
+                        std::string tag = extractJsonStringField(body, "tag_name");
+                        std::string url = extractJsonStringField(body, "html_url");
+                        if (!tag.empty()) {
+                            res->ok = true;
+                            res->latestTag = utf8ToWide(tag);
+                            res->releaseUrl = url.empty()
+                                ? L"https://github.com/chanke17/KuroCat/releases/latest"
+                                : utf8ToWide(url);
+                            res->hasUpdate = isSemVerNewer(res->latestTag, APP_VERSION);
+                        }
+                    }
+                    WinHttpCloseHandle(hRequest);
+                }
+                WinHttpCloseHandle(hConnect);
+            }
+            WinHttpCloseHandle(hSession);
+        }
+
+        if (!PostMessageW(notifyHwnd, WM_UPDATE_CHECK_DONE, 0, reinterpret_cast<LPARAM>(res))) {
+            delete res;
+        }
+    }).detach();
 }
 
 void registerTrayIcon(AppState& app) {
@@ -284,6 +411,8 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
     AppendMenuW(menu, MF_STRING | (app.settings.showKeyBadges ? MF_CHECKED : 0), CMD_TOGGLE_BADGES, L"\u663E\u793A\u6309\u952E\u6C14\u6CE1 ([S] [W] [\u21E7])");
+    AppendMenuW(menu, MF_STRING | (app.settings.showMouseBadges ? MF_CHECKED : 0), CMD_TOGGLE_MOUSE_BADGES, L"\u663E\u793A\u9F20\u6807\u70B9\u51FB\u6C14\u6CE1 ([\u5DE6\u952E] [\u53F3\u952E])");
+    AppendMenuW(menu, MF_STRING | (app.settings.showKeyLegends ? MF_CHECKED : 0), CMD_TOGGLE_KEY_LEGENDS, L"\u663E\u793A\u952E\u76D8\u5B57\u7B26");
     AppendMenuW(menu, MF_STRING | (app.settings.footEasterEgg ? MF_CHECKED : 0), CMD_TOGGLE_FOOT, L"3\u952E\u540C\u65F6\u6309\u300C\u7528\u811A\u6309\u300D\u5F69\u86CB");
     AppendMenuW(menu, MF_STRING | (app.settings.petInteraction ? MF_CHECKED : 0), CMD_TOGGLE_PET, L"\u6478\u5934/\u6478\u80CC\u95ED\u773C\u4E92\u52A8");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -326,6 +455,13 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, CMD_DEMO_BURST, L"\u6F14\u793A\u6253\u5B57\u52A8\u753B");
     AppendMenuW(menu, MF_STRING, CMD_RESET_POS, L"\u91CD\u7F6E\u4F4D\u7F6E\u5230\u53F3\u4E0B\u89D2");
+    if (!app.availableUpdateVersion.empty()) {
+        std::wstring upTxt = L"\U0001F195 \u53D1\u73B0\u65B0\u7248\u672C " + app.availableUpdateVersion + L" (\u70B9\u51FB\u66F4\u65B0)";
+        AppendMenuW(menu, MF_STRING, CMD_OPEN_UPDATE, upTxt.c_str());
+    } else {
+        std::wstring chkTxt = std::wstring(L"\u68C0\u67E5\u66F4\u65B0 (\u5F53\u524D v") + APP_VERSION + L")";
+        AppendMenuW(menu, MF_STRING, CMD_CHECK_UPDATE, chkTxt.c_str());
+    }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, CMD_QUIT, L"\u9000\u51FA KuroCat");
 
@@ -358,6 +494,14 @@ void showContextMenu(AppState& app, POINT screenPt) {
             break;
         case CMD_TOGGLE_BADGES:
             app.settings.showKeyBadges = !app.settings.showKeyBadges;
+            app.settings.saveToRegistry();
+            break;
+        case CMD_TOGGLE_MOUSE_BADGES:
+            app.settings.showMouseBadges = !app.settings.showMouseBadges;
+            app.settings.saveToRegistry();
+            break;
+        case CMD_TOGGLE_KEY_LEGENDS:
+            app.settings.showKeyLegends = !app.settings.showKeyLegends;
             app.settings.saveToRegistry();
             break;
         case CMD_TOGGLE_FOOT:
@@ -408,6 +552,16 @@ void showContextMenu(AppState& app, POINT screenPt) {
             app.settings.posY = -99999;
             applyWindowScaleAndPosition(app, false);
             break;
+        case CMD_CHECK_UPDATE:
+            if (app.menuOwnerHwnd) startAsyncUpdateCheck(app.menuOwnerHwnd, true, 0);
+            break;
+        case CMD_OPEN_UPDATE: {
+            const wchar_t* url = app.availableUpdateUrl.empty()
+                ? L"https://github.com/chanke17/KuroCat/releases/latest"
+                : app.availableUpdateUrl.c_str();
+            ShellExecuteW(nullptr, L"open", url, nullptr, nullptr, SW_SHOWNORMAL);
+            break;
+        }
         case CMD_QUIT:
             PostQuitMessage(0);
             break;
@@ -603,6 +757,33 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             return 0;
 
+        case WM_UPDATE_CHECK_DONE: {
+            auto* res = reinterpret_cast<UpdateCheckResult*>(lParam);
+            if (res) {
+                if (app && res->ok && res->hasUpdate) {
+                    app->availableUpdateVersion = res->latestTag;
+                    app->availableUpdateUrl = res->releaseUrl;
+                    std::wstring msg = L"\u53D1\u73B0 KuroCat \u65B0\u7248\u672C " + res->latestTag
+                        + L"\n\u5F53\u524D\u7248\u672C\uFF1Av" + APP_VERSION
+                        + L"\n\n\u662F\u5426\u524D\u5F80 GitHub Releases \u4E0B\u8F7D\u66F4\u65B0\uFF1F";
+                    if (MessageBoxW(nullptr, msg.c_str(), L"KuroCat \u66F4\u65B0\u63D0\u9192",
+                                    MB_YESNO | MB_ICONINFORMATION | MB_TOPMOST) == IDYES) {
+                        ShellExecuteW(nullptr, L"open", res->releaseUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                    }
+                } else if (res->manual) {
+                    if (res->ok) {
+                        std::wstring msg = std::wstring(L"\u5F53\u524D\u7248\u672C v") + APP_VERSION + L" \u5DF2\u662F\u6700\u65B0\u7248\u672C\u3002";
+                        MessageBoxW(nullptr, msg.c_str(), L"KuroCat \u68C0\u67E5\u66F4\u65B0", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+                    } else {
+                        MessageBoxW(nullptr, L"\u65E0\u6CD5\u8FDE\u63A5\u5230 GitHub\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u6216\u68C0\u67E5\u7F51\u7EDC\u3002",
+                                    L"KuroCat \u68C0\u67E5\u66F4\u65B0", MB_OK | MB_ICONWARNING | MB_TOPMOST);
+                    }
+                }
+                delete res;
+            }
+            return 0;
+        }
+
         case WM_DESTROY:
             if (hwnd == (app ? app->hwnd : nullptr)) {
                 KillTimer(hwnd, TIMER_RENDER);
@@ -660,7 +841,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     }
 
     app.input.onKeyDown = [&](PhysicalKey k) { app.physics.triggerKeyDown(k, app.settings); };
-    app.input.onMouseClick = [&](int btn, bool down) { app.physics.triggerMouseClick(btn, down); };
+    app.input.onMouseClick = [&](int btn, bool down) { app.physics.triggerMouseClick(btn, down, app.settings); };
 
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
@@ -721,6 +902,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     // Global shortcut Ctrl+Alt+Shift+P to toggle full click-through anytime!
     if (app.menuOwnerHwnd) {
         RegisterHotKey(app.menuOwnerHwnd, HOTKEY_CLICKTHROUGH_ID, MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'P');
+        startAsyncUpdateCheck(app.menuOwnerHwnd, false, 2500);
     }
 
     ShowWindow(app.hwnd, SW_SHOWNOACTIVATE);

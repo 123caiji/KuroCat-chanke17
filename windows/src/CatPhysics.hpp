@@ -33,6 +33,8 @@ enum class EyeColorTheme : int {
 
 struct CatSettings {
     bool showKeyBadges = true;
+    bool showMouseBadges = true;
+    bool showKeyLegends = true;
     bool footEasterEgg = true;
     bool petInteraction = true;
     bool fullClickThrough = false;
@@ -53,6 +55,8 @@ struct CatSettings {
             return defVal;
         };
         showKeyBadges    = readDword(L"ShowKeyBadges", 1) != 0;
+        showMouseBadges  = readDword(L"ShowMouseBadges", 1) != 0;
+        showKeyLegends   = readDword(L"ShowKeyLegends", 1) != 0;
         footEasterEgg    = readDword(L"FootEasterEgg", 1) != 0;
         petInteraction   = readDword(L"PetInteraction", 1) != 0;
         fullClickThrough = readDword(L"FullClickThrough", 0) != 0;
@@ -76,6 +80,8 @@ struct CatSettings {
             RegSetValueExW(hKey, name, 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
         };
         writeDword(L"ShowKeyBadges", showKeyBadges ? 1 : 0);
+        writeDword(L"ShowMouseBadges", showMouseBadges ? 1 : 0);
+        writeDword(L"ShowKeyLegends", showKeyLegends ? 1 : 0);
         writeDword(L"FootEasterEgg", footEasterEgg ? 1 : 0);
         writeDword(L"PetInteraction", petInteraction ? 1 : 0);
         writeDword(L"FullClickThrough", fullClickThrough ? 1 : 0);
@@ -225,9 +231,10 @@ public:
         }
     }
 
-    void triggerMouseClick(int button, bool isDown) {
+    void triggerMouseClick(int button, bool isDown, const CatSettings& settings) {
         sleepiness = 0.0f;
         if (isDown) {
+            double now = nowSeconds();
             if (button == 0) {
                 mousePressLeft.target = 1.0f;
                 leftPaw.y.velocity += 130.0f;
@@ -237,6 +244,11 @@ public:
             }
             pupilScale.target = 1.12f;
             earTwitch.velocity -= 2.2f;
+            if (settings.showMouseBadges) {
+                std::wstring lbl = (button == 0) ? L"\u5DE6\u952E" : (button == 1 ? L"\u53F3\u952E" : L"\u4E2D\u952E");
+                Pt pt = { MouseBaseCenter.x + mouseOffset.point().x, MouseBaseCenter.y + mouseOffset.point().y - 6.0f };
+                spawnFloatingKeycap(lbl, pt, now);
+            }
         } else {
             if (button == 0) mousePressLeft.target = 0.0f;
             else mousePressRight.target = 0.0f;

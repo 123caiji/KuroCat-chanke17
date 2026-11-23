@@ -56,7 +56,7 @@ public:
         drawMouse(g, physics, settings.keyboardTheme);
 
         // 2. Mini 65% Mechanical Keyboard (facing cat) + Backlit Glow
-        drawKeyboard(g, physics, settings.keyboardTheme, settings.eyeTheme);
+        drawKeyboard(g, physics, settings.keyboardTheme, settings.eyeTheme, settings.showKeyLegends);
 
         // 3. Tail
         drawTail(g, seatX, seatY, physics, settings.coatTheme);
@@ -78,8 +78,8 @@ public:
         // 8. Front Paws (Idle Sitting & Dynamic Reaching)
         drawFrontPaws(g, seatX, seatY, breath, physics, settings.coatTheme);
 
-        // 9. Floating Keycap Badges
-        if (settings.showKeyBadges) {
+        // 9. Floating Keycap Badges (keyboard + mouse clicks)
+        if (!physics.floatingKeycaps.empty()) {
             drawFloatingKeycaps(g, physics);
         }
 
@@ -253,13 +253,33 @@ private:
 
     // MARK: - Mini 65% Mechanical Keyboard (180° facing the cat)
 
-    static void drawKeyboard(Gdiplus::Graphics& g, const CatPhysics& physics, KeyboardTheme theme, EyeColorTheme eyeTheme) {
+    static std::wstring keycapLegend(PhysicalKey k) {
+        switch (k) {
+            case PhysicalKey::Escape: return L"ESC";
+            case PhysicalKey::Tab: return L"\u21E5";
+            case PhysicalKey::CapsLock: return L"\u21EA";
+            case PhysicalKey::LeftShift:
+            case PhysicalKey::RightShift: return L"\u21E7";
+            case PhysicalKey::LeftControl:
+            case PhysicalKey::RightControl: return L"Ctrl";
+            case PhysicalKey::LeftAlt:
+            case PhysicalKey::RightAlt: return L"Alt";
+            case PhysicalKey::LeftWin:
+            case PhysicalKey::RightWin: return L"Win";
+            case PhysicalKey::Backspace: return L"\u232B";
+            case PhysicalKey::Enter: return L"\u21B5";
+            case PhysicalKey::Space: return L"";
+            default: return keyBadgeLabel(k);
+        }
+    }
+
+    static void drawKeyboard(Gdiplus::Graphics& g, const CatPhysics& physics, KeyboardTheme theme, EyeColorTheme eyeTheme, bool showLegends) {
         using namespace Gdiplus;
-        Pt tl = KeyboardLayout::screenQuadPoint(-0.025f, -0.08f);
-        Pt tr = KeyboardLayout::screenQuadPoint(1.025f, -0.08f);
-        Pt bl = KeyboardLayout::screenQuadPoint(-0.032f, 1.08f);
-        Pt br = KeyboardLayout::screenQuadPoint(1.032f, 1.08f);
-        constexpr float depth = 6.5f;
+        Pt tl = KeyboardLayout::screenQuadPoint(-0.012f, -0.04f);
+        Pt tr = KeyboardLayout::screenQuadPoint(1.012f, -0.04f);
+        Pt bl = KeyboardLayout::screenQuadPoint(-0.016f, 1.04f);
+        Pt br = KeyboardLayout::screenQuadPoint(1.016f, 1.04f);
+        constexpr float depth = 4.5f;
 
         // Shadow
         {
@@ -286,7 +306,7 @@ private:
             GraphicsPath lp;
             addQuadPoly(lp, {tl.x, tl.y + depth}, {tr.x, tr.y + depth}, {br.x, br.y + depth}, {bl.x, bl.y + depth});
             SolidBrush bb(baseCol);
-            Pen bp(baseCol, 5.0f); bp.SetLineJoin(LineJoinRound);
+            Pen bp(baseCol, 2.5f); bp.SetLineJoin(LineJoinRound);
             g.FillPath(&bb, &lp);
             g.DrawPath(&bp, &lp);
         }
@@ -294,7 +314,7 @@ private:
             GraphicsPath tp;
             addQuadPoly(tp, tl, tr, br, bl);
             SolidBrush db(deckCol);
-            Pen dp(deckCol, 4.0f); dp.SetLineJoin(LineJoinRound);
+            Pen dp(deckCol, 2.0f); dp.SetLineJoin(LineJoinRound);
             g.FillPath(&db, &tp);
             g.DrawPath(&dp, &tp);
         }
@@ -302,7 +322,11 @@ private:
         constexpr float padU = 0.0028f;
         constexpr float padV = 0.014f;
         Color glowCol = eyePrimary(eyeTheme, 215);
-        Pen keyBorderPen(borderCol, 0.7f);
+        Pen keyBorderPen(borderCol, 0.65f);
+        FontFamily kbFF(L"Segoe UI");
+        StringFormat kbSF;
+        kbSF.SetAlignment(StringAlignmentCenter);
+        kbSF.SetLineAlignment(StringAlignmentCenter);
 
         for (const auto& cap : KeyboardLayout::keycaps()) {
             float glow = 0.0f;
@@ -329,6 +353,25 @@ private:
             SolidBrush kb(fill);
             g.FillPath(&kb, &kp);
             g.DrawPath(&keyBorderPen, &kp);
+
+            if (showLegends && cap.key != PhysicalKey::Space) {
+                std::wstring legend = keycapLegend(cap.key);
+                if (!legend.empty()) {
+                    float cx = (kTL.x + kTR.x + kBR.x + kBL.x) * 0.25f;
+                    float cy = (kTL.y + kTR.y + kBR.y + kBL.y) * 0.25f;
+                    Color txtCol = (cap.isAmberAccent || theme != KeyboardTheme::MidnightHacker)
+                        ? Color(198, 36, 36, 41)
+                        : Color(210, 224, 230, 235);
+                    SolidBrush tb(txtCol);
+                    float fSz = legend.size() <= 1 ? 5.2f : 3.9f;
+                    Font kf(&kbFF, fSz, FontStyleBold, UnitPixel);
+                    GraphicsState ks = g.Save();
+                    g.TranslateTransform(cx, cy);
+                    g.RotateTransform(3.0f);
+                    g.DrawString(legend.c_str(), -1, &kf, RectF(-14.0f, -7.0f, 28.0f, 14.0f), &kbSF, &tb);
+                    g.Restore(ks);
+                }
+            }
         }
 
         // Radiant backlit glow halos over pressed keys
@@ -892,7 +935,8 @@ private:
             if (a < 4) continue;
 
             size_t len = b.label.size();
-            float w = len <= 1 ? 23.0f : (len == 2 ? 30.0f : 38.0f);
+            bool hasWide = !b.label.empty() && b.label[0] > 0x7F;
+            float w = (len <= 1) ? 23.0f : (len == 2 ? (hasWide ? 34.0f : 30.0f) : 38.0f);
             float h = 22.0f;
 
             GraphicsState st = g.Save();

@@ -7,6 +7,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var renderTimer: Timer?
     private var lastFrameTime: CFTimeInterval = CACurrentMediaTime()
     private var isPetVisible = true
+    private var availableUpdateVersion: String?
+    private var availableUpdateURL: URL?
+
+    private var currentAppVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.0"
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -44,6 +50,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             _ = setAutoStartEnabled(true)
         }
         startRenderLoop()
+
+        // Auto-check GitHub Releases for updates shortly after launch
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            self?.checkForUpdates(manual: false)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -146,6 +157,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         badgesItem.state = settings.showKeyBadges ? .on : .off
         menu.addItem(badgesItem)
 
+        let mouseBadgesItem = NSMenuItem(title: "显示鼠标点击气泡 ([左键] [右键])", action: #selector(toggleMouseBadges), keyEquivalent: "")
+        mouseBadgesItem.target = self
+        mouseBadgesItem.state = settings.showMouseBadges ? .on : .off
+        menu.addItem(mouseBadgesItem)
+
+        let legendsItem = NSMenuItem(title: "显示键盘字符", action: #selector(toggleKeyLegends), keyEquivalent: "")
+        legendsItem.target = self
+        legendsItem.state = settings.showKeyLegends ? .on : .off
+        menu.addItem(legendsItem)
+
         let footItem = NSMenuItem(title: "3键同时按「用脚按」彩蛋 🐾", action: #selector(toggleFootEgg), keyEquivalent: "")
         footItem.target = self
         footItem.state = settings.footEasterEgg ? .on : .off
@@ -230,6 +251,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let relaunchItem = NSMenuItem(title: "重启 KuroCat (授权后刷新)", action: #selector(relaunchApp), keyEquivalent: "")
         relaunchItem.target = self
         menu.addItem(relaunchItem)
+
+        if let ver = availableUpdateVersion {
+            let updateItem = NSMenuItem(title: "🆕 发现新版本 \(ver) — 点击更新", action: #selector(openUpdateDownload), keyEquivalent: "")
+            updateItem.target = self
+            menu.addItem(updateItem)
+        } else {
+            let checkItem = NSMenuItem(title: "检查更新 (当前 v\(currentAppVersion))", action: #selector(manualCheckForUpdates), keyEquivalent: "")
+            checkItem.target = self
+            menu.addItem(checkItem)
+        }
 
         menu.addItem(.separator())
 
@@ -316,6 +347,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         CatSettings.shared.showKeyBadges.toggle()
     }
 
+    @objc private func toggleMouseBadges() {
+        CatSettings.shared.showMouseBadges.toggle()
+    }
+
+    @objc private func toggleKeyLegends() {
+        CatSettings.shared.showKeyLegends.toggle()
+    }
+
     @objc private func toggleFootEgg() {
         CatSettings.shared.footEasterEgg.toggle()
     }
@@ -382,6 +421,89 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func quitApp() {
         NSApp.terminate(nil)
+    }
+
+    // MARK: - Auto Update Checker (GitHub Releases)
+
+    @objc private func manualCheckForUpdates() {
+        checkForUpdates(manual: true)
+    }
+
+    @objc private func openUpdateDownload() {
+        let fallback = URL(string: "https://github.com/chanke17/KuroCat/releases/latest")!
+        NSWorkspace.shared.open(availableUpdateURL ?? fallback)
+    }
+
+    private func checkForUpdates(manual: Bool) {
+        guard let url = URL(string: "https://api.github.com/repos/chanke17/KuroCat/releases/latest") else { return }
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+        req.setValue("KuroCat/\(currentAppVersion)", forHTTPHeaderField: "User-Agent")
+        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, error in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                guard error == nil, let data,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let tagName = json["tag_name"] as? String else {
+                    if manual {
+                        self.showInfoAlert(title: "检查更新失败", message: "无法连接到 GitHub，请稍后重试或检查网络连接。")
+                    }
+                    return
+                }
+
+                let releaseURLString = (json["html_url"] as? String) ?? "https://github.com/chanke17/KuroCat/releases/latest"
+                let releaseURL = URL(string: releaseURLString)
+
+                if self.isVersion(tagName, newerThan: self.currentAppVersion) {
+                    self.availableUpdateVersion = tagName
+                    self.availableUpdateURL = releaseURL
+                    self.promptUpdateAvailable(latestTag: tagName, releaseURL: releaseURL)
+                } else if manual {
+                    self.showInfoAlert(title: "已是最新版本", message: "当前版本 v\(self.currentAppVersion) 已是最新版本。")
+                }
+            }
+        }.resume()
+    }
+
+    private func isVersion(_ lhs: String, newerThan rhs: String) -> Bool {
+        func parse(_ v: String) -> [Int] {
+            let trimmed = v.trimmingCharacters(in: CharacterSet(charactersIn: "vV "))
+            return trimmed.split(separator: ".").map { Int($0.prefix(while: { $0.isNumber })) ?? 0 }
+        }
+        let a = parse(lhs)
+        let b = parse(rhs)
+        let count = max(a.count, b.count)
+        for i in 0..<count {
+            let va = i < a.count ? a[i] : 0
+            let vb = i < b.count ? b[i] : 0
+            if va != vb { return va > vb }
+        }
+        return false
+    }
+
+    private func promptUpdateAvailable(latestTag: String, releaseURL: URL?) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "发现 KuroCat 新版本 \(latestTag)"
+        alert.informativeText = "当前版本：v\(currentAppVersion)\n最新版本：\(latestTag)\n\n点击「前往更新」打开 GitHub Releases 下载最新版本。"
+        alert.addButton(withTitle: "前往更新")
+        alert.addButton(withTitle: "稍后再说")
+        if alert.runModal() == .alertFirstButtonReturn {
+            let fallback = URL(string: "https://github.com/chanke17/KuroCat/releases/latest")!
+            NSWorkspace.shared.open(releaseURL ?? fallback)
+        }
+    }
+
+    private func showInfoAlert(title: String, message: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "好")
+        alert.runModal()
     }
 
     // MARK: - Crisp Vector Menu Bar Cat Silhouette Icon

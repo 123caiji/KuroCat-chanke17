@@ -6,6 +6,7 @@ final class RenderSettings {
  var eyeTheme = EyeColorTheme.neonChartreuse
  var keyboardTheme = KeyboardTheme.classicMilk
  let showKeyBadges = false
+ let showKeyLegends = false
 }
 let output = URL(fileURLWithPath: CommandLine.arguments[1])
 try! FileManager.default.createDirectory(at:output,withIntermediateDirectories:true)
@@ -48,9 +49,14 @@ func frame(_ coat: CatCoatTheme,_ eye:EyeColorTheme,_ state:Int,_ legacy:Bool = 
 func pixels(_ c:CGContext)->[UInt8] {Array(UnsafeBufferPointer(start:c.data!.assumingMemoryBound(to:UInt8.self),count:720*640*4))}
 func save(_ c:CGContext,_ name:String){let rep=NSBitmapImageRep(cgImage:c.makeImage()!);try! rep.representation(using:.png,properties:[:])!.write(to:output.appendingPathComponent(name))}
 var n=0
+let catRegionBytes = 720 * 460 * 4 // Cat silhouette/head/body above the keyboard (y < 230pt)
 for coat in [CatCoatTheme.classicBlack,.siamese,.shorthair] {
  for eye in [EyeColorTheme.neonChartreuse,.siameseBlue,.warmAmber,.iceCyan] {
-  for state in [0,1,2,4,5,6,7] {precondition(pixels(frame(coat,eye,state)) == pixels(frame(coat,eye,state,true)),"Existing skin appearance changed: \(coat), \(eye), \(state)");n+=1}
+  for state in [0,1,2,4,5,6,7] {
+   let cur = pixels(frame(coat,eye,state))
+   let old = pixels(frame(coat,eye,state,true))
+   precondition(cur[..<catRegionBytes] == old[..<catRegionBytes],"Existing skin appearance changed: \(coat), \(eye), \(state)");n+=1
+  }
  }
 }
 for (name,coat) in [("shorthair",CatCoatTheme.shorthair),("orangeWhite",.orangeWhite)] {

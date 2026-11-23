@@ -7,12 +7,16 @@
 #include <fstream>
 #include <limits.h>
 #include <string>
+#include <thread>
+#include <vector>
 #include <algorithm>
 #include <unistd.h>
 #include "KeyMap.hpp"
 #include "InputEngine.hpp"
 #include "CatPhysics.hpp"
 #include "CatRenderer.hpp"
+
+static constexpr const char* APP_VERSION = "1.3.0";
 
 struct LinuxApp {
     GtkWidget* window = nullptr;
@@ -38,6 +42,9 @@ struct LinuxApp {
     bool demoActive = false;
     double demoStartTime = 0.0;
     int demoStepIdx = 0;
+
+    std::string availableUpdateVersion;
+    std::string availableUpdateUrl;
 };
 
 static LinuxApp* g_app = nullptr;
@@ -152,6 +159,120 @@ static void applyWindowScaleAndPos(LinuxApp& app, bool anchorBottomCenter) {
     app.settings.save();
 }
 
+static void openUrlInBrowser(const std::string& url) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        execlp("xdg-open", "xdg-open", url.c_str(), nullptr);
+        _exit(127);
+    }
+}
+
+struct LinuxUpdateResult {
+    bool ok = false;
+    bool manual = false;
+    bool hasUpdate = false;
+    std::string latestTag;
+    std::string releaseUrl;
+};
+
+static std::string extractJsonField(const std::string& json, const char* fieldName) {
+    std::string key = std::string("\"") + fieldName + "\"";
+    size_t pos = json.find(key);
+    if (pos == std::string::npos) return "";
+    pos = json.find(':', pos + key.size());
+    if (pos == std::string::npos) return "";
+    pos = json.find('"', pos + 1);
+    if (pos == std::string::npos) return "";
+    size_t end = json.find('"', pos + 1);
+    if (end == std::string::npos) return "";
+    return json.substr(pos + 1, end - pos - 1);
+}
+
+static bool isSemVerNewer(const std::string& lhs, const std::string& rhs) {
+    auto parse = [](const std::string& v) {
+        std::vector<int> parts;
+        size_t i = 0;
+        while (i < v.size() && (v[i] == 'v' || v[i] == 'V' || v[i] == ' ')) i++;
+        int cur = 0; bool inNum = false;
+        for (; i < v.size(); ++i) {
+            if (v[i] >= '0' && v[i] <= '9') { cur = cur * 10 + (v[i] - '0'); inNum = true; }
+            else if (v[i] == '.') { parts.push_back(inNum ? cur : 0); cur = 0; inNum = false; }
+            else break;
+        }
+        if (inNum) parts.push_back(cur);
+        return parts;
+    };
+    auto a = parse(lhs), b = parse(rhs);
+    size_t n = std::max(a.size(), b.size());
+    for (size_t i = 0; i < n; ++i) {
+        int va = i < a.size() ? a[i] : 0;
+        int vb = i < b.size() ? b[i] : 0;
+        if (va != vb) return va > vb;
+    }
+    return false;
+}
+
+static void startAsyncUpdateCheck(bool manual, int delayMs = 0) {
+    std::thread([manual, delayMs]() {
+        if (delayMs > 0) usleep((useconds_t)delayMs * 1000);
+        auto* res = new LinuxUpdateResult();
+        res->manual = manual;
+
+        const char* cmd =
+            "curl -fsSL --max-time 8 -A KuroCat/1.3.0 "
+            "-H 'Accept: application/vnd.github+json' "
+            "'https://api.github.com/repos/chanke17/KuroCat/releases/latest' 2>/dev/null "
+            "|| wget -qO- --timeout=8 --header='Accept: application/vnd.github+json' "
+            "'https://api.github.com/repos/chanke17/KuroCat/releases/latest' 2>/dev/null";
+        std::string body;
+        if (FILE* fp = popen(cmd, "r")) {
+            char buf[1024];
+            while (size_t n = std::fread(buf, 1, sizeof(buf), fp)) body.append(buf, n);
+            pclose(fp);
+        }
+        std::string tag = extractJsonField(body, "tag_name");
+        std::string url = extractJsonField(body, "html_url");
+        if (!tag.empty()) {
+            res->ok = true;
+            res->latestTag = tag;
+            res->releaseUrl = url.empty() ? "https://github.com/chanke17/KuroCat/releases/latest" : url;
+            res->hasUpdate = isSemVerNewer(tag, APP_VERSION);
+        }
+
+        g_idle_add(+[](gpointer data) -> gboolean {
+            auto* r = static_cast<LinuxUpdateResult*>(data);
+            if (g_app && r->ok && r->hasUpdate) {
+                g_app->availableUpdateVersion = r->latestTag;
+                g_app->availableUpdateUrl = r->releaseUrl;
+                GtkWidget* dlg = gtk_message_dialog_new(
+                    nullptr, GTK_DIALOG_MODAL, GTK_MESSAGE_INFO, GTK_BUTTONS_YES_NO,
+                    "发现 KuroCat 新版本 %s", r->latestTag.c_str());
+                gtk_message_dialog_format_secondary_text(
+                    GTK_MESSAGE_DIALOG(dlg),
+                    "当前版本：v%s\n最新版本：%s\n\n是否前往 GitHub Releases 下载更新？",
+                    APP_VERSION, r->latestTag.c_str());
+                int resp = gtk_dialog_run(GTK_DIALOG(dlg));
+                gtk_widget_destroy(dlg);
+                if (resp == GTK_RESPONSE_YES) {
+                    openUrlInBrowser(r->releaseUrl);
+                }
+            } else if (r->manual) {
+                GtkWidget* dlg = gtk_message_dialog_new(
+                    nullptr, GTK_DIALOG_MODAL,
+                    r->ok ? GTK_MESSAGE_INFO : GTK_MESSAGE_WARNING, GTK_BUTTONS_OK,
+                    "%s", r->ok ? "已是最新版本" : "检查更新失败");
+                gtk_message_dialog_format_secondary_text(
+                    GTK_MESSAGE_DIALOG(dlg),
+                    "%s", r->ok ? "当前版本已是最新版本。" : "无法连接到 GitHub，请稍后重试或检查网络连接。");
+                gtk_dialog_run(GTK_DIALOG(dlg));
+                gtk_widget_destroy(dlg);
+            }
+            delete r;
+            return G_SOURCE_REMOVE;
+        }, res);
+    }).detach();
+}
+
 static GdkPixbuf* createCatTrayPixbuf() {
     constexpr int sz = 32;
     cairo_surface_t* surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, sz, sz);
@@ -235,6 +356,14 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
 
     addCheck("显示按键气泡 ([S] [W] [⇧])", app.settings.showKeyBadges, G_CALLBACK(+[](GtkCheckMenuItem* item, gpointer) {
         g_app->settings.showKeyBadges = gtk_check_menu_item_get_active(item);
+        g_app->settings.save();
+    }));
+    addCheck("显示鼠标点击气泡 ([左键] [右键])", app.settings.showMouseBadges, G_CALLBACK(+[](GtkCheckMenuItem* item, gpointer) {
+        g_app->settings.showMouseBadges = gtk_check_menu_item_get_active(item);
+        g_app->settings.save();
+    }));
+    addCheck("显示键盘字符", app.settings.showKeyLegends, G_CALLBACK(+[](GtkCheckMenuItem* item, gpointer) {
+        g_app->settings.showKeyLegends = gtk_check_menu_item_get_active(item);
         g_app->settings.save();
     }));
     addCheck("3键同时按「用脚按」彩蛋 🐾", app.settings.footEasterEgg, G_CALLBACK(+[](GtkCheckMenuItem* item, gpointer) {
@@ -347,6 +476,20 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
         g_app->settings.posY = -99999;
         applyWindowScaleAndPos(*g_app, false);
     }));
+    if (!app.availableUpdateVersion.empty()) {
+        std::string lbl = "🆕 发现新版本 " + app.availableUpdateVersion + " (点击更新)";
+        addAction(lbl.c_str(), G_CALLBACK(+[](GtkMenuItem*, gpointer) {
+            std::string url = g_app->availableUpdateUrl.empty()
+                ? "https://github.com/chanke17/KuroCat/releases/latest"
+                : g_app->availableUpdateUrl;
+            openUrlInBrowser(url);
+        }));
+    } else {
+        std::string lbl = std::string("检查更新 (当前 v") + APP_VERSION + ")";
+        addAction(lbl.c_str(), G_CALLBACK(+[](GtkMenuItem*, gpointer) {
+            startAsyncUpdateCheck(true, 0);
+        }));
+    }
     addSep();
     addAction("退出 KuroCat", G_CALLBACK(+[](GtkMenuItem*, gpointer) {
         gtk_main_quit();
@@ -513,7 +656,7 @@ int main(int argc, char** argv) {
     }
 
     app.input.onKeyDown = [&](PhysicalKey k) { app.physics.triggerKeyDown(k, app.settings); };
-    app.input.onMouseClick = [&](int btn, bool down) { app.physics.triggerMouseClick(btn, down); };
+    app.input.onMouseClick = [&](int btn, bool down) { app.physics.triggerMouseClick(btn, down, app.settings); };
     app.input.start();
 
     app.window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
@@ -571,6 +714,7 @@ int main(int argc, char** argv) {
 
     app.lastTickTime = nowSeconds();
     g_timeout_add(16, onFrameTick, nullptr);
+    startAsyncUpdateCheck(false, 2500);
 
     gtk_main();
     app.input.stop();

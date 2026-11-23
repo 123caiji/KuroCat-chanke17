@@ -35,6 +35,8 @@ enum class EyeColorTheme : int {
 
 struct CatSettings {
     bool showKeyBadges = true;
+    bool showMouseBadges = true;
+    bool showKeyLegends = true;
     bool footEasterEgg = true;
     bool petInteraction = true;
     bool fullClickThrough = false;
@@ -68,6 +70,8 @@ struct CatSettings {
             std::string v = line.substr(eq + 1);
             try {
                 if (k == "showKeyBadges") showKeyBadges = (std::stoi(v) != 0);
+                else if (k == "showMouseBadges") showMouseBadges = (std::stoi(v) != 0);
+                else if (k == "showKeyLegends") showKeyLegends = (std::stoi(v) != 0);
                 else if (k == "footEasterEgg") footEasterEgg = (std::stoi(v) != 0);
                 else if (k == "petInteraction") petInteraction = (std::stoi(v) != 0);
                 else if (k == "fullClickThrough") fullClickThrough = (std::stoi(v) != 0);
@@ -90,6 +94,8 @@ struct CatSettings {
         std::ofstream f(dir + "/config.ini");
         if (!f.is_open()) return;
         f << "showKeyBadges=" << (showKeyBadges ? 1 : 0) << "\n"
+          << "showMouseBadges=" << (showMouseBadges ? 1 : 0) << "\n"
+          << "showKeyLegends=" << (showKeyLegends ? 1 : 0) << "\n"
           << "footEasterEgg=" << (footEasterEgg ? 1 : 0) << "\n"
           << "petInteraction=" << (petInteraction ? 1 : 0) << "\n"
           << "fullClickThrough=" << (fullClickThrough ? 1 : 0) << "\n"
@@ -230,9 +236,10 @@ public:
         }
     }
 
-    void triggerMouseClick(int button, bool isDown) {
+    void triggerMouseClick(int button, bool isDown, const CatSettings& settings) {
         sleepiness = 0.0f;
         if (isDown) {
+            double now = nowSeconds();
             if (button == 0) {
                 mousePressLeft.target = 1.0f;
                 leftPaw.y.velocity += 130.0f;
@@ -242,6 +249,11 @@ public:
             }
             pupilScale.target = 1.12f;
             earTwitch.velocity -= 2.2f;
+            if (settings.showMouseBadges) {
+                std::string lbl = (button == 0) ? "左键" : (button == 1 ? "右键" : "中键");
+                Pt pt = { MouseBaseCenter.x + mouseOffset.point().x, MouseBaseCenter.y + mouseOffset.point().y - 6.0f };
+                spawnFloatingKeycap(lbl, pt, now);
+            }
         } else {
             if (button == 0) mousePressLeft.target = 0.0f;
             else mousePressRight.target = 0.0f;
