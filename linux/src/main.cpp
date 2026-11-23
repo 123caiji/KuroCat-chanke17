@@ -601,10 +601,15 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
         std::string lbl = app.isUpdating
             ? ("⏳ 正在下载更新 " + app.availableUpdateVersion + "...")
             : ("🆕 发现新版本 " + app.availableUpdateVersion + " (点击自动更新)");
-        GtkWidget* item = addAction(lbl.c_str(), G_CALLBACK(+[](GtkMenuItem*, gpointer) {
-            startInAppUpdate();
-        }));
-        if (app.isUpdating) gtk_widget_set_sensitive(item, FALSE);
+        if (app.isUpdating) {
+            GtkWidget* item = gtk_menu_item_new_with_label(lbl.c_str());
+            gtk_widget_set_sensitive(item, FALSE);
+            gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+        } else {
+            addAction(lbl.c_str(), G_CALLBACK(+[](GtkMenuItem*, gpointer) {
+                startInAppUpdate();
+            }));
+        }
     } else {
         std::string lbl = std::string("检查更新 (当前 v") + APP_VERSION + ")";
         addAction(lbl.c_str(), G_CALLBACK(+[](GtkMenuItem*, gpointer) {
