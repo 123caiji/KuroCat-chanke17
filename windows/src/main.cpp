@@ -25,11 +25,13 @@
 
 namespace {
 
-constexpr const wchar_t* APP_VERSION = L"1.3.1";
+constexpr const wchar_t* APP_VERSION = L"1.3.2";
 constexpr const wchar_t* UPDATE_PAGE_URL = L"https://kurocat-download.app.workbuddy.host/?sharecode=JVAABIVZ7L";
+constexpr const wchar_t* UPDATE_WIN_EXE_PATH = L"/downloads/KuroCat-Windows-x64.exe?sharecode=JVAABIVZ7L";
 constexpr UINT WM_TRAYICON = WM_APP + 1;
 constexpr UINT WM_WAKE_EXISTING = WM_APP + 2;
 constexpr UINT WM_UPDATE_CHECK_DONE = WM_APP + 3;
+constexpr UINT WM_UPDATE_DOWNLOAD_DONE = WM_APP + 4;
 constexpr UINT_PTR TIMER_RENDER = 1;
 constexpr int HOTKEY_CLICKTHROUGH_ID = 101;
 UINT g_msgTaskbarCreated = 0;
@@ -101,6 +103,7 @@ struct AppState {
 
     std::wstring availableUpdateVersion;
     std::wstring availableUpdateUrl;
+    bool isUpdating = false;
 
     void destroyBuffer() {
         if (memDC && oldBmp) SelectObject(memDC, oldBmp);
@@ -324,7 +327,7 @@ void startAsyncUpdateCheck(HWND notifyHwnd, bool manual, int delayMs = 0) {
         auto* res = new UpdateCheckResult();
         res->manual = manual;
 
-        HINTERNET hSession = WinHttpOpen(L"KuroCat/1.3.1", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        HINTERNET hSession = WinHttpOpen(L"KuroCat/1.3.2", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
         if (hSession) {
             WinHttpSetTimeouts(hSession, 8000, 8000, 8000, 8000);
             HINTERNET hConnect = WinHttpConnect(hSession, L"kurocat-download.app.workbuddy.host", INTERNET_DEFAULT_HTTPS_PORT, 0);
@@ -350,6 +353,99 @@ void startAsyncUpdateCheck(HWND notifyHwnd, bool manual, int delayMs = 0) {
         }
 
         if (!PostMessageW(notifyHwnd, WM_UPDATE_CHECK_DONE, 0, reinterpret_cast<LPARAM>(res))) {
+            delete res;
+        }
+    }).detach();
+}
+
+struct UpdateDownloadResult {
+    bool ok = false;
+    std::wstring batPath;
+};
+
+void startInAppUpdate(AppState& app) {
+    if (app.isUpdating || !app.menuOwnerHwnd) return;
+    app.isUpdating = true;
+    HWND notifyHwnd = app.menuOwnerHwnd;
+
+    std::thread([notifyHwnd]() {
+        auto* res = new UpdateDownloadResult();
+        std::string exeBytes;
+
+        HINTERNET hSession = WinHttpOpen(L"KuroCat/1.3.2", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        if (hSession) {
+            WinHttpSetTimeouts(hSession, 10000, 10000, 30000, 60000);
+            HINTERNET hConnect = WinHttpConnect(hSession, L"kurocat-download.app.workbuddy.host", INTERNET_DEFAULT_HTTPS_PORT, 0);
+            if (hConnect) {
+                exeBytes = fetchWorkBuddyPath(hConnect, UPDATE_WIN_EXE_PATH);
+                WinHttpCloseHandle(hConnect);
+            }
+            WinHttpCloseHandle(hSession);
+        }
+
+        if (exeBytes.size() > 50000 && exeBytes[0] == 'M' && exeBytes[1] == 'Z') {
+            wchar_t curExe[MAX_PATH] = {};
+            GetModuleFileNameW(nullptr, curExe, MAX_PATH);
+            wchar_t tempDir[MAX_PATH] = {};
+            GetTempPathW(MAX_PATH, tempDir);
+
+            std::wstring newExePath = std::wstring(curExe) + L".new";
+            HANDLE hNew = CreateFileW(newExePath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (hNew == INVALID_HANDLE_VALUE) {
+                newExePath = std::wstring(tempDir) + L"KuroCat_update.exe";
+                hNew = CreateFileW(newExePath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            }
+            if (hNew != INVALID_HANDLE_VALUE) {
+                DWORD written = 0;
+                BOOL okWrite = WriteFile(hNew, exeBytes.data(), (DWORD)exeBytes.size(), &written, nullptr);
+                CloseHandle(hNew);
+                if (okWrite && written == (DWORD)exeBytes.size()) {
+                    std::wstring batPath = std::wstring(tempDir) + L"kurocat_update.bat";
+                    DWORD pid = GetCurrentProcessId();
+                    std::string batUtf8 = "@echo off\r\n:wait\r\n"
+                        "tasklist /FI \"PID eq " + std::to_string(pid) + "\" 2>nul | find \"" + std::to_string(pid) + "\" >nul\r\n"
+                        "if not errorlevel 1 (\r\n"
+                        "  ping -n 2 127.0.0.1 >nul\r\n"
+                        "  goto wait\r\n"
+                        ")\r\n";
+
+                    auto wideToUtf8 = [](const std::wstring& w) -> std::string {
+                        if (w.empty()) return "";
+                        int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+                        std::string s(n, '\0');
+                        WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), &s[0], n, nullptr, nullptr);
+                        return s;
+                    };
+                    // Use local ANSI codepage for cmd.exe .bat compatibility
+                    auto wideToAcp = [](const std::wstring& w) -> std::string {
+                        if (w.empty()) return "";
+                        int n = WideCharToMultiByte(CP_ACP, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+                        std::string s(n, '\0');
+                        WideCharToMultiByte(CP_ACP, 0, w.c_str(), (int)w.size(), &s[0], n, nullptr, nullptr);
+                        return s;
+                    };
+                    (void)wideToUtf8;
+                    std::string srcAcp = wideToAcp(newExePath);
+                    std::string dstAcp = wideToAcp(curExe);
+                    batUtf8 += "move /y \"" + srcAcp + "\" \"" + dstAcp + "\"\r\n";
+                    batUtf8 += "start \"\" \"" + dstAcp + "\"\r\n";
+                    batUtf8 += "del \"%~f0\"\r\n";
+
+                    HANDLE hBat = CreateFileW(batPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+                    if (hBat != INVALID_HANDLE_VALUE) {
+                        DWORD bw = 0;
+                        BOOL okBat = WriteFile(hBat, batUtf8.data(), (DWORD)batUtf8.size(), &bw, nullptr);
+                        CloseHandle(hBat);
+                        if (okBat && bw == (DWORD)batUtf8.size()) {
+                            res->ok = true;
+                            res->batPath = batPath;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!PostMessageW(notifyHwnd, WM_UPDATE_DOWNLOAD_DONE, 0, reinterpret_cast<LPARAM>(res))) {
             delete res;
         }
     }).detach();
@@ -511,8 +607,10 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(menu, MF_STRING, CMD_DEMO_BURST, L"\u6F14\u793A\u6253\u5B57\u52A8\u753B");
     AppendMenuW(menu, MF_STRING, CMD_RESET_POS, L"\u91CD\u7F6E\u4F4D\u7F6E\u5230\u53F3\u4E0B\u89D2");
     if (!app.availableUpdateVersion.empty()) {
-        std::wstring upTxt = L"\U0001F195 \u53D1\u73B0\u65B0\u7248\u672C " + app.availableUpdateVersion + L" (\u70B9\u51FB\u66F4\u65B0)";
-        AppendMenuW(menu, MF_STRING, CMD_OPEN_UPDATE, upTxt.c_str());
+        std::wstring upTxt = app.isUpdating
+            ? (L"\u23F3 \u6B63\u5728\u4E0B\u8F7D\u66F4\u65B0 " + app.availableUpdateVersion + L"...")
+            : (L"\U0001F195 \u53D1\u73B0\u65B0\u7248\u672C " + app.availableUpdateVersion + L" (\u70B9\u51FB\u81EA\u52A8\u66F4\u65B0)");
+        AppendMenuW(menu, MF_STRING | (app.isUpdating ? MF_GRAYED : 0), CMD_OPEN_UPDATE, upTxt.c_str());
     } else {
         std::wstring chkTxt = std::wstring(L"\u68C0\u67E5\u66F4\u65B0 (\u5F53\u524D v") + APP_VERSION + L")";
         AppendMenuW(menu, MF_STRING, CMD_CHECK_UPDATE, chkTxt.c_str());
@@ -611,10 +709,7 @@ void showContextMenu(AppState& app, POINT screenPt) {
             if (app.menuOwnerHwnd) startAsyncUpdateCheck(app.menuOwnerHwnd, true, 0);
             break;
         case CMD_OPEN_UPDATE: {
-            const wchar_t* url = app.availableUpdateUrl.empty()
-                ? UPDATE_PAGE_URL
-                : app.availableUpdateUrl.c_str();
-            ShellExecuteW(nullptr, L"open", url, nullptr, nullptr, SW_SHOWNORMAL);
+            startInAppUpdate(app);
             break;
         }
         case CMD_QUIT:
@@ -820,10 +915,10 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     app->availableUpdateUrl = res->releaseUrl;
                     std::wstring msg = L"\u53D1\u73B0 KuroCat \u65B0\u7248\u672C " + res->latestTag
                         + L"\n\u5F53\u524D\u7248\u672C\uFF1Av" + APP_VERSION
-                        + L"\n\n\u662F\u5426\u524D\u5F80 KuroCat \u4E0B\u8F7D\u9875\u4E0B\u8F7D\u66F4\u65B0\uFF1F";
+                        + L"\n\n\u662F\u5426\u7ACB\u5373\u5728\u8F6F\u4EF6\u5185\u81EA\u52A8\u4E0B\u8F7D\u5E76\u66F4\u65B0\u91CD\u542F\uFF1F";
                     if (MessageBoxW(nullptr, msg.c_str(), L"KuroCat \u66F4\u65B0\u63D0\u9192",
                                     MB_YESNO | MB_ICONINFORMATION | MB_TOPMOST) == IDYES) {
-                        ShellExecuteW(nullptr, L"open", res->releaseUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                        startInAppUpdate(*app);
                     }
                 } else if (res->manual) {
                     if (res->ok) {
@@ -832,6 +927,28 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     } else {
                         MessageBoxW(nullptr, L"\u65E0\u6CD5\u8FDE\u63A5\u5230\u66F4\u65B0\u670D\u52A1\u5668\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u6216\u68C0\u67E5\u7F51\u7EDC\u3002",
                                     L"KuroCat \u68C0\u67E5\u66F4\u65B0", MB_OK | MB_ICONWARNING | MB_TOPMOST);
+                    }
+                }
+                delete res;
+            }
+            return 0;
+        }
+
+        case WM_UPDATE_DOWNLOAD_DONE: {
+            auto* res = reinterpret_cast<UpdateDownloadResult*>(lParam);
+            if (res) {
+                if (app) app->isUpdating = false;
+                if (res->ok && !res->batPath.empty()) {
+                    ShellExecuteW(nullptr, L"open", res->batPath.c_str(), nullptr, nullptr, SW_HIDE);
+                    PostQuitMessage(0);
+                } else {
+                    if (MessageBoxW(nullptr,
+                                    L"\u81EA\u52A8\u4E0B\u8F7D\u6216\u66FF\u6362\u5B89\u88C5\u5305\u5931\u8D25\uFF0C\u662F\u5426\u6253\u5F00\u4E0B\u8F7D\u9875\u624B\u52A8\u4E0B\u8F7D\uFF1F",
+                                    L"KuroCat \u81EA\u52A8\u66F4\u65B0", MB_YESNO | MB_ICONWARNING | MB_TOPMOST) == IDYES) {
+                        const wchar_t* url = (app && !app->availableUpdateUrl.empty())
+                            ? app->availableUpdateUrl.c_str()
+                            : UPDATE_PAGE_URL;
+                        ShellExecuteW(nullptr, L"open", url, nullptr, nullptr, SW_SHOWNORMAL);
                     }
                 }
                 delete res;

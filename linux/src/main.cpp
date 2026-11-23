@@ -16,8 +16,16 @@
 #include "CatPhysics.hpp"
 #include "CatRenderer.hpp"
 
-static constexpr const char* APP_VERSION = "1.3.1";
+#include <sys/stat.h>
+#include <cstdlib>
+
+static constexpr const char* APP_VERSION = "1.3.2";
 static constexpr const char* UPDATE_PAGE_URL = "https://kurocat-download.app.workbuddy.host/?sharecode=JVAABIVZ7L";
+#if defined(__aarch64__) || defined(_M_ARM64)
+static constexpr const char* UPDATE_TAR_URL = "https://kurocat-download.app.workbuddy.host/downloads/KuroCat-Linux-arm64.tar.gz?sharecode=JVAABIVZ7L";
+#else
+static constexpr const char* UPDATE_TAR_URL = "https://kurocat-download.app.workbuddy.host/downloads/KuroCat-Linux-x86_64.tar.gz?sharecode=JVAABIVZ7L";
+#endif
 
 struct LinuxApp {
     GtkWidget* window = nullptr;
@@ -46,6 +54,7 @@ struct LinuxApp {
 
     std::string availableUpdateVersion;
     std::string availableUpdateUrl;
+    bool isUpdating = false;
 };
 
 static LinuxApp* g_app = nullptr;
@@ -248,7 +257,7 @@ static std::string extractVersionFromHtml(const std::string& html) {
 }
 
 static std::string fetchUrlBody(const char* url) {
-    std::string cmd = std::string("curl -fsSL --max-time 8 -A KuroCat/1.3.1 '") + url +
+    std::string cmd = std::string("curl -fsSL --max-time 8 -A KuroCat/1.3.2 '") + url +
         "' 2>/dev/null || wget -qO- --timeout=8 '" + url + "' 2>/dev/null";
     std::string body;
     if (FILE* fp = popen(cmd.c_str(), "r")) {
@@ -258,6 +267,8 @@ static std::string fetchUrlBody(const char* url) {
     }
     return body;
 }
+
+static void startInAppUpdate();
 
 static void startAsyncUpdateCheck(bool manual, int delayMs = 0) {
     std::thread([manual, delayMs]() {
@@ -291,12 +302,12 @@ static void startAsyncUpdateCheck(bool manual, int delayMs = 0) {
                     "发现 KuroCat 新版本 %s", r->latestTag.c_str());
                 gtk_message_dialog_format_secondary_text(
                     GTK_MESSAGE_DIALOG(dlg),
-                    "当前版本：v%s\n最新版本：%s\n\n是否前往 KuroCat 下载页下载更新？",
+                    "当前版本：v%s\n最新版本：%s\n\n是否立即在软件内自动下载并更新重启？",
                     APP_VERSION, r->latestTag.c_str());
                 int resp = gtk_dialog_run(GTK_DIALOG(dlg));
                 gtk_widget_destroy(dlg);
                 if (resp == GTK_RESPONSE_YES) {
-                    openUrlInBrowser(r->releaseUrl);
+                    startInAppUpdate();
                 }
             } else if (r->manual) {
                 GtkWidget* dlg = gtk_message_dialog_new(
@@ -310,6 +321,74 @@ static void startAsyncUpdateCheck(bool manual, int delayMs = 0) {
                 gtk_widget_destroy(dlg);
             }
             delete r;
+            return G_SOURCE_REMOVE;
+        }, res);
+    }).detach();
+}
+
+static void startInAppUpdate() {
+    if (!g_app || g_app->isUpdating) return;
+    g_app->isUpdating = true;
+
+    std::thread([]() {
+        bool ok = false;
+        char exeBuf[PATH_MAX] = {};
+        ssize_t exeLen = readlink("/proc/self/exe", exeBuf, sizeof(exeBuf) - 1);
+        std::string exePath = (exeLen > 0) ? std::string(exeBuf, exeLen) : "";
+
+        std::string workDir = "/tmp/kurocat_upd_" + std::to_string((long)getpid());
+        std::string tarPath = workDir + "/update.tar.gz";
+        std::string newBin = workDir + "/kurocat";
+
+        if (!exePath.empty()) {
+            std::string dlCmd = "mkdir -p '" + workDir + "' && (curl -fsSL --max-time 60 -o '" + tarPath +
+                "' '" + UPDATE_TAR_URL + "' || wget -qO '" + tarPath + "' --timeout=60 '" + UPDATE_TAR_URL +
+                "') && tar -xzf '" + tarPath + "' -C '" + workDir + "'";
+            if (std::system(dlCmd.c_str()) == 0) {
+                struct stat st{};
+                if (stat(newBin.c_str(), &st) == 0 && st.st_size > 10000) {
+                    size_t slash = exePath.rfind('/');
+                    std::string exeDir = (slash != std::string::npos) ? exePath.substr(0, slash) : ".";
+                    bool writable = (access(exeDir.c_str(), W_OK) == 0);
+                    std::string installCmd = writable
+                        ? ("mv -f '" + newBin + "' '" + exePath + "' && chmod 755 '" + exePath + "'")
+                        : ("pkexec sh -c \"cp '" + newBin + "' '" + exePath + "' && chmod 755 '" + exePath + "'\"");
+                    if (std::system(installCmd.c_str()) == 0) {
+                        ok = true;
+                    }
+                }
+            }
+        }
+        std::string cleanupCmd = "rm -rf '" + workDir + "'";
+        (void)std::system(cleanupCmd.c_str());
+
+        auto* res = new std::pair<bool, std::string>(ok, exePath);
+        g_idle_add(+[](gpointer data) -> gboolean {
+            auto* p = static_cast<std::pair<bool, std::string>*>(data);
+            if (g_app) g_app->isUpdating = false;
+            if (p->first && !p->second.empty()) {
+                pid_t pid = fork();
+                if (pid == 0) {
+                    execl(p->second.c_str(), p->second.c_str(), nullptr);
+                    _exit(127);
+                }
+                gtk_main_quit();
+            } else {
+                GtkWidget* dlg = gtk_message_dialog_new(
+                    nullptr, GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING, GTK_BUTTONS_YES_NO,
+                    "自动更新失败");
+                gtk_message_dialog_format_secondary_text(
+                    GTK_MESSAGE_DIALOG(dlg),
+                    "自动下载或替换安装包失败，是否打开下载页手动下载？");
+                int resp = gtk_dialog_run(GTK_DIALOG(dlg));
+                gtk_widget_destroy(dlg);
+                if (resp == GTK_RESPONSE_YES) {
+                    std::string url = (g_app && !g_app->availableUpdateUrl.empty())
+                        ? g_app->availableUpdateUrl : UPDATE_PAGE_URL;
+                    openUrlInBrowser(url);
+                }
+            }
+            delete p;
             return G_SOURCE_REMOVE;
         }, res);
     }).detach();
@@ -519,13 +598,13 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
         applyWindowScaleAndPos(*g_app, false);
     }));
     if (!app.availableUpdateVersion.empty()) {
-        std::string lbl = "🆕 发现新版本 " + app.availableUpdateVersion + " (点击更新)";
-        addAction(lbl.c_str(), G_CALLBACK(+[](GtkMenuItem*, gpointer) {
-            std::string url = g_app->availableUpdateUrl.empty()
-                ? UPDATE_PAGE_URL
-                : g_app->availableUpdateUrl;
-            openUrlInBrowser(url);
+        std::string lbl = app.isUpdating
+            ? ("⏳ 正在下载更新 " + app.availableUpdateVersion + "...")
+            : ("🆕 发现新版本 " + app.availableUpdateVersion + " (点击自动更新)");
+        GtkWidget* item = addAction(lbl.c_str(), G_CALLBACK(+[](GtkMenuItem*, gpointer) {
+            startInAppUpdate();
         }));
+        if (app.isUpdating) gtk_widget_set_sensitive(item, FALSE);
     } else {
         std::string lbl = std::string("检查更新 (当前 v") + APP_VERSION + ")";
         addAction(lbl.c_str(), G_CALLBACK(+[](GtkMenuItem*, gpointer) {

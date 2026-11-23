@@ -9,9 +9,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var isPetVisible = true
     private var availableUpdateVersion: String?
     private var availableUpdateURL: URL?
+    private var availableAssetURL: URL?
+    private var isUpdating = false
 
     private var currentAppVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.1"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.2"
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -253,8 +255,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(relaunchItem)
 
         if let ver = availableUpdateVersion {
-            let updateItem = NSMenuItem(title: "🆕 发现新版本 \(ver) — 点击更新", action: #selector(openUpdateDownload), keyEquivalent: "")
+            let title = isUpdating ? "⏳ 正在下载更新 \(ver)..." : "🆕 发现新版本 \(ver) — 点击自动更新"
+            let updateItem = NSMenuItem(title: title, action: #selector(openUpdateDownload), keyEquivalent: "")
             updateItem.target = self
+            updateItem.isEnabled = !isUpdating
             menu.addItem(updateItem)
         } else {
             let checkItem = NSMenuItem(title: "检查更新 (当前 v\(currentAppVersion))", action: #selector(manualCheckForUpdates), keyEquivalent: "")
@@ -423,25 +427,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.terminate(nil)
     }
 
-    // MARK: - Auto Update Checker (WorkBuddy Download Mirror)
+    // MARK: - Auto Update Checker & In-App Self-Updater
 
     private static let updatePageURLString = "https://kurocat-download.app.workbuddy.host/?sharecode=JVAABIVZ7L"
     private static let updateVersionJSONURLString = "https://kurocat-download.app.workbuddy.host/version.json?sharecode=JVAABIVZ7L"
+    private static let defaultMacAssetURLString = "https://kurocat-download.app.workbuddy.host/downloads/KuroCat-macOS-universal.zip?sharecode=JVAABIVZ7L"
 
     @objc private func manualCheckForUpdates() {
         checkForUpdates(manual: true)
     }
 
     @objc private func openUpdateDownload() {
-        let fallback = URL(string: Self.updatePageURLString)!
-        NSWorkspace.shared.open(availableUpdateURL ?? fallback)
+        performInAppUpdate()
     }
 
-    private func parseUpdateInfo(from data: Data) -> (tag: String, url: URL?)? {
+    private func parseUpdateInfo(from data: Data) -> (tag: String, pageURL: URL?, assetURL: URL?)? {
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let tagName = json["tag_name"] as? String, !tagName.isEmpty {
-            let urlString = (json["html_url"] as? String) ?? Self.updatePageURLString
-            return (tagName, URL(string: urlString))
+            let pageStr = (json["html_url"] as? String) ?? Self.updatePageURLString
+            let assets = json["assets"] as? [String: Any]
+            let macStr = (assets?["macos"] as? String) ?? Self.defaultMacAssetURLString
+            return (tagName, URL(string: pageStr), URL(string: macStr))
         }
         if let html = String(data: data, encoding: .utf8) {
             let patterns = [
@@ -452,14 +458,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if let regex = try? NSRegularExpression(pattern: pattern),
                    let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
                    let r = Range(match.range(at: 1), in: html) {
-                    return ("v" + String(html[r]), URL(string: Self.updatePageURLString))
+                    return ("v" + String(html[r]), URL(string: Self.updatePageURLString), URL(string: Self.defaultMacAssetURLString))
                 }
             }
         }
         return nil
     }
 
-    private func fetchUpdateEndpoint(_ urlString: String, completion: @escaping ((tag: String, url: URL?)?) -> Void) {
+    private func fetchUpdateEndpoint(_ urlString: String, completion: @escaping ((tag: String, pageURL: URL?, assetURL: URL?)?) -> Void) {
         guard let url = URL(string: urlString) else {
             completion(nil)
             return
@@ -497,11 +503,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private func handleUpdateResult(_ info: (tag: String, url: URL?), manual: Bool) {
+    private func handleUpdateResult(_ info: (tag: String, pageURL: URL?, assetURL: URL?), manual: Bool) {
         if isVersion(info.tag, newerThan: currentAppVersion) {
             availableUpdateVersion = info.tag
-            availableUpdateURL = info.url
-            promptUpdateAvailable(latestTag: info.tag, releaseURL: info.url)
+            availableUpdateURL = info.pageURL
+            availableAssetURL = info.assetURL
+            promptUpdateAvailable(latestTag: info.tag)
         } else if manual {
             showInfoAlert(title: "已是最新版本", message: "当前版本 v\(currentAppVersion) 已是最新版本。")
         }
@@ -523,17 +530,154 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return false
     }
 
-    private func promptUpdateAvailable(latestTag: String, releaseURL: URL?) {
+    private func promptUpdateAvailable(latestTag: String) {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.alertStyle = .informational
         alert.messageText = "发现 KuroCat 新版本 \(latestTag)"
-        alert.informativeText = "当前版本：v\(currentAppVersion)\n最新版本：\(latestTag)\n\n点击「前往更新」打开 KuroCat 下载页下载最新版本。"
-        alert.addButton(withTitle: "前往更新")
+        alert.informativeText = "当前版本：v\(currentAppVersion)\n最新版本：\(latestTag)\n\n点击「立即更新」将在后台自动下载安装包并重启应用。"
+        alert.addButton(withTitle: "立即更新")
+        alert.addButton(withTitle: "打开下载页")
         alert.addButton(withTitle: "稍后再说")
+        let resp = alert.runModal()
+        if resp == .alertFirstButtonReturn {
+            performInAppUpdate()
+        } else if resp == .alertSecondButtonReturn {
+            let fallback = URL(string: Self.updatePageURLString)!
+            NSWorkspace.shared.open(availableUpdateURL ?? fallback)
+        }
+    }
+
+    private func performInAppUpdate() {
+        guard !isUpdating else { return }
+        guard let assetURL = availableAssetURL ?? URL(string: Self.defaultMacAssetURLString) else { return }
+        isUpdating = true
+
+        var req = URLRequest(url: assetURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 60)
+        req.setValue("KuroCat/\(currentAppVersion)", forHTTPHeaderField: "User-Agent")
+
+        URLSession.shared.downloadTask(with: req) { [weak self] tempURL, response, error in
+            guard let self else { return }
+            let httpStatus = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard error == nil, let tempURL, httpStatus == 200 || httpStatus == 0 else {
+                DispatchQueue.main.async {
+                    self.isUpdating = false
+                    self.handleUpdateDownloadFailure()
+                }
+                return
+            }
+
+            let fm = FileManager.default
+            let workDir = fm.temporaryDirectory.appendingPathComponent("KuroCatUpdate-\(UUID().uuidString)")
+            let zipURL = workDir.appendingPathComponent("KuroCat-macOS-universal.zip")
+            let extractDir = workDir.appendingPathComponent("extracted")
+            do {
+                try fm.createDirectory(at: extractDir, withIntermediateDirectories: true)
+                try fm.copyItem(at: tempURL, to: zipURL)
+                let attrs = try fm.attributesOfItem(atPath: zipURL.path)
+                let fileSize = (attrs[.size] as? NSNumber)?.intValue ?? 0
+                guard fileSize > 50_000 else {
+                    throw NSError(domain: "KuroCatUpdate", code: 1)
+                }
+
+                let unzip = Process()
+                unzip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+                unzip.arguments = ["-x", "-k", zipURL.path, extractDir.path]
+                try unzip.run()
+                unzip.waitUntilExit()
+                guard unzip.terminationStatus == 0 else {
+                    throw NSError(domain: "KuroCatUpdate", code: 2)
+                }
+
+                let newAppURL = extractDir.appendingPathComponent("KuroCat.app")
+                guard fm.fileExists(atPath: newAppURL.appendingPathComponent("Contents/MacOS/KuroCat").path) else {
+                    throw NSError(domain: "KuroCatUpdate", code: 3)
+                }
+
+                let currentAppURL = Bundle.main.bundleURL
+                let parentWritable = fm.isWritableFile(atPath: currentAppURL.deletingLastPathComponent().path)
+
+                DispatchQueue.main.async {
+                    self.installDownloadedApp(newAppURL: newAppURL, currentAppURL: currentAppURL, workDir: workDir, needsAdmin: !parentWritable)
+                }
+            } catch {
+                try? fm.removeItem(at: workDir)
+                DispatchQueue.main.async {
+                    self.isUpdating = false
+                    self.handleUpdateDownloadFailure()
+                }
+            }
+        }.resume()
+    }
+
+    private func installDownloadedApp(newAppURL: URL, currentAppURL: URL, workDir: URL, needsAdmin: Bool) {
+        func shQuote(_ s: String) -> String {
+            "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        }
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let dst = shQuote(currentAppURL.path)
+        let src = shQuote(newAppURL.path)
+        let tmp = shQuote(workDir.path)
+
+        if needsAdmin {
+            let cmd = "rm -rf \(dst).bak && mv \(dst) \(dst).bak && cp -R \(src) \(dst) && rm -rf \(dst).bak \(tmp)"
+            let escaped = cmd.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+            let osa = Process()
+            osa.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            osa.arguments = ["-e", "do shell script \"\(escaped)\" with administrator privileges"]
+            do {
+                try osa.run()
+                osa.waitUntilExit()
+                if osa.terminationStatus == 0 {
+                    let relaunch = Process()
+                    relaunch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                    relaunch.arguments = ["-n", currentAppURL.path]
+                    try? relaunch.run()
+                    NSApp.terminate(nil)
+                    return
+                }
+            } catch {}
+            try? FileManager.default.removeItem(at: workDir)
+            isUpdating = false
+            handleUpdateDownloadFailure()
+            return
+        }
+
+        let script = """
+        while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done
+        rm -rf \(dst).bak
+        if mv \(dst) \(dst).bak && cp -R \(src) \(dst); then
+            rm -rf \(dst).bak
+            open -n \(dst)
+        else
+            mv \(dst).bak \(dst) 2>/dev/null
+        fi
+        rm -rf \(tmp)
+        """
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/sh")
+        proc.arguments = ["-c", script]
+        do {
+            try proc.run()
+            NSApp.terminate(nil)
+        } catch {
+            try? FileManager.default.removeItem(at: workDir)
+            isUpdating = false
+            handleUpdateDownloadFailure()
+        }
+    }
+
+    private func handleUpdateDownloadFailure() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "自动更新失败"
+        alert.informativeText = "下载或替换安装包时出错，是否打开下载页手动下载？"
+        alert.addButton(withTitle: "打开下载页")
+        alert.addButton(withTitle: "取消")
         if alert.runModal() == .alertFirstButtonReturn {
             let fallback = URL(string: Self.updatePageURLString)!
-            NSWorkspace.shared.open(releaseURL ?? fallback)
+            NSWorkspace.shared.open(availableUpdateURL ?? fallback)
         }
     }
 
