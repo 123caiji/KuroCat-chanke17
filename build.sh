@@ -13,6 +13,9 @@ mkdir -p "$MACOS_DIR" "$RES_DIR"
 
 cp "$ROOT/Resources/Info.plist" "$CONTENTS/Info.plist"
 
+if [ -f "$ROOT/Resources/AppIcon.icns" ]; then
+    cp "$ROOT/Resources/AppIcon.icns" "$RES_DIR/AppIcon.icns"
+else
 # Generate cute black cat AppIcon.icns using Python + iconutil
 python3 - <<'PYEOF' "$RES_DIR"
 import os, subprocess, sys
@@ -80,6 +83,7 @@ subprocess.run(["iconutil", "-c", "icns", iconset, "-o", os.path.join(res_dir, "
 import shutil
 shutil.rmtree(iconset)
 PYEOF
+fi
 
 swiftc \
     -swift-version 5 \
