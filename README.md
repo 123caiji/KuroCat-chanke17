@@ -1,6 +1,10 @@
 # 🐱 KuroCat — 全状态键盘鼠标桌面萌猫 (macOS / Windows / Linux / 统信 UOS)
 
 <p align="center">
+  <b>简体中文</b> | <a href="README.en.md">English</a>
+</p>
+
+<p align="center">
   <img src="assets/demo_typing.gif" width="265" alt="敲键盘打字"/>
   <img src="assets/demo_hunting.gif" width="265" alt="快速晃鼠标捕猎大圆眼"/>
   <img src="assets/demo_combo.gif" width="265" alt="边打字边拖鼠标 + 3键用脚按"/>
