@@ -1,0 +1,10 @@
+.DS_Store
+KuroCat.app/
+LiveDemos/
+windows/KuroCat.exe
+windows/build/
+windows/*.obj
+windows/*.pdb
+preview.png
+preview_siamese.png
+*.log
