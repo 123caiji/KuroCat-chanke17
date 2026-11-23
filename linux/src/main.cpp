@@ -309,7 +309,7 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
         addEye("琥珀金瞳", EyeColorTheme::WarmAmber);
         addEye("冰晶浅蓝", EyeColorTheme::IceCyan);
         addEye("柔和琥珀", EyeColorTheme::SoftAmber);
-        addEye("淡金青绿（参考图）", EyeColorTheme::ReferenceHazel);
+        addEye("淡金青绿", EyeColorTheme::ReferenceHazel);
         GtkWidget* parent = gtk_menu_item_new_with_label("瞳色切换");
         gtk_menu_item_set_submenu(GTK_MENU_ITEM(parent), sub);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), parent);
