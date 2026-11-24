@@ -38,11 +38,30 @@ public:
         return CatHitZone::None;
     }
 
+    /// Edit-mode hit test in unflipped 360x320 canvas coordinates:
+    /// 0..3 = corner resize handles, 10 = flip button, 11 = done button, 12 = inside edit box, -1 = outside.
+    static int hitTestEditOverlay(Pt p) {
+        if (p.x >= 92.0f && p.x <= 178.0f && p.y >= 10.0f && p.y <= 38.0f) return 10;
+        if (p.x >= 182.0f && p.x <= 268.0f && p.y >= 10.0f && p.y <= 38.0f) return 11;
+        constexpr Pt corners[4] = { {10.0f, 10.0f}, {350.0f, 10.0f}, {10.0f, 310.0f}, {350.0f, 310.0f} };
+        for (int i = 0; i < 4; ++i) {
+            if (std::hypot(p.x - corners[i].x, p.y - corners[i].y) <= 18.0f) return i;
+        }
+        if (p.x >= 6.0f && p.x <= 354.0f && p.y >= 6.0f && p.y <= 314.0f) return 12;
+        return -1;
+    }
+
     static void draw(Gdiplus::Graphics& g, const CatPhysics& physics, const CatSettings& settings) {
         using namespace Gdiplus;
         g.SetSmoothingMode(SmoothingModeAntiAlias);
         g.SetPixelOffsetMode(PixelOffsetModeHighQuality);
         g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
+
+        GraphicsState flipState = g.Save();
+        if (settings.flipHorizontal) {
+            g.TranslateTransform(CatPhysics::CanvasWidth, 0.0f);
+            g.ScaleTransform(-1.0f, 1.0f);
+        }
 
         float breath = std::sin(physics.time * 2.1f) * 1.6f;
         float seatX = CatPhysics::SeatAnchor.x + physics.bodyShiftX.value;
@@ -88,6 +107,61 @@ public:
 
         // 10. Subtle Petting Sparkles & Sleep Z
         drawSparkles(g, physics, settings.eyeTheme);
+
+        g.Restore(flipState);
+
+        if (settings.isEditMode) {
+            drawEditOverlay(g, settings.isEnglish, settings.scale);
+        }
+    }
+
+    static void drawEditOverlay(Gdiplus::Graphics& g, bool isEnglish, float scale) {
+        using namespace Gdiplus;
+        GraphicsPath boxPath;
+        addRoundedRect(boxPath, 10.0f, 10.0f, 340.0f, 300.0f, 12.0f);
+        SolidBrush tint(Color(18, 41, 143, 250));
+        g.FillPath(&tint, &boxPath);
+
+        Pen dashPen(Color(235, 51, 158, 255), 1.8f);
+        REAL dashes[2] = { 4.0f, 2.5f };
+        dashPen.SetDashPattern(dashes, 2);
+        g.DrawPath(&dashPen, &boxPath);
+
+        constexpr Pt corners[4] = { {10.0f, 10.0f}, {350.0f, 10.0f}, {10.0f, 310.0f}, {350.0f, 310.0f} };
+        SolidBrush whiteBrush(Color(255, 255, 255, 255));
+        Pen handlePen(Color(255, 36, 133, 245), 2.0f);
+        for (const auto& c : corners) {
+            g.FillEllipse(&whiteBrush, c.x - 6.5f, c.y - 6.5f, 13.0f, 13.0f);
+            g.DrawEllipse(&handlePen, c.x - 6.5f, c.y - 6.5f, 13.0f, 13.0f);
+        }
+
+        FontFamily ff(L"Segoe UI");
+        Font btnFont(&ff, 10.0f, FontStyleBold, UnitPixel);
+        StringFormat sf;
+        sf.SetAlignment(StringAlignmentCenter);
+        sf.SetLineAlignment(StringAlignmentCenter);
+
+        auto drawBtn = [&](float x, float y, float w, float h, const wchar_t* txt, bool primary) {
+            GraphicsPath bp;
+            addRoundedRect(bp, x, y, w, h, 11.0f);
+            SolidBrush fill(primary ? Color(242, 41, 138, 245) : Color(224, 36, 38, 48));
+            Pen rim(Color(72, 255, 255, 255), 0.9f);
+            g.FillPath(&fill, &bp);
+            g.DrawPath(&rim, &bp);
+            g.DrawString(txt, -1, &btnFont, RectF(x, y, w, h), &sf, &whiteBrush);
+        };
+
+        drawBtn(94.0f, 12.0f, 82.0f, 24.0f, isEnglish ? L"\u21C4 Flip" : L"\u21C4 \u7FFB\u8F6C", false);
+        drawBtn(184.0f, 12.0f, 82.0f, 24.0f, isEnglish ? L"\u2713 Done" : L"\u2713 \u5B8C\u6210", true);
+
+        wchar_t buf[16] = {};
+        swprintf_s(buf, L"%.0f%%", scale * 100.0f);
+        GraphicsPath sp;
+        addRoundedRect(sp, 158.0f, 290.0f, 44.0f, 16.0f, 6.0f);
+        SolidBrush spBg(Color(210, 30, 33, 41));
+        Font spFont(&ff, 9.5f, FontStyleBold, UnitPixel);
+        g.FillPath(&spBg, &sp);
+        g.DrawString(buf, -1, &spFont, RectF(158.0f, 290.0f, 44.0f, 16.0f), &sf, &whiteBrush);
     }
 
 private:
@@ -829,15 +903,83 @@ private:
             np.CloseFigure();
             SolidBrush nb(Color(242, 36, 23, 20));
             g.FillPath(&nb, &np);
-            GraphicsPath mp;
-            addQuadBezier(mp, mL, { (mL.x + mM.x) * 0.5f, mL.y + 1.6f }, mM);
-            addQuadBezier(mp, mM, { (mM.x + mR.x) * 0.5f, mR.y + 1.6f }, mR);
-            Pen mpen(Color(140, 199, 168, 143), 1.05f);
-            mpen.SetStartCap(LineCapRound); mpen.SetEndCap(LineCapRound);
-            g.DrawPath(&mpen, &mp);
+            if (physics.yawnAmount < 0.15f) {
+                GraphicsPath mp;
+                addQuadBezier(mp, mL, { (mL.x + mM.x) * 0.5f, mL.y + 1.6f }, mM);
+                addQuadBezier(mp, mM, { (mM.x + mR.x) * 0.5f, mR.y + 1.6f }, mR);
+                Pen mpen(Color(140, 199, 168, 143), 1.05f);
+                mpen.SetStartCap(LineCapRound); mpen.SetEndCap(LineCapRound);
+                g.DrawPath(&mpen, &mp);
+            }
         }
         if (patterned(coat)) drawPatternedMuzzle(g, yawRad, pitchRad);
+        if (physics.yawnAmount > 0.03f) drawYawnMouth(g, yawRad, pitchRad, physics.yawnAmount, coat);
         drawWhiskers3D(g, yawRad, pitchRad, physics, coat);
+        g.Restore(st);
+    }
+
+    static void drawYawnMouth(Gdiplus::Graphics& g, float yawRad, float pitchRad, float yawn, CatCoatTheme coat) {
+        using namespace Gdiplus;
+        float y = std::clamp(yawn, 0.0f, 1.0f);
+        Pt c = projectHead3D(0.0f, 16.2f + y * 2.2f, 30.2f, yawRad, pitchRad);
+        float rx = 3.2f + y * 5.8f;
+        float ry = 1.6f + y * 7.4f;
+
+        GraphicsState st = g.Save();
+        g.TranslateTransform(c.x, c.y);
+
+        GraphicsPath mouth;
+        mouth.AddBezier(0.0f, -ry * 0.92f, rx * 0.68f, -ry * 0.92f, rx * 1.05f, -ry * 0.42f, rx, ry * 0.08f);
+        mouth.AddBezier(rx, ry * 0.08f, rx * 0.95f, ry * 0.72f, rx * 0.50f, ry, 0.0f, ry);
+        mouth.AddBezier(0.0f, ry, -rx * 0.50f, ry, -rx * 0.95f, ry * 0.72f, -rx, ry * 0.08f);
+        mouth.AddBezier(-rx, ry * 0.08f, -rx * 1.05f, -ry * 0.42f, -rx * 0.68f, -ry * 0.92f, 0.0f, -ry * 0.92f);
+        mouth.CloseFigure();
+
+        SolidBrush bgBrush(Color(250, 199, 48, 64));
+        g.FillPath(&bgBrush, &mouth);
+
+        GraphicsState cs = g.Save();
+        g.SetClip(&mouth, CombineModeIntersect);
+
+        SolidBrush shadowBrush(Color(140, 140, 26, 41));
+        g.FillEllipse(&shadowBrush, -rx * 0.65f, -ry * 0.72f, rx * 1.30f, ry * 0.92f);
+
+        if (y > 0.22f) {
+            float tAlpha = std::min(1.0f, (y - 0.22f) / 0.35f);
+            SolidBrush tongueBrush(Color((BYTE)(235 * tAlpha), 242, 122, 140));
+            GraphicsPath tongue;
+            addQuadBezier(tongue, { -rx * 0.62f, ry * 0.55f }, { -rx * 0.32f, ry * 0.16f }, { 0.0f, ry * 0.36f });
+            addQuadBezier(tongue, { 0.0f, ry * 0.36f }, { rx * 0.32f, ry * 0.16f }, { rx * 0.62f, ry * 0.55f });
+            addQuadBezier(tongue, { rx * 0.62f, ry * 0.55f }, { 0.0f, ry * 1.25f }, { -rx * 0.62f, ry * 0.55f });
+            tongue.CloseFigure();
+            g.FillPath(&tongueBrush, &tongue);
+        }
+
+        if (y > 0.28f) {
+            float fScale = std::min(1.0f, (y - 0.28f) / 0.32f);
+            SolidBrush fangBrush(Color(250, 255, 252, 245));
+            float uBaseY = -ry * 0.80f;
+            float uLen = (2.6f + y * 2.2f) * fScale;
+            float uHW = (1.15f + y * 0.55f) * fScale;
+            for (float sign : { -1.0f, 1.0f }) {
+                float fx = sign * rx * 0.46f;
+                PointF pts[3] = { { fx - uHW, uBaseY - 0.8f }, { fx + uHW, uBaseY - 0.8f }, { fx - sign * 0.25f, uBaseY + uLen } };
+                g.FillPolygon(&fangBrush, pts, 3);
+            }
+            float lBaseY = ry * 0.84f;
+            float lLen = (1.6f + y * 1.3f) * fScale;
+            float lHW = (0.85f + y * 0.35f) * fScale;
+            for (float sign : { -1.0f, 1.0f }) {
+                float fx = sign * rx * 0.36f;
+                PointF pts[3] = { { fx - lHW, lBaseY + 0.8f }, { fx + lHW, lBaseY + 0.8f }, { fx - sign * 0.15f, lBaseY - lLen } };
+                g.FillPolygon(&fangBrush, pts, 3);
+            }
+        }
+        g.Restore(cs);
+
+        Pen rimPen((coat == CatCoatTheme::ClassicBlack || coat == CatCoatTheme::Siamese)
+            ? Color(216, 107, 20, 31) : Color(184, 143, 56, 66), 1.0f);
+        g.DrawPath(&rimPen, &mouth);
         g.Restore(st);
     }
 

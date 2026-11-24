@@ -9,6 +9,10 @@ final class RenderSettings {
  let showKeyBadges = false
  let keyboardMarquee = false
  let obsCaptureMode = 0
+ let flipHorizontal = false
+ let isEditMode = false
+ let isEnglish = false
+ let scale: CGFloat = 1.0
 }
 let output = URL(fileURLWithPath: CommandLine.arguments[1])
 try! FileManager.default.createDirectory(at:output,withIntermediateDirectories:true)
