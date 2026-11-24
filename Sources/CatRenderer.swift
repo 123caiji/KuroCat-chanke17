@@ -89,6 +89,10 @@ enum CatRenderer {
         ctx.setShouldAntialias(true)
 
         let settings = CatSettings.shared
+        if settings.obsCaptureMode == 2 {
+            ctx.setFillColor(NSColor(calibratedRed: 0.0, green: 1.0, blue: 0.0, alpha: 1.0).cgColor)
+            ctx.fill(CGRect(origin: .zero, size: CatPhysics.canvasSize))
+        }
         let coat = settings.coatTheme
         let breath = sin(physics.time * 2.1) * 1.6
         let seatX = CatPhysics.seatAnchor.x + physics.bodyShiftX.value

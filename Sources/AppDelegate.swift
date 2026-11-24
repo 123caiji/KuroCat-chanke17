@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var isHandingOverToNewerCopy = false
 
     private var currentAppVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.6"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.7"
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -266,6 +266,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         petItem.state = settings.petInteraction ? .on : .off
         menu.addItem(petItem)
 
+        // OBS Live Capture Mode submenu
+        let obsMenu = NSMenu()
+        let obsModes: [(String, Int)] = [
+            ("关闭（正常桌面悬浮）", 0),
+            ("OBS 透明窗口捕获", 1),
+            ("OBS 绿幕模式 (#00FF00)", 2)
+        ]
+        for (title, mode) in obsModes {
+            let item = NSMenuItem(title: title, action: #selector(selectOBSCaptureMode(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = NSNumber(value: mode)
+            item.state = (settings.obsCaptureMode == mode) ? .on : .off
+            obsMenu.addItem(item)
+        }
+        let obsParent = NSMenuItem(title: "📺 直播捕获模式 (OBS)", action: nil, keyEquivalent: "")
+        obsParent.submenu = obsMenu
+        menu.addItem(obsParent)
+
         menu.addItem(.separator())
 
         // Scale submenu
@@ -475,6 +493,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func togglePetInteraction() {
         CatSettings.shared.petInteraction.toggle()
+    }
+
+    @objc private func selectOBSCaptureMode(_ sender: NSMenuItem) {
+        guard let num = sender.representedObject as? NSNumber else { return }
+        CatSettings.shared.obsCaptureMode = num.intValue
+        overlayWindow.applyOBSMode()
     }
 
     @objc private func selectScale(_ sender: NSMenuItem) {

@@ -56,6 +56,7 @@ final class InputEngine {
     private var permissionCheckTimer: Timer?
     private var workspaceObservers: [NSObjectProtocol] = []
     private var lastReconcileTime: CFTimeInterval = 0
+    private var keyDownTimes: [PhysicalKey: CFTimeInterval] = [:]
 
     private static let keyToCGCodes: [PhysicalKey: [CGKeyCode]] = {
         var map: [PhysicalKey: [CGKeyCode]] = [:]
@@ -221,22 +222,35 @@ final class InputEngine {
     private func isKeyPhysicallyDown(_ key: PhysicalKey) -> Bool {
         if key == .fn {
             return CGEventSource.flagsState(.hidSystemState).contains(.maskSecondaryFn)
+                && CGEventSource.flagsState(.combinedSessionState).contains(.maskSecondaryFn)
         }
         if key == .capsLock {
             return CGEventSource.keyState(.hidSystemState, key: 57)
+                && CGEventSource.keyState(.combinedSessionState, key: 57)
         }
         guard let codes = Self.keyToCGCodes[key] else { return false }
-        return codes.contains { CGEventSource.keyState(.hidSystemState, key: $0) }
+        return codes.contains {
+            CGEventSource.keyState(.hidSystemState, key: $0)
+                && CGEventSource.keyState(.combinedSessionState, key: $0)
+        }
     }
 
     private func reconcileStuckKeys(now: CFTimeInterval) {
-        guard now - lastReconcileTime >= 0.25 else { return }
+        guard now - lastReconcileTime >= 0.20 else { return }
         lastReconcileTime = now
 
-        if !activeKeys.isEmpty && (now - lastKeyActivityTime > 0.35) {
+        // Always keep pressedOrder strictly synced with activeKeys (guards against stopHID/stopEventTap races).
+        if pressedOrder.count != activeKeys.count {
+            pressedOrder.removeAll { !activeKeys.contains($0) }
+        }
+
+        if !activeKeys.isEmpty {
             var stale: [PhysicalKey] = []
             for key in activeKeys {
-                if !isKeyPhysicallyDown(key) {
+                let heldFor = now - (keyDownTimes[key] ?? 0)
+                // Check per-key (not global lastKeyActivityTime) so a stuck key releases
+                // immediately even while the user keeps typing other keys!
+                if heldFor > 0.25 && !isKeyPhysicallyDown(key) {
                     stale.append(key)
                 }
             }
@@ -244,7 +258,7 @@ final class InputEngine {
                 for key in stale {
                     hidPressedKeys.remove(key)
                     tapPressedKeys.remove(key)
-                    pressedOrder.removeAll { $0 == key }
+                    keyDownTimes.removeValue(forKey: key)
                 }
                 recomputeUnifiedKeys()
                 for key in stale {
@@ -265,6 +279,7 @@ final class InputEngine {
         let prev = activeKeys
         hidPressedKeys.removeAll()
         tapPressedKeys.removeAll()
+        keyDownTimes.removeAll()
         pressedOrder.removeAll()
         recomputeUnifiedKeys()
         for key in prev {
@@ -555,12 +570,14 @@ final class InputEngine {
         if !wasActive && isNowActive {
             let now = CACurrentMediaTime()
             lastKeyActivityTime = now
+            keyDownTimes[key] = now
             recentKeyTimes.append(now)
             incrementTodayStats()
             pressedOrder.removeAll { $0 == key }
             pressedOrder.append(key)
             onKeyDown?(key)
         } else if wasActive && !isNowActive {
+            keyDownTimes.removeValue(forKey: key)
             pressedOrder.removeAll { $0 == key }
             onKeyUp?(key)
         }
@@ -568,6 +585,10 @@ final class InputEngine {
 
     private func recomputeUnifiedKeys() {
         activeKeys = hidPressedKeys.union(tapPressedKeys)
+        pressedOrder.removeAll { !activeKeys.contains($0) }
+        for k in keyDownTimes.keys where !activeKeys.contains(k) {
+            keyDownTimes.removeValue(forKey: k)
+        }
     }
 
     private func updateMouseButton(_ button: Int, isDown: Bool) {

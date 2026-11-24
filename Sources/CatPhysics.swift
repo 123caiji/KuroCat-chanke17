@@ -73,6 +73,10 @@ final class CatSettings {
     var keyboardMarquee: Bool {
         didSet { UserDefaults.standard.set(keyboardMarquee, forKey: "KuroCat.KeyboardMarquee") }
     }
+    /// 0 = normal desktop overlay, 1 = OBS transparent window capture, 2 = OBS green screen (#00FF00)
+    var obsCaptureMode: Int {
+        didSet { UserDefaults.standard.set(obsCaptureMode, forKey: "KuroCat.OBSCaptureMode") }
+    }
     var petInteraction: Bool {
         didSet { UserDefaults.standard.set(petInteraction, forKey: "KuroCat.PetInteraction") }
     }
@@ -103,6 +107,7 @@ final class CatSettings {
         footEasterEgg = d.object(forKey: "KuroCat.FootEasterEgg") as? Bool ?? true
         tailEasterEgg = d.object(forKey: "KuroCat.TailEasterEgg") as? Bool ?? true
         keyboardMarquee = d.object(forKey: "KuroCat.KeyboardMarquee") as? Bool ?? true
+        obsCaptureMode = d.object(forKey: "KuroCat.OBSCaptureMode") as? Int ?? 0
         petInteraction = d.object(forKey: "KuroCat.PetInteraction") as? Bool ?? true
         fullClickThrough = d.object(forKey: "KuroCat.FullClickThrough") as? Bool ?? false
         fullScreenOverlay = d.object(forKey: "KuroCat.FullScreenOverlay") as? Bool ?? true

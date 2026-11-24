@@ -8,6 +8,7 @@ final class RenderSettings {
  var showKeyLegends = false
  let showKeyBadges = false
  let keyboardMarquee = false
+ let obsCaptureMode = 0
 }
 let output = URL(fileURLWithPath: CommandLine.arguments[1])
 try! FileManager.default.createDirectory(at:output,withIntermediateDirectories:true)

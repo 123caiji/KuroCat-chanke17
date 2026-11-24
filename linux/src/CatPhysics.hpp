@@ -40,6 +40,7 @@ struct CatSettings {
     bool footEasterEgg = true;
     bool tailEasterEgg = true;
     bool keyboardMarquee = true;
+    int obsCaptureMode = 0; // 0 = off, 1 = OBS transparent window capture, 2 = OBS green screen (#00FF00)
     bool petInteraction = true;
     bool fullClickThrough = false;
     bool alwaysOnTop = true;
@@ -80,6 +81,7 @@ struct CatSettings {
                 else if (k == "footEasterEgg") footEasterEgg = (std::stoi(v) != 0);
                 else if (k == "tailEasterEgg") tailEasterEgg = (std::stoi(v) != 0);
                 else if (k == "keyboardMarquee") keyboardMarquee = (std::stoi(v) != 0);
+                else if (k == "obsCaptureMode") obsCaptureMode = std::clamp(std::stoi(v), 0, 2);
                 else if (k == "petInteraction") petInteraction = (std::stoi(v) != 0);
                 else if (k == "fullClickThrough") fullClickThrough = (std::stoi(v) != 0);
                 else if (k == "alwaysOnTop") alwaysOnTop = (std::stoi(v) != 0);
@@ -107,6 +109,7 @@ struct CatSettings {
           << "footEasterEgg=" << (footEasterEgg ? 1 : 0) << "\n"
           << "tailEasterEgg=" << (tailEasterEgg ? 1 : 0) << "\n"
           << "keyboardMarquee=" << (keyboardMarquee ? 1 : 0) << "\n"
+          << "obsCaptureMode=" << obsCaptureMode << "\n"
           << "petInteraction=" << (petInteraction ? 1 : 0) << "\n"
           << "fullClickThrough=" << (fullClickThrough ? 1 : 0) << "\n"
           << "alwaysOnTop=" << (alwaysOnTop ? 1 : 0) << "\n"

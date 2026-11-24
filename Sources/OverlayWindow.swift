@@ -182,10 +182,25 @@ final class OverlayWindow: NSPanel {
         ignoresMouseEvents = true
 
         applyWindowLevelAndBehavior()
+        applyOBSMode()
 
         catView.frame = CGRect(origin: .zero, size: size)
         catView.autoresizingMask = [.width, .height]
         contentView = catView
+    }
+
+    func applyOBSMode() {
+        let mode = CatSettings.shared.obsCaptureMode
+        title = "KuroCat"
+        sharingType = .readOnly
+        if mode == 2 {
+            isOpaque = true
+            backgroundColor = NSColor(calibratedRed: 0.0, green: 1.0, blue: 0.0, alpha: 1.0)
+        } else {
+            isOpaque = false
+            backgroundColor = .clear
+        }
+        catView.needsDisplay = true
     }
 
     func applyWindowLevelAndBehavior() {

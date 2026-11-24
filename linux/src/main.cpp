@@ -28,7 +28,7 @@
 #include <fcntl.h>
 #include <glib-unix.h>
 
-#define KUROCAT_VERSION_STR "1.3.6"
+#define KUROCAT_VERSION_STR "1.3.7"
 static constexpr const char* APP_VERSION = KUROCAT_VERSION_STR;
 // Other KuroCat builds scan installed binaries for this marker (see readBinaryVersion) to find the
 // newest copy WITHOUT executing it. Always derived from KUROCAT_VERSION_STR.
@@ -754,6 +754,31 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
         g_app->settings.save();
     }));
 
+    // OBS Live Capture Mode submenu
+    {
+        GtkWidget* sub = gtk_menu_new();
+        auto addObs = [&](const char* lbl, int mode) {
+            GtkWidget* it = gtk_check_menu_item_new_with_label(lbl);
+            gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(it), app.settings.obsCaptureMode == mode);
+            g_signal_connect(it, "activate", G_CALLBACK(+[](GtkMenuItem*, gpointer p) {
+                int m = (int)(intptr_t)p;
+                g_app->settings.obsCaptureMode = m;
+                g_app->settings.save();
+                bool hideFromTaskbar = (m == 0);
+                gtk_window_set_skip_taskbar_hint(GTK_WINDOW(g_app->window), hideFromTaskbar);
+                gtk_window_set_skip_pager_hint(GTK_WINDOW(g_app->window), hideFromTaskbar);
+                gtk_widget_queue_draw(g_app->drawArea);
+            }), (gpointer)(intptr_t)mode);
+            gtk_menu_shell_append(GTK_MENU_SHELL(sub), it);
+        };
+        addObs("关闭（正常桌面悬浮）", 0);
+        addObs("OBS 透明窗口捕获", 1);
+        addObs("OBS 绿幕模式 (#00FF00)", 2);
+        GtkWidget* parent = gtk_menu_item_new_with_label("📺 直播捕获模式 (OBS)");
+        gtk_menu_item_set_submenu(GTK_MENU_ITEM(parent), sub);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), parent);
+    }
+
     addSep();
 
     // Coat Skin submenu
@@ -895,7 +920,11 @@ static gboolean onDraw(GtkWidget* widget, cairo_t* cr, gpointer) {
 
     cairo_save(cr);
     cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
-    cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.0);
+    if (g_app && g_app->settings.obsCaptureMode == 2) {
+        cairo_set_source_rgba(cr, 0.0, 1.0, 0.0, 1.0);
+    } else {
+        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.0);
+    }
     cairo_paint(cr);
     cairo_restore(cr);
 
@@ -1146,10 +1175,10 @@ int main(int argc, char** argv) {
     app.window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(app.window), "KuroCat");
     gtk_window_set_decorated(GTK_WINDOW(app.window), FALSE);
-    gtk_window_set_skip_taskbar_hint(GTK_WINDOW(app.window), TRUE);
-    gtk_window_set_skip_pager_hint(GTK_WINDOW(app.window), TRUE);
+    gtk_window_set_skip_taskbar_hint(GTK_WINDOW(app.window), app.settings.obsCaptureMode == 0);
+    gtk_window_set_skip_pager_hint(GTK_WINDOW(app.window), app.settings.obsCaptureMode == 0);
     gtk_window_set_accept_focus(GTK_WINDOW(app.window), FALSE);
-    gtk_window_set_type_hint(GTK_WINDOW(app.window), GDK_WINDOW_TYPE_HINT_UTILITY);
+    gtk_window_set_type_hint(GTK_WINDOW(app.window), app.settings.obsCaptureMode == 0 ? GDK_WINDOW_TYPE_HINT_UTILITY : GDK_WINDOW_TYPE_HINT_NORMAL);
     gtk_window_stick(GTK_WINDOW(app.window));
     gtk_widget_set_app_paintable(app.window, TRUE);
 

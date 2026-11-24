@@ -51,7 +51,7 @@ using std::max;
 
 namespace {
 
-constexpr const wchar_t* APP_VERSION = L"1.3.6";
+constexpr const wchar_t* APP_VERSION = L"1.3.7";
 constexpr const wchar_t* VERSION_PROP = L"KuroCatVersion"; // set on the tray owner window so newer builds can take over older ones
 constexpr const wchar_t* TRAY_OWNER_CLASS = L"KuroCatTrayOwnerClass";
 constexpr const wchar_t* OVERLAY_CLASS = L"KuroCatOverlayWindowClass";
@@ -79,6 +79,9 @@ enum MenuCmd : UINT {
     CMD_TOGGLE_TAIL,
     CMD_TOGGLE_MARQUEE,
     CMD_TOGGLE_PET,
+    CMD_OBS_OFF,
+    CMD_OBS_TRANSPARENT,
+    CMD_OBS_GREENSCREEN,
     CMD_COAT_BLACK,
     CMD_COAT_SIAMESE,
     CMD_COAT_SHORTHAIR,
@@ -866,6 +869,23 @@ void setClickThrough(HWND hwnd, bool transparent) {
     }
 }
 
+void applyOBSMode(AppState& app) {
+    if (!app.hwnd) return;
+    LONG_PTR ex = GetWindowLongPtrW(app.hwnd, GWL_EXSTYLE);
+    bool wantToolWindow = (app.settings.obsCaptureMode == 0);
+    bool isToolWindow = (ex & WS_EX_TOOLWINDOW) != 0;
+    if (wantToolWindow != isToolWindow) {
+        if (wantToolWindow) ex |= WS_EX_TOOLWINDOW;
+        else ex &= ~WS_EX_TOOLWINDOW;
+        // Changing WS_EX_TOOLWINDOW requires hiding & re-showing so the shell & OBS Window Capture refresh cleanly.
+        bool wasVis = app.isVisible;
+        if (wasVis) ShowWindow(app.hwnd, SW_HIDE);
+        SetWindowLongPtrW(app.hwnd, GWL_EXSTYLE, ex);
+        SetWindowPos(app.hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        if (wasVis) ShowWindow(app.hwnd, SW_SHOWNOACTIVATE);
+    }
+}
+
 void showContextMenu(AppState& app, POINT screenPt) {
     HMENU menu = CreatePopupMenu();
 
@@ -903,6 +923,13 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(menu, MF_STRING | (app.settings.tailEasterEgg ? MF_CHECKED : 0), CMD_TOGGLE_TAIL, L"4\u952E\u540C\u65F6\u6309\u300C\u7528\u5C3E\u5DF4\u6309\u300D\u5F69\u86CB");
     AppendMenuW(menu, MF_STRING | (app.settings.keyboardMarquee ? MF_CHECKED : 0), CMD_TOGGLE_MARQUEE, L"\u952E\u76D8\u8DD1\u9A6C\u706F\u6D41\u5149");
     AppendMenuW(menu, MF_STRING | (app.settings.petInteraction ? MF_CHECKED : 0), CMD_TOGGLE_PET, L"\u6478\u5934/\u6478\u80CC\u95ED\u773C\u4E92\u52A8");
+
+    // OBS Live Capture Mode submenu
+    HMENU obsMenu = CreatePopupMenu();
+    AppendMenuW(obsMenu, MF_STRING | (app.settings.obsCaptureMode == 0 ? MF_CHECKED : 0), CMD_OBS_OFF, L"\u5173\u95ED\uFF08\u6B63\u5E38\u684C\u9762\u60AC\u6D6E\uFF09");
+    AppendMenuW(obsMenu, MF_STRING | (app.settings.obsCaptureMode == 1 ? MF_CHECKED : 0), CMD_OBS_TRANSPARENT, L"OBS \u900F\u660E\u7A97\u53E3\u6355\u83B7");
+    AppendMenuW(obsMenu, MF_STRING | (app.settings.obsCaptureMode == 2 ? MF_CHECKED : 0), CMD_OBS_GREENSCREEN, L"OBS \u7EFF\u5E55\u6A21\u5F0F (#00FF00)");
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)obsMenu, L"\U0001F4FA \u76F4\u64AD\u6355\u83B7\u6A21\u5F0F (OBS)");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
     // Cat Coat Skin submenu
@@ -1009,6 +1036,21 @@ void showContextMenu(AppState& app, POINT screenPt) {
         case CMD_TOGGLE_PET:
             app.settings.petInteraction = !app.settings.petInteraction;
             app.settings.saveToRegistry();
+            break;
+        case CMD_OBS_OFF:
+            app.settings.obsCaptureMode = 0;
+            app.settings.saveToRegistry();
+            applyOBSMode(app);
+            break;
+        case CMD_OBS_TRANSPARENT:
+            app.settings.obsCaptureMode = 1;
+            app.settings.saveToRegistry();
+            applyOBSMode(app);
+            break;
+        case CMD_OBS_GREENSCREEN:
+            app.settings.obsCaptureMode = 2;
+            app.settings.saveToRegistry();
+            applyOBSMode(app);
             break;
         case CMD_COAT_BLACK:
             app.settings.coatTheme = CatCoatTheme::ClassicBlack;
@@ -1174,7 +1216,7 @@ void tickAndRender(AppState& app) {
 
     Gdiplus::Bitmap bmp(w, h, w * 4, PixelFormat32bppPARGB, static_cast<BYTE*>(app.dibBits));
     Gdiplus::Graphics g(&bmp);
-    g.Clear(Gdiplus::Color(0, 0, 0, 0));
+    g.Clear(app.settings.obsCaptureMode == 2 ? Gdiplus::Color(255, 0, 255, 0) : Gdiplus::Color(0, 0, 0, 0));
     g.ScaleTransform((float)w / CatPhysics::CanvasWidth, (float)h / CatPhysics::CanvasHeight);
     CatRenderer::draw(g, app.physics, app.settings);
 
@@ -1597,7 +1639,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         computeDefaultOrigin(initW, initH, initX, initY);
     }
 
-    DWORD exStyle = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT
+    DWORD exStyle = WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT
+                  | (app.settings.obsCaptureMode == 0 ? WS_EX_TOOLWINDOW : 0)
                   | (app.settings.alwaysOnTop ? WS_EX_TOPMOST : 0);
 
     app.hwnd = CreateWindowExW(
