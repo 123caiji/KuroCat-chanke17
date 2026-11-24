@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-private struct IdleFrame {
+private struct RenderedPose {
     struct Appearance: Equatable {
         let coat: CatCoatTheme
         let keyboard: KeyboardTheme
@@ -24,6 +24,9 @@ private struct IdleFrame {
     let eyeClosure: CGFloat
     let headTurn: CGPoint
     let headTilt: CGFloat
+    let eyeGaze: CGPoint
+    let mouseOffset: CGPoint
+    let pawOnMouse: Bool
 
     init(physics: CatPhysics, settings: CatSettings, size: CGSize) {
         let coat = settings.coatTheme
@@ -42,17 +45,22 @@ private struct IdleFrame {
         eyeClosure = physics.effectiveEyeClosure
         headTurn = CGPoint(x: physics.headYaw.value, y: physics.headPitch.value)
         headTilt = physics.headTilt.value
+        eyeGaze = physics.eyeGaze.point
+        mouseOffset = physics.mouseOffset.point
+        pawOnMouse = physics.leftPawOnMouse
     }
 
-    func visiblyDiffers(from previous: IdleFrame) -> Bool {
-        if appearance != previous.appearance || hasEffects || previous.hasEffects { return true }
+    func visiblyDiffers(from previous: RenderedPose) -> Bool {
+        if appearance != previous.appearance || hasEffects || previous.hasEffects
+            || pawOnMouse != previous.pawOnMouse { return true }
         func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(a.x - b.x, a.y - b.y) }
         // Estimate how far visible features moved in canvas coordinates, then convert to screen points.
         let movement = max(distance(head, previous.head), distance(tail, previous.tail),
                            distance(tailBend, previous.tailBend),
                            distance(leftPaw, previous.leftPaw), distance(rightPaw, previous.rightPaw),
                            abs(eyeClosure - previous.eyeClosure) * 40, distance(headTurn, previous.headTurn) * 24,
-                           abs(headTilt - previous.headTilt) * 52)
+                           abs(headTilt - previous.headTilt) * 52, distance(eyeGaze, previous.eyeGaze) * 10,
+                           distance(mouseOffset, previous.mouseOffset))
         let scale = max(appearance.size.width / CatPhysics.canvasSize.width,
                         appearance.size.height / CatPhysics.canvasSize.height)
         return movement * scale >= 0.65
@@ -72,7 +80,7 @@ final class CatCanvasView: NSView {
     private var dragStartScreenPt: CGPoint = .zero
     private var dragStartWindowOrigin: CGPoint = .zero
     private var isShowingOpenHand = false
-    private var lastDrawnFrame: IdleFrame?
+    private var lastDrawnPose: RenderedPose?
 
     var isDraggingOrResizing: Bool { isDragging || activeResizeCorner >= 0 }
 
@@ -92,13 +100,13 @@ final class CatCanvasView: NSView {
         let status = InputEngine.shared.status
         CatRenderer.draw(in: ctx, physics: physics, showPermissionPill: status.needsAttention,
                          permissionPillText: status.permissionPillText)
-        lastDrawnFrame = IdleFrame(physics: physics, settings: CatSettings.shared, size: bounds.size)
+        lastDrawnPose = RenderedPose(physics: physics, settings: CatSettings.shared, size: bounds.size)
         ctx.restoreGState()
     }
 
-    func idleFrameNeedsDisplay() -> Bool {
-        guard let previous = lastDrawnFrame else { return true }
-        let current = IdleFrame(physics: physics, settings: CatSettings.shared, size: bounds.size)
+    func poseNeedsDisplay() -> Bool {
+        guard let previous = lastDrawnPose else { return true }
+        let current = RenderedPose(physics: physics, settings: CatSettings.shared, size: bounds.size)
         return current.visiblyDiffers(from: previous)
     }
 

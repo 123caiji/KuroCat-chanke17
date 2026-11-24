@@ -156,18 +156,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
             let view = self.overlayWindow.catView
             let physics = view.physics
+            let input = InputEngine.shared
+            let windowFrame = self.overlayWindow.frame
+            let previousMouseMoveTime = input.lastMouseMoveTime
             let wasBlinking = physics.isBlinking
             let wasYawning = physics.isYawning
-            physics.step(dt: dt, windowFrameInScreen: self.overlayWindow.frame)
+            physics.step(dt: dt, windowFrameInScreen: windowFrame)
             view.updateHoverAndClickThrough()
 
-            // Keep physics, pointer tracking and hit testing on the 60 Hz tick.
-            // Skip only the redraws so a new input can be shown on the next tick.
-            let input = InputEngine.shared
-            let lastActivity = max(input.lastKeyActivityTime, input.lastMouseMoveTime,
-                                   input.lastMouseClickTime, self.lastDemoKeyTime)
+            // Track the mouse at 60 Hz. Ordinary movement away from the pet can share the idle redraw cadence.
+            let lastDirectInput = max(input.lastKeyActivityTime, input.lastMouseClickTime, self.lastDemoKeyTime)
+            let mouseMoving = now - input.lastMouseMoveTime < 0.12
+            let mouseStartedMoving = mouseMoving && now - previousMouseMoveTime >= 0.12
+            let mouseNearPet = mouseMoving && windowFrame.insetBy(dx: -24, dy: -24).contains(input.lastMouseLocation)
             let isAsleep = physics.sleepiness >= 0.95
-            let isActive = now - lastActivity < 0.8 || !input.activeKeys.isEmpty
+            let isActive = now - lastDirectInput < 0.8 || !input.activeKeys.isEmpty
+                || mouseStartedMoving || mouseNearPet
                 || input.leftMouseDown || input.rightMouseDown || input.otherMouseDown || view.isDraggingOrResizing
                 || !physics.keyGlow.isEmpty || !physics.floatingKeycaps.isEmpty
                 || physics.petHeadIntensity > 0.02 || physics.huntIntensity.value > 0.02
@@ -176,7 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.ticksSinceLastRedraw += 1
             // Give small idle movements time to accumulate, but refresh at least every 100 ms.
             if self.ticksSinceLastRedraw >= ticksPerRedraw &&
-                (isActive || self.ticksSinceLastRedraw >= 6 || view.idleFrameNeedsDisplay()) {
+                (isActive || self.ticksSinceLastRedraw >= 6 || view.poseNeedsDisplay()) {
                 self.ticksSinceLastRedraw = 0
                 view.needsDisplay = true
             }
