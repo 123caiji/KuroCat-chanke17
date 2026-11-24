@@ -663,22 +663,6 @@ private:
         tailPen.SetStartCap(LineCapRound);
         tailPen.SetEndCap(LineCapRound);
         tailPen.SetLineJoin(LineJoinRound);
-        if (outlineOnly) {
-            Pen outPen(blackOutline(), BlackOutlineW * 2.0f);
-            outPen.SetLineJoin(LineJoinRound); outPen.SetStartCap(LineCapRound); outPen.SetEndCap(LineCapRound);
-            g.DrawPath(&outPen, &path);
-            GraphicsState ps = g.Save();
-            g.TranslateTransform(seatX, seatY);
-            g.RotateTransform(bTilt * RadToDeg);
-            g.ScaleTransform(sx, sy);
-            g.DrawEllipse(&outPen, -35.0f, 3.0f, 17.0f, 11.0f);
-            if (physics.hindFootActive.value < 0.35f) {
-                g.DrawEllipse(&outPen, 18.0f, 4.5f, 17.0f, 12.5f);
-            }
-            g.Restore(ps);
-            return;
-        }
-
         if (coat == CatCoatTheme::Tabby) {
             tabby::drawTail(g, tailPen, root, c1, c2, tip);
             return;
@@ -873,6 +857,22 @@ private:
         path.AddBezier(lHip, B(-waistCtrlW, waistCtrlY + breath * 0.5f), H(leftCheekX + neckPinchX, neckCtrlY), lCheek);
         path.AddBezier(lCheek, H(leftCheekX - 1.5f, cheekCtrlTopY), H(-crownCtrlW + cheekShift * 0.3f, crownBaseY + crownDrop), crown);
         path.CloseFigure();
+
+        if (outlineOnly) {
+            Pen outPen(blackOutline(), BlackOutlineW * 2.0f);
+            outPen.SetLineJoin(LineJoinRound); outPen.SetStartCap(LineCapRound); outPen.SetEndCap(LineCapRound);
+            g.DrawPath(&outPen, &path);
+            GraphicsState ps = g.Save();
+            g.TranslateTransform(seatX, seatY);
+            g.RotateTransform(bTilt * RadToDeg);
+            g.ScaleTransform(sx, sy);
+            g.DrawEllipse(&outPen, -35.0f, 3.0f, 17.0f, 11.0f);
+            if (physics.hindFootActive.value < 0.35f) {
+                g.DrawEllipse(&outPen, 18.0f, 4.5f, 17.0f, 12.5f);
+            }
+            g.Restore(ps);
+            return;
+        }
 
         if (coat == CatCoatTheme::Tabby) {
             auto face = [&](float x, float y) {
