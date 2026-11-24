@@ -85,6 +85,10 @@ final class CatSettings {
     var autoHideFullscreen: Bool {
         didSet { UserDefaults.standard.set(autoHideFullscreen, forKey: "KuroCat.AutoHideFullscreen") }
     }
+    /// 0 = Auto-detect graphics tablet/stylus, 1 = Always show tablet, 2 = Always show mouse
+    var tabletMode: Int {
+        didSet { UserDefaults.standard.set(tabletMode, forKey: "KuroCat.TabletMode") }
+    }
     var flipHorizontal: Bool {
         didSet { UserDefaults.standard.set(flipHorizontal, forKey: "KuroCat.FlipHorizontal") }
     }
@@ -128,6 +132,7 @@ final class CatSettings {
         obsCaptureMode = d.object(forKey: "KuroCat.OBSCaptureMode") as? Int ?? 0
         obsHideDesktop = d.object(forKey: "KuroCat.OBSHideDesktop") as? Bool ?? false
         autoHideFullscreen = d.object(forKey: "KuroCat.AutoHideFullscreen") as? Bool ?? false
+        tabletMode = d.object(forKey: "KuroCat.TabletMode") as? Int ?? 0
         flipHorizontal = d.object(forKey: "KuroCat.FlipHorizontal") as? Bool ?? false
         language = d.string(forKey: "KuroCat.Language") ?? "zh"
         petInteraction = d.object(forKey: "KuroCat.PetInteraction") as? Bool ?? true
@@ -271,6 +276,28 @@ final class CatPhysics {
     var mouseOffset = Spring2D(.zero)
     var mousePressLeft = Spring1D(0)
     var mousePressRight = Spring1D(0)
+
+    // Graphics Tablet & Stylus state (auto-activates when a tablet/pen is connected or forced on!)
+    static func tabletQuadPoint(u: CGFloat, v: CGFloat) -> CGPoint {
+        let tl = CGPoint(x: 18, y: 235), tr = CGPoint(x: 94, y: 240)
+        let bl = CGPoint(x: 13, y: 284), br = CGPoint(x: 91, y: 289)
+        let topX = tl.x + (tr.x - tl.x) * u
+        let topY = tl.y + (tr.y - tl.y) * u
+        let botX = bl.x + (br.x - bl.x) * u
+        let botY = bl.y + (br.y - bl.y) * u
+        return CGPoint(x: topX + (botX - topX) * v, y: topY + (botY - topY) * v)
+    }
+
+    struct TabletStrokePoint {
+        var point: CGPoint
+        var age: CGFloat
+    }
+
+    private(set) var isTabletActive = false
+    var tabletNib = Spring2D(CGPoint(x: 60, y: 261))
+    var tabletPenPress = Spring1D(0)
+    var tabletPenTilt = Spring1D(0)
+    var tabletTrail: [TabletStrokePoint] = []
 
     // Paw mode flags (for crisp outline & posture rendering)
     private(set) var leftPawOnMouse = false
@@ -751,6 +778,30 @@ final class CatPhysics {
             y: CatPhysics.mouseBaseCenter.y + mouseOffset.point.y
         )
 
+        // Graphics Tablet & Stylus mode (auto-switches when tablet/pen connected!)
+        let tMode = CatSettings.shared.tabletMode
+        isTabletActive = (tMode == 1) || (tMode == 0 && engine.isTabletConnected)
+        if isTabletActive {
+            let screenFrame = (NSScreen.screens.first { $0.frame.contains(curMouseLoc) } ?? NSScreen.main)?.frame
+                ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+            let nx = max(0, min(1, (curMouseLoc.x - screenFrame.minX) / max(1, screenFrame.width)))
+            let ny = max(0, min(1, 1.0 - (curMouseLoc.y - screenFrame.minY) / max(1, screenFrame.height)))
+            tabletNib.target = CatPhysics.tabletQuadPoint(u: 0.25 + nx * 0.64, v: 0.16 + ny * 0.68)
+            tabletNib.step(dt: dt, stiffness: 240, damping: 20)
+            let penDown = curLeftMouse || engine.penPressure > 0.02
+            tabletPenPress.target = penDown ? max(0.65, min(1.0, engine.penPressure > 0.02 ? engine.penPressure : 0.85)) : 0.0
+            tabletPenPress.step(dt: dt, stiffness: 360, damping: 22)
+            tabletPenTilt.target = max(-0.22, min(0.22, curMouseVel.dx * 0.00018))
+            tabletPenTilt.step(dt: dt, stiffness: 120, damping: 14)
+        } else {
+            tabletPenPress.target = 0
+            tabletPenPress.step(dt: dt, stiffness: 300, damping: 22)
+        }
+        for i in stride(from: tabletTrail.count - 1, through: 0, by: -1) {
+            tabletTrail[i].age += dt
+            if tabletTrail[i].age >= 0.72 { tabletTrail.remove(at: i) }
+        }
+
         // Left paw target (dangles limply during scruff pickup / sprawls when dizzy / tucks when lying)
         if scruff > 0.35 {
             leftPaw.target = CGPoint(x: CatPhysics.seatAnchor.x - 16 + scruffSwing.value * 26, y: CatPhysics.seatAnchor.y + 12)
@@ -765,8 +816,20 @@ final class CatPhysics {
             leftPaw.target = KeyboardLayout.canvasPoint(for: lk)
             leftPawTyping = true
             leftPawOnMouse = false
-        } else if mouseRecent && sleepiness < 0.3 {
-            leftPaw.target = CGPoint(x: liveMouseCenter.x + 2, y: liveMouseCenter.y - 3)
+        } else if (mouseRecent || (isTabletActive && engine.isPenInProximity)) && sleepiness < 0.3 {
+            if isTabletActive {
+                let nib = tabletNib.point
+                leftPaw.target = CGPoint(x: nib.x + 6, y: nib.y - 7)
+                if curLeftMouse || engine.penPressure > 0.02 {
+                    let last = tabletTrail.last?.point
+                    if last == nil || hypot(nib.x - last!.x, nib.y - last!.y) >= 1.8 {
+                        tabletTrail.append(TabletStrokePoint(point: nib, age: 0))
+                        if tabletTrail.count > 28 { tabletTrail.removeFirst() }
+                    }
+                }
+            } else {
+                leftPaw.target = CGPoint(x: liveMouseCenter.x + 2, y: liveMouseCenter.y - 3)
+            }
             leftPawTyping = false
             leftPawOnMouse = true
         } else {

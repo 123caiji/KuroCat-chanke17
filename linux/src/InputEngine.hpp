@@ -9,7 +9,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <cctype>
 #include <cmath>
+#include <fstream>
 #include <dirent.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -143,9 +145,50 @@ public:
         }
 
         double now = nowSeconds();
+        if (now - lastTabletScanTime_ > 2.5) {
+            refreshTabletPresence(now);
+        }
         while (!recentKeyTimes_.empty() && now - recentKeyTimes_.front() > 10.0) {
             recentKeyTimes_.pop_front();
         }
+    }
+
+    bool isTabletConnected() const {
+        return tabletHardwareFound_;
+    }
+
+    void refreshTabletPresence(double now) {
+        lastTabletScanTime_ = now;
+        bool found = false;
+        if (DIR* dir = opendir("/sys/class/input")) {
+            struct dirent* ent = nullptr;
+            while ((ent = readdir(dir)) != nullptr) {
+                if (std::strncmp(ent->d_name, "event", 5) != 0) continue;
+                std::string namePath = std::string("/sys/class/input/") + ent->d_name + "/device/name";
+                std::ifstream nf(namePath);
+                std::string name;
+                if (!nf || !std::getline(nf, name)) continue;
+                for (char& ch : name) ch = (char)std::tolower((unsigned char)ch);
+                if (name.find("touchpad") != std::string::npos || name.find("trackpad") != std::string::npos) continue;
+                if (name.find("wacom") != std::string::npos ||
+                    name.find("huion") != std::string::npos ||
+                    name.find("xp-pen") != std::string::npos ||
+                    name.find("gaomon") != std::string::npos ||
+                    name.find("ugee") != std::string::npos ||
+                    name.find("veikk") != std::string::npos ||
+                    name.find("xencelabs") != std::string::npos ||
+                    name.find("hanvon") != std::string::npos ||
+                    name.find("parblo") != std::string::npos ||
+                    name.find("stylus") != std::string::npos ||
+                    name.find("pen") != std::string::npos ||
+                    name.find("tablet") != std::string::npos) {
+                    found = true;
+                    break;
+                }
+            }
+            closedir(dir);
+        }
+        tabletHardwareFound_ = found;
     }
 
     int currentKPM() const {
@@ -178,6 +221,8 @@ private:
     float xCursorX_ = 0.0f;
     float xCursorY_ = 0.0f;
     bool cursorInitialized_ = false;
+    bool tabletHardwareFound_ = false;
+    double lastTabletScanTime_ = -10.0;
 
     std::unordered_set<PhysicalKey> evdevKeys_;
     std::unordered_set<PhysicalKey> xi2Keys_;

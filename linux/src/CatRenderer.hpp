@@ -79,7 +79,14 @@ public:
             126.0f + siameseLift - scruff * 22.0f + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f + lieS * 60.0f
         };
 
-        drawMouse(cr, physics, settings.keyboardTheme);
+        if (physics.isTabletActive) {
+            drawTablet(cr, physics, settings.keyboardTheme, settings.eyeTheme);
+            if (!physics.leftPawOnMouse || scruff > 0.25f || dizzy > 0.35f || lie > 0.45f) {
+                drawParkedStylus(cr, settings.keyboardTheme, settings.eyeTheme);
+            }
+        } else {
+            drawMouse(cr, physics, settings.keyboardTheme);
+        }
         drawKeyboard(cr, physics, settings.keyboardTheme, settings.eyeTheme, settings.showKeyLegends, settings.keyboardMarquee);
         cairo_save(cr);
         if (dizzy > 0.01f) {
@@ -105,6 +112,10 @@ public:
 
         drawHeadFeatures(cr, headCenter, physics, settings.eyeTheme, settings.coatTheme);
         drawFrontPaws(cr, seatX, seatY, breath, physics, settings.coatTheme);
+
+        if (physics.isTabletActive && physics.leftPawOnMouse && scruff <= 0.25f && dizzy <= 0.35f && lie <= 0.45f) {
+            drawHeldStylus(cr, physics, settings.keyboardTheme, settings.eyeTheme);
+        }
 
         if (tailInFront) {
             if (drawBlackRim) drawTail(cr, seatX, seatY, physics, settings.coatTheme, true);
@@ -444,6 +455,209 @@ private:
         cairo_set_line_width(cr, 1.7);
         cairo_stroke(cr);
 
+        cairo_restore(cr);
+    }
+
+    // MARK: - Mini 2.5D Graphics Tablet & Stylus
+
+    static void drawTablet(cairo_t* cr, const CatPhysics& physics, KeyboardTheme theme, EyeColorTheme eyeTheme) {
+        Pt tl = CatPhysics::tabletQuadPoint(0.0f, 0.0f);
+        Pt tr = CatPhysics::tabletQuadPoint(1.0f, 0.0f);
+        Pt bl = CatPhysics::tabletQuadPoint(0.0f, 1.0f);
+        Pt br = CatPhysics::tabletQuadPoint(1.0f, 1.0f);
+        constexpr float depth = 3.6f;
+
+        RGBA baseCol, bodyCol, padCol, keyCol, accentCol;
+        if (theme == KeyboardTheme::MidnightHacker) {
+            baseCol = {0.05,0.05,0.07,1}; bodyCol = {0.11,0.12,0.15,1};
+            padCol = {0.16,0.17,0.21,1}; keyCol = {0.24,0.25,0.30,1}; accentCol = {0.78,0.95,0.25,1};
+        } else if (theme == KeyboardTheme::RetroCream) {
+            baseCol = {0.22,0.21,0.19,1}; bodyCol = {0.33,0.31,0.28,1};
+            padCol = {0.42,0.39,0.35,1}; keyCol = {0.54,0.50,0.45,1}; accentCol = {0.88,0.42,0.24,1};
+        } else {
+            baseCol = {0.10,0.10,0.12,1}; bodyCol = {0.17,0.18,0.21,1};
+            padCol = {0.23,0.24,0.28,1}; keyCol = {0.30,0.32,0.37,1}; accentCol = {0.96,0.69,0.16,1};
+        }
+
+        cairo_save(cr);
+        cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+        // Shadow
+        drawQuadPath(cr, {tl.x, tl.y+depth+2.0f}, {tr.x, tr.y+depth+2.0f}, {br.x, br.y+depth+2.6f}, {bl.x, bl.y+depth+2.6f});
+        cairo_set_source_rgba(cr, 0, 0, 0, 0.22);
+        cairo_fill_preserve(cr); cairo_set_line_width(cr, 3.0); cairo_stroke(cr);
+        // Lower 3D slab
+        drawQuadPath(cr, {tl.x, tl.y+depth}, {tr.x, tr.y+depth}, {br.x, br.y+depth}, {bl.x, bl.y+depth});
+        setCol(cr, baseCol);
+        cairo_fill_preserve(cr); cairo_set_line_width(cr, 2.5); cairo_stroke(cr);
+        // Top body
+        drawQuadPath(cr, tl, tr, br, bl);
+        setCol(cr, bodyCol);
+        cairo_fill_preserve(cr); cairo_set_line_width(cr, 2.0); cairo_stroke(cr);
+        drawQuadPath(cr, tl, tr, br, bl);
+        cairo_set_source_rgba(cr, 1, 1, 1, 0.14);
+        cairo_set_line_width(cr, 0.9); cairo_stroke(cr);
+
+        // Active pad
+        Pt pTL = CatPhysics::tabletQuadPoint(0.21f, 0.11f);
+        Pt pTR = CatPhysics::tabletQuadPoint(0.94f, 0.11f);
+        Pt pBR = CatPhysics::tabletQuadPoint(0.94f, 0.89f);
+        Pt pBL = CatPhysics::tabletQuadPoint(0.21f, 0.89f);
+        drawQuadPath(cr, pTL, pTR, pBR, pBL);
+        setCol(cr, padCol);
+        cairo_fill(cr);
+
+        // Corner L-brackets
+        cairo_set_source_rgba(cr, 1, 1, 1, 0.34);
+        cairo_set_line_width(cr, 0.95);
+        cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+        const float corners[4][4] = {
+            {0.24f, 0.15f,  0.07f,  0.11f},
+            {0.91f, 0.15f, -0.07f,  0.11f},
+            {0.24f, 0.85f,  0.07f, -0.11f},
+            {0.91f, 0.85f, -0.07f, -0.11f}
+        };
+        for (const auto& c : corners) {
+            Pt pt = CatPhysics::tabletQuadPoint(c[0], c[1]);
+            Pt ph = CatPhysics::tabletQuadPoint(c[0] + c[2], c[1]);
+            Pt pv = CatPhysics::tabletQuadPoint(c[0], c[1] + c[3]);
+            cairo_move_to(cr, ph.x, ph.y); cairo_line_to(cr, pt.x, pt.y); cairo_line_to(cr, pv.x, pv.y);
+        }
+        cairo_stroke(cr);
+
+        // LED + 4 ExpressKeys
+        RGBA eyeCol = eyePrimary(eyeTheme);
+        RGBA ledCol = physics.tabletPenPress.value > 0.15f ? eyeCol : accentCol;
+        Pt ledPt = CatPhysics::tabletQuadPoint(0.105f, 0.14f);
+        cairo_set_source_rgba(cr, ledCol.r, ledCol.g, ledCol.b, 0.38);
+        cairo_arc(cr, ledPt.x, ledPt.y, 3.6, 0, PI * 2.0); cairo_fill(cr);
+        setCol(cr, ledCol);
+        cairo_arc(cr, ledPt.x, ledPt.y, 1.35, 0, PI * 2.0); cairo_fill(cr);
+
+        setCol(cr, keyCol);
+        for (float kv : { 0.28f, 0.44f, 0.60f, 0.76f }) {
+            drawQuadPath(cr,
+                CatPhysics::tabletQuadPoint(0.06f, kv - 0.05f),
+                CatPhysics::tabletQuadPoint(0.15f, kv - 0.05f),
+                CatPhysics::tabletQuadPoint(0.15f, kv + 0.05f),
+                CatPhysics::tabletQuadPoint(0.06f, kv + 0.05f));
+            cairo_fill(cr);
+        }
+
+        // Fading ink trail
+        if (physics.tabletTrail.size() >= 2) {
+            cairo_save(cr);
+            drawQuadPath(cr, pTL, pTR, pBR, pBL);
+            cairo_clip(cr);
+            cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+            for (size_t i = 1; i < physics.tabletTrail.size(); ++i) {
+                const auto& a = physics.tabletTrail[i - 1];
+                const auto& b = physics.tabletTrail[i];
+                if (std::hypot(b.point.x - a.point.x, b.point.y - a.point.y) > 22.0f) continue;
+                double life = std::max(0.0, 1.0 - b.age / 0.72);
+                if (life <= 0.01) continue;
+                cairo_set_source_rgba(cr, eyeCol.r, eyeCol.g, eyeCol.b, life * 0.88);
+                cairo_set_line_width(cr, 1.2 + life * 1.4);
+                cairo_move_to(cr, a.point.x, a.point.y);
+                cairo_line_to(cr, b.point.x, b.point.y);
+                cairo_stroke(cr);
+            }
+            cairo_restore(cr);
+        }
+
+        // Nib contact glow
+        if (physics.leftPawOnMouse && physics.tabletPenPress.value > 0.08f) {
+            Pt nib = physics.tabletNib.point();
+            double r = 7.0 + physics.tabletPenPress.value * 3.5;
+            cairo_pattern_t* pat = cairo_pattern_create_radial(nib.x, nib.y, 0, nib.x, nib.y, r);
+            cairo_pattern_add_color_stop_rgba(pat, 0.0, eyeCol.r, eyeCol.g, eyeCol.b, 0.45 * physics.tabletPenPress.value);
+            cairo_pattern_add_color_stop_rgba(pat, 1.0, eyeCol.r, eyeCol.g, eyeCol.b, 0.0);
+            cairo_set_source(cr, pat);
+            cairo_arc(cr, nib.x, nib.y, r, 0, PI * 2.0);
+            cairo_fill(cr);
+            cairo_pattern_destroy(pat);
+        }
+        cairo_restore(cr);
+    }
+
+    static void drawStylusBody(cairo_t* cr, double len, KeyboardTheme theme, EyeColorTheme eyeTheme, float pressed) {
+        RGBA barrelCol, gripCol, ringCol;
+        if (theme == KeyboardTheme::MidnightHacker) {
+            barrelCol = {0.13,0.14,0.17,1}; gripCol = {0.22,0.24,0.29,1}; ringCol = {0.78,0.95,0.25,1};
+        } else if (theme == KeyboardTheme::RetroCream) {
+            barrelCol = {0.28,0.26,0.24,1}; gripCol = {0.42,0.39,0.35,1}; ringCol = {0.88,0.42,0.24,1};
+        } else {
+            barrelCol = {0.18,0.19,0.23,1}; gripCol = {0.28,0.30,0.35,1}; ringCol = {0.96,0.69,0.16,1};
+        }
+        auto tracePen = [&]() {
+            cairo_new_path(cr);
+            cairo_move_to(cr, 0.0, 0.0);
+            cairo_line_to(cr, 7.5, -2.4);
+            cairo_line_to(cr, len - 3.0, -2.6);
+            quadCurveTo(cr, len - 3.0, -2.6, len, -2.4, len, 0.0);
+            quadCurveTo(cr, len, 0.0, len, 2.4, len - 3.0, 2.6);
+            cairo_line_to(cr, 7.5, 2.4);
+            cairo_close_path(cr);
+        };
+        tracePen();
+        cairo_set_source_rgba(cr, 0.96, 0.96, 0.96, 0.80);
+        cairo_set_line_width(cr, 1.6);
+        cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+        cairo_stroke(cr);
+
+        tracePen();
+        setCol(cr, barrelCol);
+        cairo_fill(cr);
+
+        cairo_save(cr);
+        tracePen();
+        cairo_clip(cr);
+        setCol(cr, gripCol);
+        cairo_rectangle(cr, 7.5, -3.0, 11.5, 6.0); cairo_fill(cr);
+        setCol(cr, ringCol);
+        cairo_rectangle(cr, 19.0, -3.0, 2.4, 6.0); cairo_fill(cr);
+        if (pressed > 0.15f) setCol(cr, eyePrimary(eyeTheme));
+        else cairo_set_source_rgba(cr, 0.94, 0.94, 0.94, 1.0);
+        cairo_rectangle(cr, -0.5, -1.5, 3.4, 3.0); cairo_fill(cr);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.24);
+        cairo_rectangle(cr, 8.0, -1.9, std::max(1.0, len - 12.0), 1.1); cairo_fill(cr);
+        cairo_restore(cr);
+
+        roundedRect(cr, 11.0, -3.1, 6.0, 1.4, 0.7);
+        cairo_set_source_rgba(cr, 0.78, 0.78, 0.78, 0.90);
+        cairo_fill(cr);
+    }
+
+    static void drawParkedStylus(cairo_t* cr, KeyboardTheme theme, EyeColorTheme eyeTheme) {
+        Pt nib = CatPhysics::tabletQuadPoint(0.88f, -0.02f);
+        Pt tail = CatPhysics::tabletQuadPoint(0.18f, -0.02f);
+        double ang = std::atan2(tail.y - nib.y, tail.x - nib.x);
+        double len = std::hypot(tail.x - nib.x, tail.y - nib.y);
+
+        cairo_save(cr);
+        cairo_translate(cr, nib.x, nib.y + 2.2);
+        cairo_rotate(cr, ang);
+        cairo_set_source_rgba(cr, 0, 0, 0, 0.22);
+        cairo_rectangle(cr, 2.0, -2.0, len - 4.0, 4.5);
+        cairo_fill(cr);
+        cairo_restore(cr);
+
+        cairo_save(cr);
+        cairo_translate(cr, nib.x, nib.y);
+        cairo_rotate(cr, ang);
+        drawStylusBody(cr, len, theme, eyeTheme, 0.0f);
+        cairo_restore(cr);
+    }
+
+    static void drawHeldStylus(cairo_t* cr, const CatPhysics& physics, KeyboardTheme theme, EyeColorTheme eyeTheme) {
+        Pt lPos = physics.leftPaw.point();
+        float press = std::clamp(physics.tabletPenPress.value, 0.0f, 1.0f);
+        Pt nib = { lPos.x - 5.5f, lPos.y + 7.0f + press * 1.4f };
+        double angle = -2.18 + physics.tabletPenTilt.value;
+
+        cairo_save(cr);
+        cairo_translate(cr, nib.x, nib.y);
+        cairo_rotate(cr, angle);
+        drawStylusBody(cr, 35.0, theme, eyeTheme, press);
         cairo_restore(cr);
     }
 

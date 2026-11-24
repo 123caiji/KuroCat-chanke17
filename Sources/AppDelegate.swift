@@ -433,6 +433,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         eyeParent.submenu = eyeMenu
         menu.addItem(eyeParent)
 
+        // Drawing Tablet & Stylus submenu
+        let tabMenu = NSMenu()
+        let tabOptions: [(String, Int)] = [
+            (tr("自动检测（连接数位板时自动切换）", "Auto-Detect (Switch When Connected)"), 0),
+            (tr("始终显示数位板与触控笔", "Always Show Tablet & Stylus"), 1),
+            (tr("始终显示鼠标", "Always Show Mouse"), 2)
+        ]
+        for (title, mode) in tabOptions {
+            let item = NSMenuItem(title: title, action: #selector(selectTabletMode(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode
+            item.state = (settings.tabletMode == mode) ? .on : .off
+            tabMenu.addItem(item)
+        }
+        let tabParent = NSMenuItem(title: tr("🎨 数位板与触控笔", "🎨 Drawing Tablet & Stylus"), action: nil, keyEquivalent: "")
+        tabParent.submenu = tabMenu
+        menu.addItem(tabParent)
+
         // Language submenu
         let langMenu = NSMenu()
         for (title, code) in [("简体中文", "zh"), ("English", "en")] {
@@ -509,6 +527,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             overlayWindow.orderFrontRegardless()
         } else {
             overlayWindow.orderOut(nil)
+        }
+    }
+
+    @objc private func selectTabletMode(_ sender: NSMenuItem) {
+        if let mode = sender.representedObject as? Int {
+            CatSettings.shared.tabletMode = mode
+            overlayWindow.catView.needsDisplay = true
         }
     }
 

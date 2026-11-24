@@ -114,7 +114,10 @@ enum MenuCmd : UINT {
     CMD_TOGGLE_RUN_AS_ADMIN,
     CMD_QUIT,
     CMD_COAT_TABBY,
-    CMD_EYE_OLIVE_GOLD
+    CMD_EYE_OLIVE_GOLD,
+    CMD_TABLET_AUTO,
+    CMD_TABLET_ON,
+    CMD_TABLET_OFF
 };
 
 struct AppState {
@@ -1025,6 +1028,13 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(eyeMenu, MF_STRING | (app.settings.eyeTheme == EyeColorTheme::OliveGold ? MF_CHECKED : 0), CMD_EYE_OLIVE_GOLD, tr(L"\u6A44\u6984\u91D1", L"Olive Gold"));
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)eyeMenu, tr(L"\u77B3\u8272\u5207\u6362", L"Eye Color"));
 
+    // Drawing Tablet & Stylus submenu
+    HMENU tabMenu = CreatePopupMenu();
+    AppendMenuW(tabMenu, MF_STRING | (app.settings.tabletMode == 0 ? MF_CHECKED : 0), CMD_TABLET_AUTO, tr(L"\u81EA\u52A8\u68C0\u6D4B\uFF08\u8FDE\u63A5\u6570\u4F4D\u677F\u65F6\u81EA\u52A8\u5207\u6362\uFF09", L"Auto-Detect (Switch When Connected)"));
+    AppendMenuW(tabMenu, MF_STRING | (app.settings.tabletMode == 1 ? MF_CHECKED : 0), CMD_TABLET_ON,   tr(L"\u59CB\u7EC8\u663E\u793A\u6570\u4F4D\u677F\u4E0E\u89E6\u63A7\u7B14", L"Always Show Tablet & Stylus"));
+    AppendMenuW(tabMenu, MF_STRING | (app.settings.tabletMode == 2 ? MF_CHECKED : 0), CMD_TABLET_OFF,  tr(L"\u59CB\u7EC8\u663E\u793A\u9F20\u6807", L"Always Show Mouse"));
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)tabMenu, tr(L"\U0001F3A8 \u6570\u4F4D\u677F\u4E0E\u89E6\u63A7\u7B14", L"\U0001F3A8 Drawing Tablet & Stylus"));
+
     // Language submenu
     HMENU langMenu = CreatePopupMenu();
     AppendMenuW(langMenu, MF_STRING | (!app.settings.isEnglish ? MF_CHECKED : 0), CMD_LANG_ZH, L"\u7B80\u4F53\u4E2D\u6587");
@@ -1137,6 +1147,18 @@ void showContextMenu(AppState& app, POINT screenPt) {
             break;
         case CMD_LANG_EN:
             app.settings.isEnglish = true;
+            app.settings.saveToRegistry();
+            break;
+        case CMD_TABLET_AUTO:
+            app.settings.tabletMode = 0;
+            app.settings.saveToRegistry();
+            break;
+        case CMD_TABLET_ON:
+            app.settings.tabletMode = 1;
+            app.settings.saveToRegistry();
+            break;
+        case CMD_TABLET_OFF:
+            app.settings.tabletMode = 2;
             app.settings.saveToRegistry();
             break;
         case CMD_COAT_BLACK:

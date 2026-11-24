@@ -44,6 +44,7 @@ struct CatSettings {
     int obsCaptureMode = 0; // 0 = off, 1 = OBS transparent window capture, 2 = OBS green screen (#00FF00)
     bool obsHideDesktop = false;
     bool autoHideFullscreen = false;
+    int tabletMode = 0; // 0 = auto-detect tablet/stylus, 1 = always tablet, 2 = always mouse
     bool flipHorizontal = false;
     bool isEnglish = false;
     bool isEditMode = false; // runtime-only interactive resize & flip box
@@ -75,6 +76,7 @@ struct CatSettings {
         obsCaptureMode   = std::clamp((int)readDword(L"OBSCaptureMode", 0), 0, 2);
         obsHideDesktop   = readDword(L"OBSHideDesktop", 0) != 0;
         autoHideFullscreen = readDword(L"AutoHideFullscreen", 0) != 0;
+        tabletMode       = std::clamp((int)readDword(L"TabletMode", 0), 0, 2);
         flipHorizontal   = readDword(L"FlipHorizontal", 0) != 0;
         isEnglish        = readDword(L"LanguageEnglish", 0) != 0;
         petInteraction   = readDword(L"PetInteraction", 1) != 0;
@@ -108,6 +110,7 @@ struct CatSettings {
         writeDword(L"OBSCaptureMode", (DWORD)obsCaptureMode);
         writeDword(L"OBSHideDesktop", obsHideDesktop ? 1 : 0);
         writeDword(L"AutoHideFullscreen", autoHideFullscreen ? 1 : 0);
+        writeDword(L"TabletMode", (DWORD)tabletMode);
         writeDword(L"FlipHorizontal", flipHorizontal ? 1 : 0);
         writeDword(L"LanguageEnglish", isEnglish ? 1 : 0);
         writeDword(L"PetInteraction", petInteraction ? 1 : 0);
@@ -223,6 +226,21 @@ public:
     Spring2D mouseOffset{{0.0f, 0.0f}};
     Spring1D mousePressLeft{0.0f};
     Spring1D mousePressRight{0.0f};
+
+    static Pt tabletQuadPoint(float u, float v) {
+        constexpr Pt tl = { 18.0f, 235.0f }, tr = { 94.0f, 240.0f };
+        constexpr Pt bl = { 13.0f, 284.0f }, br = { 91.0f, 289.0f };
+        float topX = tl.x + (tr.x - tl.x) * u, topY = tl.y + (tr.y - tl.y) * u;
+        float botX = bl.x + (br.x - bl.x) * u, botY = bl.y + (br.y - bl.y) * u;
+        return { topX + (botX - topX) * v, topY + (botY - topY) * v };
+    }
+
+    struct TabletStrokePoint { Pt point; float age = 0.0f; };
+    bool isTabletActive = false;
+    Spring2D tabletNib{{60.0f, 261.0f}};
+    Spring1D tabletPenPress{0.0f};
+    Spring1D tabletPenTilt{0.0f};
+    std::vector<TabletStrokePoint> tabletTrail;
 
     bool leftPawOnMouse = false;
     bool leftPawTyping = false;
@@ -592,6 +610,31 @@ public:
 
         Pt liveMouse = { MouseBaseCenter.x + mouseOffset.point().x, MouseBaseCenter.y + mouseOffset.point().y };
 
+        isTabletActive = (settings.tabletMode == 1) || (settings.tabletMode == 0 && engine.isTabletConnected());
+        if (isTabletActive) {
+            RECT monRect = { 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN) };
+            HMONITOR hm = MonitorFromPoint(engine.lastCursorPos, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO mi = {}; mi.cbSize = sizeof(mi);
+            if (hm && GetMonitorInfoW(hm, &mi)) monRect = mi.rcMonitor;
+            float mw = std::max(1.0f, (float)(monRect.right - monRect.left));
+            float mh = std::max(1.0f, (float)(monRect.bottom - monRect.top));
+            float nx = std::clamp((float)(engine.lastCursorPos.x - monRect.left) / mw, 0.0f, 1.0f);
+            float ny = std::clamp((float)(engine.lastCursorPos.y - monRect.top) / mh, 0.0f, 1.0f);
+            tabletNib.setTarget(tabletQuadPoint(0.25f + nx * 0.64f, 0.16f + ny * 0.68f));
+            tabletNib.step(dt, 240.0f, 20.0f);
+            tabletPenPress.target = engine.leftMouseDown ? 0.88f : 0.0f;
+            tabletPenPress.step(dt, 360.0f, 22.0f);
+            tabletPenTilt.target = std::clamp(engine.mouseVelocity.x * 0.00018f, -0.22f, 0.22f);
+            tabletPenTilt.step(dt, 120.0f, 14.0f);
+        } else {
+            tabletPenPress.target = 0.0f;
+            tabletPenPress.step(dt, 300.0f, 22.0f);
+        }
+        for (int i = (int)tabletTrail.size() - 1; i >= 0; --i) {
+            tabletTrail[i].age += dt;
+            if (tabletTrail[i].age >= 0.72f) tabletTrail.erase(tabletTrail.begin() + i);
+        }
+
         if (scruff > 0.25f) {
             float sway = scruffSwing.value * 28.0f;
             float kick = std::sin(time * 9.0f) * 3.5f * scruff;
@@ -624,7 +667,18 @@ public:
                 leftPawTyping = true;
                 leftPawOnMouse = false;
             } else if (mouseRecent && sleepiness < 0.3f) {
-                leftPaw.setTarget({ liveMouse.x + 2.0f, liveMouse.y - 3.0f });
+                if (isTabletActive) {
+                    Pt nib = tabletNib.point();
+                    leftPaw.setTarget({ nib.x + 6.0f, nib.y - 7.0f });
+                    if (engine.leftMouseDown) {
+                        if (tabletTrail.empty() || std::hypot(nib.x - tabletTrail.back().point.x, nib.y - tabletTrail.back().point.y) >= 1.8f) {
+                            tabletTrail.push_back({ nib, 0.0f });
+                            if (tabletTrail.size() > 28) tabletTrail.erase(tabletTrail.begin());
+                        }
+                    }
+                } else {
+                    leftPaw.setTarget({ liveMouse.x + 2.0f, liveMouse.y - 3.0f });
+                }
                 leftPawTyping = false;
                 leftPawOnMouse = true;
             } else {

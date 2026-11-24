@@ -135,8 +135,15 @@ enum CatRenderer {
         let seatX = CatPhysics.seatAnchor.x + physics.bodyShiftX.value
         let seatY = CatPhysics.seatAnchor.y - scruff * 22.0 + lieS * 10.0
 
-        // 1. Mini White Mouse (left of keyboard)
-        drawMouse(in: ctx, physics: physics, theme: settings.keyboardTheme)
+        // 1. Mini White Mouse OR Graphics Tablet (when drawing tablet/stylus is connected!)
+        if physics.isTabletActive {
+            drawTablet(in: ctx, physics: physics, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme)
+            if !physics.leftPawOnMouse || scruff > 0.25 || dizzy > 0.35 || lie > 0.45 {
+                drawParkedStylus(in: ctx, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme)
+            }
+        } else {
+            drawMouse(in: ctx, physics: physics, theme: settings.keyboardTheme)
+        }
 
         // 2. Mini Angled 65% Mechanical Keyboard + Dynamic Keycap Glow
         drawKeyboard(in: ctx, physics: physics, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme, showLegends: settings.showKeyLegends, flipped: flipped, marquee: settings.keyboardMarquee)
@@ -203,6 +210,11 @@ enum CatRenderer {
 
         // 8. Front Arms / Paws (over torso & keyboard/mouse with crisp separation outlines / Siamese chocolate socks!)
         drawFrontPaws(in: ctx, seatX: seatX, seatY: seatY, breath: breath, physics: physics, coat: coat)
+
+        // 8b. Held Stylus gripped cleanly in the cat's paw when drawing on the graphics tablet!
+        if physics.isTabletActive && physics.leftPawOnMouse && scruff <= 0.25 && dizzy <= 0.35 && lie <= 0.45 {
+            drawHeldStylus(in: ctx, physics: physics, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme)
+        }
 
         if tailInFront {
             if drawBlackRim { drawTail(in: ctx, physics: physics, coat: coat, outlineOnly: true) }
@@ -431,6 +443,267 @@ enum CatRenderer {
         ctx.setLineWidth(1.7)
         ctx.strokeEllipse(in: bodyRect)
 
+        ctx.restoreGState()
+    }
+
+    // MARK: - Mini 2.5D Graphics Tablet & Stylus (数位板与触控笔)
+
+    private static func drawTablet(in ctx: CGContext, physics: CatPhysics, theme: KeyboardTheme, eyeTheme: EyeColorTheme) {
+        let tl = CatPhysics.tabletQuadPoint(u: 0, v: 0)
+        let tr = CatPhysics.tabletQuadPoint(u: 1, v: 0)
+        let bl = CatPhysics.tabletQuadPoint(u: 0, v: 1)
+        let br = CatPhysics.tabletQuadPoint(u: 1, v: 1)
+        let depth: CGFloat = 3.6
+
+        let baseColor: NSColor
+        let bodyColor: NSColor
+        let padColor: NSColor
+        let keyColor: NSColor
+        let accentColor: NSColor
+        switch theme {
+        case .classicMilk:
+            baseColor = NSColor(calibratedRed: 0.10, green: 0.10, blue: 0.12, alpha: 1.0)
+            bodyColor = NSColor(calibratedRed: 0.17, green: 0.18, blue: 0.21, alpha: 1.0)
+            padColor  = NSColor(calibratedRed: 0.23, green: 0.24, blue: 0.28, alpha: 1.0)
+            keyColor  = NSColor(calibratedRed: 0.30, green: 0.32, blue: 0.37, alpha: 1.0)
+            accentColor = NSColor(calibratedRed: 0.96, green: 0.69, blue: 0.16, alpha: 1.0)
+        case .midnightHacker:
+            baseColor = NSColor(calibratedRed: 0.05, green: 0.05, blue: 0.07, alpha: 1.0)
+            bodyColor = NSColor(calibratedRed: 0.11, green: 0.12, blue: 0.15, alpha: 1.0)
+            padColor  = NSColor(calibratedRed: 0.16, green: 0.17, blue: 0.21, alpha: 1.0)
+            keyColor  = NSColor(calibratedRed: 0.24, green: 0.25, blue: 0.30, alpha: 1.0)
+            accentColor = NSColor(calibratedRed: 0.78, green: 0.95, blue: 0.25, alpha: 1.0)
+        case .retroCream:
+            baseColor = NSColor(calibratedRed: 0.22, green: 0.21, blue: 0.19, alpha: 1.0)
+            bodyColor = NSColor(calibratedRed: 0.33, green: 0.31, blue: 0.28, alpha: 1.0)
+            padColor  = NSColor(calibratedRed: 0.42, green: 0.39, blue: 0.35, alpha: 1.0)
+            keyColor  = NSColor(calibratedRed: 0.54, green: 0.50, blue: 0.45, alpha: 1.0)
+            accentColor = NSColor(calibratedRed: 0.88, green: 0.42, blue: 0.24, alpha: 1.0)
+        }
+
+        // Ambient drop shadow beneath tablet
+        ctx.saveGState()
+        let shadowPath = roundedQuadPath(
+            tl: CGPoint(x: tl.x, y: tl.y + depth + 2.0),
+            tr: CGPoint(x: tr.x, y: tr.y + depth + 2.0),
+            br: CGPoint(x: br.x, y: br.y + depth + 2.6),
+            bl: CGPoint(x: bl.x, y: bl.y + depth + 2.6),
+            radius: 5.5
+        )
+        ctx.setFillColor(NSColor(calibratedWhite: 0, alpha: 0.22).cgColor)
+        ctx.addPath(shadowPath)
+        ctx.fillPath()
+        ctx.restoreGState()
+
+        // 3D lower slab lip
+        let lowerPath = roundedQuadPath(
+            tl: CGPoint(x: tl.x, y: tl.y + depth),
+            tr: CGPoint(x: tr.x, y: tr.y + depth),
+            br: CGPoint(x: br.x, y: br.y + depth),
+            bl: CGPoint(x: bl.x, y: bl.y + depth),
+            radius: 5.0
+        )
+        ctx.setFillColor(baseColor.cgColor)
+        ctx.addPath(lowerPath)
+        ctx.fillPath()
+
+        // Main slate tablet deck
+        let topPath = roundedQuadPath(tl: tl, tr: tr, br: br, bl: bl, radius: 4.5)
+        ctx.setFillColor(bodyColor.cgColor)
+        ctx.addPath(topPath)
+        ctx.fillPath()
+
+        // Crisp subtle bezel rim
+        ctx.setStrokeColor(NSColor(calibratedWhite: 1.0, alpha: 0.14).cgColor)
+        ctx.setLineWidth(0.9)
+        ctx.addPath(topPath)
+        ctx.strokePath()
+
+        // Active drawing surface recessed pad
+        let pTL = CatPhysics.tabletQuadPoint(u: 0.21, v: 0.11)
+        let pTR = CatPhysics.tabletQuadPoint(u: 0.94, v: 0.11)
+        let pBR = CatPhysics.tabletQuadPoint(u: 0.94, v: 0.89)
+        let pBL = CatPhysics.tabletQuadPoint(u: 0.21, v: 0.89)
+        let padPath = roundedQuadPath(tl: pTL, tr: pTR, br: pBR, bl: pBL, radius: 2.6)
+        ctx.setFillColor(padColor.cgColor)
+        ctx.addPath(padPath)
+        ctx.fillPath()
+
+        // Minimalist active-area corner L-brackets ([ ])
+        ctx.saveGState()
+        ctx.setStrokeColor(NSColor(calibratedWhite: 1.0, alpha: 0.34).cgColor)
+        ctx.setLineWidth(0.95)
+        ctx.setLineCap(.round)
+        let corners: [(CGFloat, CGFloat, CGFloat, CGFloat)] = [
+            (0.24, 0.15,  0.07,  0.11),
+            (0.91, 0.15, -0.07,  0.11),
+            (0.24, 0.85,  0.07, -0.11),
+            (0.91, 0.85, -0.07, -0.11)
+        ]
+        for (cu, cv, du, dv) in corners {
+            let c = CatPhysics.tabletQuadPoint(u: cu, v: cv)
+            let h = CatPhysics.tabletQuadPoint(u: cu + du, v: cv)
+            let v = CatPhysics.tabletQuadPoint(u: cu, v: cv + dv)
+            ctx.move(to: h); ctx.addLine(to: c); ctx.addLine(to: v)
+        }
+        ctx.strokePath()
+        ctx.restoreGState()
+
+        // 4 miniature ExpressKeys along outer-left bezel + status LED
+        let ledPt = CatPhysics.tabletQuadPoint(u: 0.105, v: 0.14)
+        let ledCol = physics.tabletPenPress.value > 0.15 ? eyeTheme.primaryColor : accentColor
+        drawRadialGlow(in: ctx, center: ledPt, radius: 4.5, color: ledCol.withAlphaComponent(0.55))
+        ctx.setFillColor(ledCol.cgColor)
+        ctx.fillEllipse(in: CGRect(x: ledPt.x - 1.35, y: ledPt.y - 1.35, width: 2.7, height: 2.7))
+
+        for kv: CGFloat in [0.28, 0.44, 0.60, 0.76] {
+            let kTL = CatPhysics.tabletQuadPoint(u: 0.06, v: kv - 0.05)
+            let kTR = CatPhysics.tabletQuadPoint(u: 0.15, v: kv - 0.05)
+            let kBR = CatPhysics.tabletQuadPoint(u: 0.15, v: kv + 0.05)
+            let kBL = CatPhysics.tabletQuadPoint(u: 0.06, v: kv + 0.05)
+            let kp = roundedQuadPath(tl: kTL, tr: kTR, br: kBR, bl: kBL, radius: 1.2)
+            ctx.setFillColor(keyColor.cgColor)
+            ctx.addPath(kp)
+            ctx.fillPath()
+        }
+
+        // Live fading glowing ink trail on the active drawing surface!
+        if physics.tabletTrail.count >= 2 {
+            ctx.saveGState()
+            ctx.addPath(padPath)
+            ctx.clip()
+            ctx.setLineCap(.round)
+            ctx.setLineJoin(.round)
+            let inkCol = eyeTheme.primaryColor
+            for i in 1..<physics.tabletTrail.count {
+                let a = physics.tabletTrail[i - 1]
+                let b = physics.tabletTrail[i]
+                if hypot(b.point.x - a.point.x, b.point.y - a.point.y) > 22.0 { continue }
+                let life = max(0.0, 1.0 - b.age / 0.72)
+                if life <= 0.01 { continue }
+                ctx.setStrokeColor(inkCol.withAlphaComponent(life * 0.88).cgColor)
+                ctx.setLineWidth(1.2 + life * 1.4)
+                ctx.move(to: a.point)
+                ctx.addLine(to: b.point)
+                ctx.strokePath()
+            }
+            ctx.restoreGState()
+        }
+
+        // Subtle glowing nib contact halo when drawing on the pad
+        if physics.leftPawOnMouse && physics.tabletPenPress.value > 0.08 {
+            let nib = physics.tabletNib.point
+            drawRadialGlow(
+                in: ctx,
+                center: nib,
+                radius: 7.5 + physics.tabletPenPress.value * 4.0,
+                color: eyeTheme.primaryColor.withAlphaComponent(0.45 * physics.tabletPenPress.value)
+            )
+        }
+    }
+
+    /// Draws a sleek stylus oriented along +X from tip (0,0) to rounded cap (len,0).
+    private static func drawStylusBody(in ctx: CGContext, length: CGFloat, theme: KeyboardTheme, eyeTheme: EyeColorTheme, pressed: CGFloat) {
+        let barrelCol: NSColor
+        let gripCol: NSColor
+        let ringCol: NSColor
+        switch theme {
+        case .classicMilk:
+            barrelCol = NSColor(calibratedRed: 0.18, green: 0.19, blue: 0.23, alpha: 1.0)
+            gripCol   = NSColor(calibratedRed: 0.28, green: 0.30, blue: 0.35, alpha: 1.0)
+            ringCol   = NSColor(calibratedRed: 0.96, green: 0.69, blue: 0.16, alpha: 1.0)
+        case .midnightHacker:
+            barrelCol = NSColor(calibratedRed: 0.13, green: 0.14, blue: 0.17, alpha: 1.0)
+            gripCol   = NSColor(calibratedRed: 0.22, green: 0.24, blue: 0.29, alpha: 1.0)
+            ringCol   = NSColor(calibratedRed: 0.78, green: 0.95, blue: 0.25, alpha: 1.0)
+        case .retroCream:
+            barrelCol = NSColor(calibratedRed: 0.28, green: 0.26, blue: 0.24, alpha: 1.0)
+            gripCol   = NSColor(calibratedRed: 0.42, green: 0.39, blue: 0.35, alpha: 1.0)
+            ringCol   = NSColor(calibratedRed: 0.88, green: 0.42, blue: 0.24, alpha: 1.0)
+        }
+
+        // Tapered pen silhouette (nib at x=0 -> tapered cone x=7 -> ergonomic barrel -> rounded eraser cap at x=length)
+        let penPath = CGMutablePath()
+        penPath.move(to: CGPoint(x: 0.0, y: 0.0))
+        penPath.addLine(to: CGPoint(x: 7.5, y: -2.4))
+        penPath.addLine(to: CGPoint(x: length - 3.0, y: -2.6))
+        penPath.addQuadCurve(to: CGPoint(x: length, y: 0.0), control: CGPoint(x: length, y: -2.4))
+        penPath.addQuadCurve(to: CGPoint(x: length - 3.0, y: 2.6), control: CGPoint(x: length, y: 2.4))
+        penPath.addLine(to: CGPoint(x: 7.5, y: 2.4))
+        penPath.closeSubpath()
+
+        // Crisp subtle bright outer halo so stylus reads cleanly over dark fur/backgrounds
+        ctx.saveGState()
+        ctx.setStrokeColor(NSColor(calibratedWhite: 0.96, alpha: 0.80).cgColor)
+        ctx.setLineWidth(1.6)
+        ctx.setLineJoin(.round)
+        ctx.addPath(penPath)
+        ctx.strokePath()
+        ctx.restoreGState()
+
+        ctx.setFillColor(barrelCol.cgColor)
+        ctx.addPath(penPath)
+        ctx.fillPath()
+
+        // Rubberized grip sleeve + dual side-button rocker
+        ctx.saveGState()
+        ctx.addPath(penPath)
+        ctx.clip()
+        ctx.setFillColor(gripCol.cgColor)
+        ctx.fill(CGRect(x: 7.5, y: -3.0, width: 11.5, height: 6.0))
+        // Signature metallic accent ring between grip & upper barrel
+        ctx.setFillColor(ringCol.cgColor)
+        ctx.fill(CGRect(x: 19.0, y: -3.0, width: 2.4, height: 6.0))
+        // Fine light stylus nib tip (glows slightly in eye theme color when pressing down!)
+        let nibCol = pressed > 0.15 ? eyeTheme.primaryColor : NSColor(calibratedWhite: 0.94, alpha: 1.0)
+        ctx.setFillColor(nibCol.cgColor)
+        ctx.fill(CGRect(x: -0.5, y: -1.5, width: 3.4, height: 3.0))
+        // Subtle specular sheen along upper barrel
+        ctx.setFillColor(NSColor(calibratedWhite: 1.0, alpha: 0.24).cgColor)
+        ctx.fill(CGRect(x: 8.0, y: -1.9, width: length - 12.0, height: 1.1))
+        ctx.restoreGState()
+
+        // Side shortcut rocker button
+        let btn = CGPath(roundedRect: CGRect(x: 11.0, y: -3.1, width: 6.0, height: 1.4), cornerWidth: 0.7, cornerHeight: 0.7, transform: nil)
+        ctx.setFillColor(NSColor(calibratedWhite: 0.78, alpha: 0.90).cgColor)
+        ctx.addPath(btn)
+        ctx.fillPath()
+    }
+
+    private static func drawParkedStylus(in ctx: CGContext, theme: KeyboardTheme, eyeTheme: EyeColorTheme) {
+        // Neatly parked horizontally along the top bezel of the graphics tablet while typing/sleeping
+        let nib = CatPhysics.tabletQuadPoint(u: 0.88, v: -0.02)
+        let tail = CatPhysics.tabletQuadPoint(u: 0.18, v: -0.02)
+        let ang = atan2(tail.y - nib.y, tail.x - nib.x)
+        let len = hypot(tail.x - nib.x, tail.y - nib.y)
+
+        ctx.saveGState()
+        // Subtle resting shadow
+        ctx.saveGState()
+        ctx.translateBy(x: nib.x, y: nib.y + 2.2)
+        ctx.rotate(by: ang)
+        ctx.setFillColor(NSColor(calibratedWhite: 0, alpha: 0.22).cgColor)
+        ctx.fill(CGRect(x: 2, y: -2.0, width: len - 4, height: 4.5))
+        ctx.restoreGState()
+
+        ctx.translateBy(x: nib.x, y: nib.y)
+        ctx.rotate(by: ang)
+        drawStylusBody(in: ctx, length: len, theme: theme, eyeTheme: eyeTheme, pressed: 0)
+        ctx.restoreGState()
+    }
+
+    private static func drawHeldStylus(in ctx: CGContext, physics: CatPhysics, theme: KeyboardTheme, eyeTheme: EyeColorTheme) {
+        let lPos = physics.leftPaw.point
+        let press = max(0, min(1, physics.tabletPenPress.value))
+        // Nib rests right at the front-bottom tip of the paw touching the tablet surface;
+        // shaft angles cleanly upward-left away from the cat's arm so it's 100% crisp and clear!
+        let nib = CGPoint(x: lPos.x - 5.5, y: lPos.y + 7.0 + press * 1.4)
+        let angle: CGFloat = -2.18 + physics.tabletPenTilt.value
+
+        ctx.saveGState()
+        ctx.translateBy(x: nib.x, y: nib.y)
+        ctx.rotate(by: angle)
+        drawStylusBody(in: ctx, length: 35.0, theme: theme, eyeTheme: eyeTheme, pressed: press)
         ctx.restoreGState()
     }
 

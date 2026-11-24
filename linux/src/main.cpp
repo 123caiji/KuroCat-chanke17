@@ -946,6 +946,27 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), parent);
     }
 
+    // Drawing Tablet & Stylus submenu
+    {
+        GtkWidget* sub = gtk_menu_new();
+        auto addTab = [&](const char* lbl, int mode) {
+            GtkWidget* it = gtk_check_menu_item_new_with_label(lbl);
+            gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(it), app.settings.tabletMode == mode);
+            g_signal_connect(it, "activate", G_CALLBACK(+[](GtkMenuItem*, gpointer p) {
+                g_app->settings.tabletMode = (int)(intptr_t)p;
+                g_app->settings.save();
+                gtk_widget_queue_draw(g_app->drawArea);
+            }), (gpointer)(intptr_t)mode);
+            gtk_menu_shell_append(GTK_MENU_SHELL(sub), it);
+        };
+        addTab(tr("自动检测（连接数位板时自动切换）", "Auto-Detect (Switch When Connected)"), 0);
+        addTab(tr("始终显示数位板与触控笔", "Always Show Tablet & Stylus"), 1);
+        addTab(tr("始终显示鼠标", "Always Show Mouse"), 2);
+        GtkWidget* parent = gtk_menu_item_new_with_label(tr("🎨 数位板与触控笔", "🎨 Drawing Tablet & Stylus"));
+        gtk_menu_item_set_submenu(GTK_MENU_ITEM(parent), sub);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), parent);
+    }
+
     // Language submenu
     {
         GtkWidget* sub = gtk_menu_new();

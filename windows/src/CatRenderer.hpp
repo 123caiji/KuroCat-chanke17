@@ -86,8 +86,15 @@ public:
             126.0f + siameseLift + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f - scruff * 22.0f + lieS * 60.0f
         };
 
-        // 1. Mini White Mouse (facing cat)
-        drawMouse(g, physics, settings.keyboardTheme);
+        // 1. Mini White Mouse OR Graphics Tablet (when drawing tablet/stylus is connected!)
+        if (physics.isTabletActive) {
+            drawTablet(g, physics, settings.keyboardTheme, settings.eyeTheme);
+            if (!physics.leftPawOnMouse || scruff > 0.25f || dizzy > 0.35f || lie > 0.45f) {
+                drawParkedStylus(g, settings.keyboardTheme, settings.eyeTheme);
+            }
+        } else {
+            drawMouse(g, physics, settings.keyboardTheme);
+        }
 
         // 2. Mini 65% Mechanical Keyboard (facing cat) + Backlit Glow
         drawKeyboard(g, physics, settings.keyboardTheme, settings.eyeTheme, settings.showKeyLegends, settings.keyboardMarquee);
@@ -125,6 +132,11 @@ public:
 
         // 8. Front Paws (Idle Sitting & Dynamic Reaching)
         drawFrontPaws(g, seatX, seatY, breath, physics, settings.coatTheme);
+
+        // 8b. Held Stylus gripped cleanly in the cat's paw when drawing on the graphics tablet!
+        if (physics.isTabletActive && physics.leftPawOnMouse && scruff <= 0.25f && dizzy <= 0.35f && lie <= 0.45f) {
+            drawHeldStylus(g, physics, settings.keyboardTheme, settings.eyeTheme);
+        }
 
         if (tailInFront) {
             if (drawBlackRim) drawTail(g, seatX, seatY, physics, settings.coatTheme, true);
@@ -440,6 +452,214 @@ private:
 
         Pen borderPen(borderCol, 1.7f);
         g.DrawEllipse(&borderPen, -13.5f, -16.5f, 27.0f, 33.0f);
+        g.Restore(st);
+    }
+
+    // MARK: - Mini 2.5D Graphics Tablet & Stylus
+
+    static void drawTablet(Gdiplus::Graphics& g, const CatPhysics& physics, KeyboardTheme theme, EyeColorTheme eyeTheme) {
+        using namespace Gdiplus;
+        Pt tl = CatPhysics::tabletQuadPoint(0.0f, 0.0f);
+        Pt tr = CatPhysics::tabletQuadPoint(1.0f, 0.0f);
+        Pt bl = CatPhysics::tabletQuadPoint(0.0f, 1.0f);
+        Pt br = CatPhysics::tabletQuadPoint(1.0f, 1.0f);
+        constexpr float depth = 3.6f;
+
+        Color baseCol, bodyCol, padCol, keyCol, accentCol;
+        if (theme == KeyboardTheme::MidnightHacker) {
+            baseCol = Color(255, 13, 13, 18); bodyCol = Color(255, 28, 31, 38);
+            padCol = Color(255, 41, 43, 54); keyCol = Color(255, 61, 64, 77); accentCol = Color(255, 199, 242, 64);
+        } else if (theme == KeyboardTheme::RetroCream) {
+            baseCol = Color(255, 56, 54, 48); bodyCol = Color(255, 84, 79, 71);
+            padCol = Color(255, 107, 99, 89); keyCol = Color(255, 138, 128, 115); accentCol = Color(255, 224, 107, 61);
+        } else {
+            baseCol = Color(255, 26, 26, 31); bodyCol = Color(255, 43, 46, 54);
+            padCol = Color(255, 59, 61, 71); keyCol = Color(255, 77, 82, 94); accentCol = Color(255, 245, 176, 41);
+        }
+
+        // Drop shadow
+        {
+            GraphicsPath sp;
+            addQuadPoly(sp, {tl.x, tl.y + depth + 2.0f}, {tr.x, tr.y + depth + 2.0f},
+                            {br.x, br.y + depth + 2.6f}, {bl.x, bl.y + depth + 2.6f});
+            SolidBrush sb(Color(56, 0, 0, 0));
+            Pen spen(Color(56, 0, 0, 0), 3.0f); spen.SetLineJoin(LineJoinRound);
+            g.FillPath(&sb, &sp); g.DrawPath(&spen, &sp);
+        }
+        // Lower 3D slab
+        {
+            GraphicsPath lp;
+            addQuadPoly(lp, {tl.x, tl.y + depth}, {tr.x, tr.y + depth}, {br.x, br.y + depth}, {bl.x, bl.y + depth});
+            SolidBrush bb(baseCol);
+            Pen bp(baseCol, 2.5f); bp.SetLineJoin(LineJoinRound);
+            g.FillPath(&bb, &lp); g.DrawPath(&bp, &lp);
+        }
+        // Top body
+        GraphicsPath topPath;
+        addQuadPoly(topPath, tl, tr, br, bl);
+        {
+            SolidBrush tb(bodyCol);
+            Pen tp(bodyCol, 2.0f); tp.SetLineJoin(LineJoinRound);
+            g.FillPath(&tb, &topPath); g.DrawPath(&tp, &topPath);
+            Pen rim(Color(36, 255, 255, 255), 0.9f); rim.SetLineJoin(LineJoinRound);
+            g.DrawPath(&rim, &topPath);
+        }
+        // Recessed active drawing pad
+        Pt pTL = CatPhysics::tabletQuadPoint(0.21f, 0.11f);
+        Pt pTR = CatPhysics::tabletQuadPoint(0.94f, 0.11f);
+        Pt pBR = CatPhysics::tabletQuadPoint(0.94f, 0.89f);
+        Pt pBL = CatPhysics::tabletQuadPoint(0.21f, 0.89f);
+        GraphicsPath padPath;
+        addQuadPoly(padPath, pTL, pTR, pBR, pBL);
+        {
+            SolidBrush pb(padCol);
+            g.FillPath(&pb, &padPath);
+        }
+        // Corner L-brackets
+        {
+            Pen cp(Color(88, 255, 255, 255), 0.95f);
+            cp.SetStartCap(LineCapRound); cp.SetEndCap(LineCapRound);
+            const float corners[4][4] = {
+                {0.24f, 0.15f,  0.07f,  0.11f},
+                {0.91f, 0.15f, -0.07f,  0.11f},
+                {0.24f, 0.85f,  0.07f, -0.11f},
+                {0.91f, 0.85f, -0.07f, -0.11f}
+            };
+            for (const auto& c : corners) {
+                Pt pt = CatPhysics::tabletQuadPoint(c[0], c[1]);
+                Pt ph = CatPhysics::tabletQuadPoint(c[0] + c[2], c[1]);
+                Pt pv = CatPhysics::tabletQuadPoint(c[0], c[1] + c[3]);
+                g.DrawLine(&cp, ph.x, ph.y, pt.x, pt.y);
+                g.DrawLine(&cp, pt.x, pt.y, pv.x, pv.y);
+            }
+        }
+        // Status LED + 4 ExpressKeys
+        Color eyeCol = eyePrimary(eyeTheme);
+        Color ledCol = physics.tabletPenPress.value > 0.15f ? eyeCol : accentCol;
+        Pt ledPt = CatPhysics::tabletQuadPoint(0.105f, 0.14f);
+        {
+            SolidBrush glow(Color(95, ledCol.GetR(), ledCol.GetG(), ledCol.GetB()));
+            g.FillEllipse(&glow, ledPt.x - 3.6f, ledPt.y - 3.6f, 7.2f, 7.2f);
+            SolidBrush lb(ledCol);
+            g.FillEllipse(&lb, ledPt.x - 1.35f, ledPt.y - 1.35f, 2.7f, 2.7f);
+        }
+        {
+            SolidBrush kb(keyCol);
+            for (float kv : { 0.28f, 0.44f, 0.60f, 0.76f }) {
+                GraphicsPath kp;
+                addQuadPoly(kp,
+                    CatPhysics::tabletQuadPoint(0.06f, kv - 0.05f),
+                    CatPhysics::tabletQuadPoint(0.15f, kv - 0.05f),
+                    CatPhysics::tabletQuadPoint(0.15f, kv + 0.05f),
+                    CatPhysics::tabletQuadPoint(0.06f, kv + 0.05f));
+                g.FillPath(&kb, &kp);
+            }
+        }
+        // Live fading ink trail
+        if (physics.tabletTrail.size() >= 2) {
+            GraphicsState cs = g.Save();
+            g.SetClip(&padPath, CombineModeIntersect);
+            for (size_t i = 1; i < physics.tabletTrail.size(); ++i) {
+                const auto& a = physics.tabletTrail[i - 1];
+                const auto& b = physics.tabletTrail[i];
+                if (std::hypot(b.point.x - a.point.x, b.point.y - a.point.y) > 22.0f) continue;
+                float life = std::max(0.0f, 1.0f - b.age / 0.72f);
+                if (life <= 0.01f) continue;
+                Pen ink(Color((BYTE)(life * 224.0f), eyeCol.GetR(), eyeCol.GetG(), eyeCol.GetB()), 1.2f + life * 1.4f);
+                ink.SetStartCap(LineCapRound); ink.SetEndCap(LineCapRound);
+                g.DrawLine(&ink, a.point.x, a.point.y, b.point.x, b.point.y);
+            }
+            g.Restore(cs);
+        }
+        // Nib contact glow
+        if (physics.leftPawOnMouse && physics.tabletPenPress.value > 0.08f) {
+            Pt nib = physics.tabletNib.point();
+            float r = 7.0f + physics.tabletPenPress.value * 3.5f;
+            GraphicsPath gp;
+            gp.AddEllipse(nib.x - r, nib.y - r, r * 2.0f, r * 2.0f);
+            PathGradientBrush pgb(&gp);
+            pgb.SetCenterColor(Color((BYTE)(115 * physics.tabletPenPress.value), eyeCol.GetR(), eyeCol.GetG(), eyeCol.GetB()));
+            Color surr[1] = { Color(0, eyeCol.GetR(), eyeCol.GetG(), eyeCol.GetB()) };
+            INT cnt = 1; pgb.SetSurroundColors(surr, &cnt);
+            g.FillPath(&pgb, &gp);
+        }
+    }
+
+    static void drawStylusBody(Gdiplus::Graphics& g, float len, KeyboardTheme theme, EyeColorTheme eyeTheme, float pressed) {
+        using namespace Gdiplus;
+        Color barrelCol, gripCol, ringCol;
+        if (theme == KeyboardTheme::MidnightHacker) {
+            barrelCol = Color(255, 33, 36, 43); gripCol = Color(255, 56, 61, 74); ringCol = Color(255, 199, 242, 64);
+        } else if (theme == KeyboardTheme::RetroCream) {
+            barrelCol = Color(255, 71, 66, 61); gripCol = Color(255, 107, 99, 89); ringCol = Color(255, 224, 107, 61);
+        } else {
+            barrelCol = Color(255, 46, 48, 59); gripCol = Color(255, 71, 77, 89); ringCol = Color(255, 245, 176, 41);
+        }
+        GraphicsPath penPath;
+        penPath.AddLine(0.0f, 0.0f, 7.5f, -2.4f);
+        penPath.AddLine(7.5f, -2.4f, len - 3.0f, -2.6f);
+        addQuadBezier(penPath, { len - 3.0f, -2.6f }, { len, -2.4f }, { len, 0.0f });
+        addQuadBezier(penPath, { len, 0.0f }, { len, 2.4f }, { len - 3.0f, 2.6f });
+        penPath.AddLine(len - 3.0f, 2.6f, 7.5f, 2.4f);
+        penPath.CloseFigure();
+
+        Pen halo(Color(204, 245, 245, 245), 1.6f);
+        halo.SetLineJoin(LineJoinRound);
+        g.DrawPath(&halo, &penPath);
+        SolidBrush bb(barrelCol);
+        g.FillPath(&bb, &penPath);
+
+        GraphicsState cs = g.Save();
+        g.SetClip(&penPath, CombineModeIntersect);
+        SolidBrush gb(gripCol);
+        g.FillRectangle(&gb, 7.5f, -3.0f, 11.5f, 6.0f);
+        SolidBrush rb(ringCol);
+        g.FillRectangle(&rb, 19.0f, -3.0f, 2.4f, 6.0f);
+        Color nibCol = pressed > 0.15f ? eyePrimary(eyeTheme) : Color(255, 240, 240, 240);
+        SolidBrush nb(nibCol);
+        g.FillRectangle(&nb, -0.5f, -1.5f, 3.4f, 3.0f);
+        SolidBrush sh(Color(60, 255, 255, 255));
+        g.FillRectangle(&sh, 8.0f, -1.9f, std::max(1.0f, len - 12.0f), 1.1f);
+        g.Restore(cs);
+
+        GraphicsPath btn;
+        addRoundedRect(btn, 11.0f, -3.1f, 6.0f, 1.4f, 0.7f);
+        SolidBrush btnB(Color(230, 199, 199, 199));
+        g.FillPath(&btnB, &btn);
+    }
+
+    static void drawParkedStylus(Gdiplus::Graphics& g, KeyboardTheme theme, EyeColorTheme eyeTheme) {
+        using namespace Gdiplus;
+        Pt nib = CatPhysics::tabletQuadPoint(0.88f, -0.02f);
+        Pt tail = CatPhysics::tabletQuadPoint(0.18f, -0.02f);
+        float ang = std::atan2(tail.y - nib.y, tail.x - nib.x) * RadToDeg;
+        float len = std::hypot(tail.x - nib.x, tail.y - nib.y);
+
+        GraphicsState st = g.Save();
+        g.TranslateTransform(nib.x, nib.y + 2.2f);
+        g.RotateTransform(ang);
+        SolidBrush sb(Color(56, 0, 0, 0));
+        g.FillRectangle(&sb, 2.0f, -2.0f, len - 4.0f, 4.5f);
+        g.Restore(st);
+
+        st = g.Save();
+        g.TranslateTransform(nib.x, nib.y);
+        g.RotateTransform(ang);
+        drawStylusBody(g, len, theme, eyeTheme, 0.0f);
+        g.Restore(st);
+    }
+
+    static void drawHeldStylus(Gdiplus::Graphics& g, const CatPhysics& physics, KeyboardTheme theme, EyeColorTheme eyeTheme) {
+        using namespace Gdiplus;
+        Pt lPos = physics.leftPaw.point();
+        float press = std::clamp(physics.tabletPenPress.value, 0.0f, 1.0f);
+        Pt nib = { lPos.x - 5.5f, lPos.y + 7.0f + press * 1.4f };
+        float angleDeg = (-2.18f + physics.tabletPenTilt.value) * RadToDeg;
+
+        GraphicsState st = g.Save();
+        g.TranslateTransform(nib.x, nib.y);
+        g.RotateTransform(angleDeg);
+        drawStylusBody(g, 35.0f, theme, eyeTheme, press);
         g.Restore(st);
     }
 

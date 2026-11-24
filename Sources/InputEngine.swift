@@ -33,7 +33,7 @@ final class InputEngine {
     private(set) var activeKeys = Set<PhysicalKey>()
     private(set) var pressedOrder: [PhysicalKey] = []
 
-    // Mouse state
+    // Mouse & Graphics Tablet / Stylus state
     private(set) var leftMouseDown = false
     private(set) var rightMouseDown = false
     private(set) var otherMouseDown = false
@@ -42,6 +42,17 @@ final class InputEngine {
     private(set) var lastKeyActivityTime: CFTimeInterval = 0
     private(set) var lastMouseLocation: CGPoint = NSEvent.mouseLocation
     private(set) var mouseVelocity: CGVector = .zero
+    private(set) var penPressure: CGFloat = 0.0
+    private(set) var isPenInProximity = false
+    private var tabletHardwareDevices = Set<UInt>()
+    private var lastTabletEventTime: CFTimeInterval = 0
+    private var tabletHIDManager: IOHIDManager?
+
+    var isTabletConnected: Bool {
+        if !tabletHardwareDevices.isEmpty { return true }
+        if lastTabletEventTime > 0 && (CACurrentMediaTime() - lastTabletEventTime) < 600.0 { return true }
+        return false
+    }
 
     // Stats
     private(set) var totalKeystrokesToday: Int = 0
@@ -111,6 +122,7 @@ final class InputEngine {
 
     func start() {
         startLocalFallbackMonitor()
+        startTabletHardwareMonitor()
         refreshPermissions()
         tryStartHID()
         tryStartEventTap()
@@ -172,6 +184,7 @@ final class InputEngine {
         }
         workspaceObservers.removeAll()
         stopHID()
+        stopTabletHardwareMonitor()
         stopEventTap()
         if let m = localMonitor {
             NSEvent.removeMonitor(m)
@@ -289,6 +302,100 @@ final class InputEngine {
         if otherMouseDown { updateMouseButton(2, isDown: false) }
     }
 
+    // MARK: - Graphics Tablet / Stylus Detection (USB/Bluetooth HID + Live Tablet Events)
+
+    private static let knownTabletVendorIDs: Set<Int> = [
+        0x056A, // Wacom
+        0x256C, // Huion / Gaomon
+        0x28BD, // XP-Pen / UGEE / Xencelabs
+        0x5543, // UC-Logic / UGEE
+        0x2FEB, // Veikk
+        0x2179, // Hanvon
+        0x33F8, // Xencelabs
+        0x2FBB, // Parblo
+        0x1B96  // N-Trig
+    ]
+
+    private func isDrawingTabletDevice(_ device: IOHIDDevice) -> Bool {
+        let vid = (IOHIDDeviceGetProperty(device, kIOHIDVendorIDKey as CFString) as? NSNumber)?.intValue ?? 0
+        let usagePage = (IOHIDDeviceGetProperty(device, kIOHIDPrimaryUsagePageKey as CFString) as? NSNumber)?.intValue ?? 0
+        let usage = (IOHIDDeviceGetProperty(device, kIOHIDPrimaryUsageKey as CFString) as? NSNumber)?.intValue ?? 0
+        // Apple built-in trackpads use 0x05AC + Digitizer(0x0D)/TouchPad(0x05) — only count Apple if explicit Pen(0x02)
+        if vid == 0x05AC {
+            return usagePage == kHIDPage_Digitizer && usage == kHIDUsage_Dig_Pen
+        }
+        if Self.knownTabletVendorIDs.contains(vid) {
+            return true
+        }
+        if usagePage == kHIDPage_Digitizer && (usage == kHIDUsage_Dig_Pen || usage == kHIDUsage_Dig_Digitizer) {
+            return true
+        }
+        return false
+    }
+
+    private func startTabletHardwareMonitor() {
+        guard tabletHIDManager == nil else { return }
+        let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+        var matches: [[String: Any]] = [
+            [
+                kIOHIDDeviceUsagePageKey as String: kHIDPage_Digitizer,
+                kIOHIDDeviceUsageKey as String: kHIDUsage_Dig_Pen
+            ],
+            [
+                kIOHIDDeviceUsagePageKey as String: kHIDPage_Digitizer,
+                kIOHIDDeviceUsageKey as String: kHIDUsage_Dig_Digitizer
+            ]
+        ]
+        for vid in Self.knownTabletVendorIDs {
+            matches.append([kIOHIDVendorIDKey as String: vid])
+        }
+        IOHIDManagerSetDeviceMatchingMultiple(manager, matches as CFArray)
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        IOHIDManagerRegisterDeviceMatchingCallback(manager, { ctx, _, _, device in
+            guard let ctx else { return }
+            let engine = Unmanaged<InputEngine>.fromOpaque(ctx).takeUnretainedValue()
+            if engine.isDrawingTabletDevice(device) {
+                engine.tabletHardwareDevices.insert(UInt(bitPattern: Unmanaged.passUnretained(device).toOpaque()))
+            }
+        }, context)
+        IOHIDManagerRegisterDeviceRemovalCallback(manager, { ctx, _, _, device in
+            guard let ctx else { return }
+            let engine = Unmanaged<InputEngine>.fromOpaque(ctx).takeUnretainedValue()
+            engine.tabletHardwareDevices.remove(UInt(bitPattern: Unmanaged.passUnretained(device).toOpaque()))
+        }, context)
+        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+        let res = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+        if res == kIOReturnSuccess {
+            tabletHIDManager = manager
+            if let set = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> {
+                for dev in set where isDrawingTabletDevice(dev) {
+                    tabletHardwareDevices.insert(UInt(bitPattern: Unmanaged.passUnretained(dev).toOpaque()))
+                }
+            }
+        } else {
+            IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+        }
+    }
+
+    private func stopTabletHardwareMonitor() {
+        if let manager = tabletHIDManager {
+            IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+            IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+            tabletHIDManager = nil
+        }
+        tabletHardwareDevices.removeAll()
+    }
+
+    private func checkTabletEvent(_ event: CGEvent) {
+        let subtype = event.getIntegerValueField(.mouseEventSubtype)
+        if subtype == 1 || subtype == 2 {
+            lastTabletEventTime = CACurrentMediaTime()
+            isPenInProximity = true
+            let p = CGFloat(event.getDoubleValueField(.tabletEventPointPressure))
+            if p > 0.001 { penPressure = p }
+        }
+    }
+
     // MARK: - Layer 1: IOHIDManager (Raw Kernel HID — Best for Games + IME)
 
     private func tryStartHID() {
@@ -389,10 +496,11 @@ final class InputEngine {
         var mask: CGEventMask = 0
         let types: [CGEventType] = [
             .keyDown, .keyUp, .flagsChanged,
-            .leftMouseDown, .leftMouseUp,
+            .leftMouseDown, .leftMouseUp, .leftMouseDragged,
             .rightMouseDown, .rightMouseUp,
             .otherMouseDown, .otherMouseUp,
-            .scrollWheel
+            .scrollWheel,
+            .tabletPointer, .tabletProximity
         ]
         for t in types {
             mask |= (1 << t.rawValue)
@@ -508,9 +616,28 @@ final class InputEngine {
             }
             lastModifierFlags = flags
         case .leftMouseDown:
+            checkTabletEvent(event)
             updateMouseButton(0, isDown: true)
         case .leftMouseUp:
+            checkTabletEvent(event)
+            penPressure = 0.0
             updateMouseButton(0, isDown: false)
+        case .leftMouseDragged:
+            checkTabletEvent(event)
+            lastMouseMoveTime = CACurrentMediaTime()
+        case .tabletPointer:
+            lastTabletEventTime = CACurrentMediaTime()
+            isPenInProximity = true
+            penPressure = CGFloat(event.getDoubleValueField(.tabletEventPointPressure))
+            lastMouseMoveTime = CACurrentMediaTime()
+        case .tabletProximity:
+            let entering = event.getIntegerValueField(.tabletProximityEventEnterProximity) != 0
+            isPenInProximity = entering
+            if entering {
+                lastTabletEventTime = CACurrentMediaTime()
+            } else {
+                penPressure = 0.0
+            }
         case .rightMouseDown:
             updateMouseButton(1, isDown: true)
         case .rightMouseUp:
