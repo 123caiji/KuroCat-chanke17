@@ -51,7 +51,7 @@ using std::max;
 
 namespace {
 
-constexpr const wchar_t* APP_VERSION = L"1.3.5";
+constexpr const wchar_t* APP_VERSION = L"1.3.6";
 constexpr const wchar_t* VERSION_PROP = L"KuroCatVersion"; // set on the tray owner window so newer builds can take over older ones
 constexpr const wchar_t* TRAY_OWNER_CLASS = L"KuroCatTrayOwnerClass";
 constexpr const wchar_t* OVERLAY_CLASS = L"KuroCatOverlayWindowClass";
@@ -118,6 +118,9 @@ struct AppState {
 
     bool isVisible = true;
     bool isDragging = false;
+    bool rButtonDown = false;
+    bool pendingMenuAfterAlt = false;
+    POINT pendingMenuPt = {};
     POINT dragStartCursor = {};
     POINT dragStartWinOrigin = {};
     bool hasLastHover = false;
@@ -1135,6 +1138,7 @@ void tickAndRender(AppState& app) {
                 (float)(cur.y - wr.top)  / (float)h * CatPhysics::CanvasHeight
             };
             CatHitZone zone = CatRenderer::hitTest(cp, app.physics, app.settings.coatTheme);
+            app.physics.updateTailHover(&cp);
             if (zone == CatHitZone::Head) {
                 if (app.hasLastHover) {
                     float d = std::hypot(cp.x - app.lastHoverCanvas.x, cp.y - app.lastHoverCanvas.y);
@@ -1153,8 +1157,15 @@ void tickAndRender(AppState& app) {
             setClickThrough(app.hwnd, clickThrough);
         } else {
             app.hasLastHover = false;
+            app.physics.updateTailHover(nullptr);
             setClickThrough(app.hwnd, true);
         }
+    }
+
+    if (app.pendingMenuAfterAlt && (GetAsyncKeyState(VK_MENU) & 0x8000) == 0) {
+        app.pendingMenuAfterAlt = false;
+        POINT pt = app.pendingMenuPt;
+        showContextMenu(app, pt);
     }
 
     // Render 32-bit Premultiplied ARGB frame directly into DIB and present via UpdateLayeredWindow
@@ -1288,11 +1299,35 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             return 0;
 
+        case WM_RBUTTONDOWN:
+            if (app && hwnd == app->hwnd) {
+                bool altHeld = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+                if (!app->settings.fullClickThrough || altHeld) {
+                    app->rButtonDown = true;
+                }
+            }
+            return 0;
+
         case WM_RBUTTONUP:
-            if (app) {
+            if (app && hwnd == app->hwnd && app->rButtonDown) {
+                app->rButtonDown = false;
                 POINT pt = {};
                 GetCursorPos(&pt);
-                showContextMenu(*app, pt);
+                if ((GetAsyncKeyState(VK_MENU) & 0x8000) != 0) {
+                    // Defer opening the popup menu until Alt is released; otherwise
+                    // Windows' TrackPopupMenu modal loop cancels the menu on WM_SYSKEYUP(VK_MENU).
+                    app->pendingMenuAfterAlt = true;
+                    app->pendingMenuPt = pt;
+                } else {
+                    showContextMenu(*app, pt);
+                }
+            }
+            return 0;
+
+        case WM_CANCELMODE:
+        case WM_CAPTURECHANGED:
+            if (app && hwnd == app->hwnd) {
+                app->rButtonDown = false;
             }
             return 0;
 

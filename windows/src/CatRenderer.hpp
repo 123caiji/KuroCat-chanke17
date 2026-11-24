@@ -532,16 +532,23 @@ private:
         using namespace Gdiplus;
         float p = physics.tailPhase;
         float hunt = std::clamp(physics.huntIntensity.value, 0.0f, 1.0f);
-        float wag1 = std::sin(p) * (8.0f + hunt * 5.5f);
-        float wag2 = std::cos(p * 1.3f) * (6.0f + hunt * 4.5f);
+        float agility = std::clamp(physics.tailAgility.value, 0.0f, 1.0f);
+        float wag1 = std::sin(p) * (8.0f + hunt * 5.5f + agility * 4.0f);
+        float wag2 = std::cos(p * 1.3f) * (6.0f + hunt * 4.5f + agility * 3.5f);
         float huntDrop = hunt * 14.0f;
 
-        PointF root(seatX + 34.0f, seatY - 6.0f);
-        PointF c1(seatX + 64.0f, seatY + 2.0f + wag1 * 0.35f + huntDrop * 0.4f);
-        PointF c2(seatX + 66.0f + wag2 * 0.4f, seatY - 26.0f + wag1 * 0.7f + huntDrop);
-        PointF tip(seatX + 91.0f + wag2 * 0.5f, seatY - 30.0f + wag1 * 0.85f + huntDrop);
-
         float reach = std::clamp(physics.tailTyping.value, 0.0f, 1.0f);
+        float flickScale = 1.0f - reach;
+        Pt flick = physics.tailFlick.point();
+        float fx = flick.x * flickScale;
+        float fy = flick.y * flickScale;
+        float curl = physics.tailCurl.value * flickScale;
+
+        PointF root(seatX + 34.0f, seatY - 6.0f);
+        PointF c1(seatX + 64.0f + fx * 0.25f, seatY + 2.0f + wag1 * 0.35f + huntDrop * 0.4f + fy * 0.22f + curl * 0.35f);
+        PointF c2(seatX + 66.0f + wag2 * 0.4f + fx * 0.65f - curl * 0.45f, seatY - 26.0f + wag1 * 0.7f + huntDrop + fy * 0.60f - curl * 0.55f);
+        PointF tip(seatX + 91.0f + wag2 * 0.5f + fx, seatY - 30.0f + wag1 * 0.85f + huntDrop + fy);
+
         Pt target = physics.tailTip.point();
         c1.X += 12.0f * reach;
         c1.Y -= 18.0f * reach;

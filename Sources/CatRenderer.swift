@@ -469,8 +469,9 @@ enum CatRenderer {
     private static func drawTail(in ctx: CGContext, seatX: CGFloat, seatY: CGFloat, physics: CatPhysics, coat: CatCoatTheme) {
         let p = physics.tailPhase
         let hunt = max(0, min(1, physics.huntIntensity.value))
-        let wag1 = sin(p) * (8.0 + hunt * 5.5)
-        let wag2 = cos(p * 1.3) * (6.0 + hunt * 4.5)
+        let agility = max(0, min(1, physics.tailAgility.value))
+        let wag1 = sin(p) * (8.0 + hunt * 5.5 + agility * 4.0)
+        let wag2 = cos(p * 1.3) * (6.0 + hunt * 4.5 + agility * 3.5)
         // Tail drops lower & swishes tautly when stalking/hunting!
         let huntDrop = hunt * 14.0
 
@@ -478,9 +479,13 @@ enum CatRenderer {
         let root = CGPoint(x: seatX + 34, y: seatY - 6)
         let reach = max(0, min(1, physics.tailTyping.value))
         let target = physics.tailTip.point
-        let c1 = CGPoint(x: seatX + 64 + 12 * reach, y: seatY + 2 + wag1 * 0.35 + huntDrop * 0.4 - 18 * reach)
-        let idleC2 = CGPoint(x: seatX + 66 + wag2 * 0.4, y: seatY - 26 + wag1 * 0.7 + huntDrop)
-        let idleTip = CGPoint(x: seatX + 91 + wag2 * 0.5, y: seatY - 30 + wag1 * 0.85 + huntDrop)
+        let flickScale = 1.0 - reach
+        let fx = physics.tailFlick.point.x * flickScale
+        let fy = physics.tailFlick.point.y * flickScale
+        let curl = physics.tailCurl.value * flickScale
+        let c1 = CGPoint(x: seatX + 64 + 12 * reach + fx * 0.25, y: seatY + 2 + wag1 * 0.35 + huntDrop * 0.4 - 18 * reach + fy * 0.22 + curl * 0.35)
+        let idleC2 = CGPoint(x: seatX + 66 + wag2 * 0.4 + fx * 0.65 - curl * 0.45, y: seatY - 26 + wag1 * 0.7 + huntDrop + fy * 0.60 - curl * 0.55)
+        let idleTip = CGPoint(x: seatX + 91 + wag2 * 0.5 + fx, y: seatY - 30 + wag1 * 0.85 + huntDrop + fy)
         let c2 = CGPoint(x: idleC2.x + (target.x + 24 - idleC2.x) * reach, y: idleC2.y + (target.y - 30 - idleC2.y) * reach)
         let tip = CGPoint(x: idleTip.x + (target.x - idleTip.x) * reach, y: idleTip.y + (target.y - idleTip.y) * reach)
 

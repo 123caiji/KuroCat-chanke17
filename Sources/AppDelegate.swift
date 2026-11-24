@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var isHandingOverToNewerCopy = false
 
     private var currentAppVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.5"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.6"
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

@@ -522,8 +522,9 @@ private:
     static void drawTail(cairo_t* cr, float seatX, float seatY, const CatPhysics& physics, CatCoatTheme coat) {
         float p = physics.tailPhase;
         float hunt = std::clamp(physics.huntIntensity.value, 0.0f, 1.0f);
-        float wag1 = std::sin(p) * (8.0f + hunt * 5.5f);
-        float wag2 = std::cos(p * 1.3f) * (6.0f + hunt * 4.5f);
+        float agility = std::clamp(physics.tailAgility.value, 0.0f, 1.0f);
+        float wag1 = std::sin(p) * (8.0f + hunt * 5.5f + agility * 4.0f);
+        float wag2 = std::cos(p * 1.3f) * (6.0f + hunt * 4.5f + agility * 3.5f);
         float huntDrop = hunt * 14.0f;
 
         cairo_save(cr);
@@ -533,10 +534,15 @@ private:
         cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
         cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
         double reach = std::clamp(physics.tailTyping.value, 0.0f, 1.0f);
+        double flickScale = 1.0 - reach;
+        Pt flick = physics.tailFlick.point();
+        double fx = flick.x * flickScale;
+        double fy = flick.y * flickScale;
+        double curl = physics.tailCurl.value * flickScale;
         Pt target = physics.tailTip.point();
-        double x1=seatX+64+12*reach, y1=seatY+2+wag1*0.35+huntDrop*0.4-18*reach;
-        double x2=seatX+66+wag2*0.4, y2=seatY-26+wag1*0.7+huntDrop;
-        double x3=seatX+91+wag2*0.5, y3=seatY-30+wag1*0.85+huntDrop;
+        double x1=seatX+64+12*reach+fx*0.25, y1=seatY+2+wag1*0.35+huntDrop*0.4-18*reach+fy*0.22+curl*0.35;
+        double x2=seatX+66+wag2*0.4+fx*0.65-curl*0.45, y2=seatY-26+wag1*0.7+huntDrop+fy*0.60-curl*0.55;
+        double x3=seatX+91+wag2*0.5+fx, y3=seatY-30+wag1*0.85+huntDrop+fy;
         x2+=(target.x+24-x2)*reach; y2+=(target.y-30-y2)*reach;
         x3+=(target.x-x3)*reach; y3+=(target.y-y3)*reach;
         cairo_move_to(cr, seatX + 34.0, seatY - 6.0);
