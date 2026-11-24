@@ -32,6 +32,8 @@ enum CatRenderer {
     }
 
     static let catBlack = NSColor(calibratedRed: 0.085, green: 0.085, blue: 0.095, alpha: 1.0)
+    private static let blackOutlineWidth: CGFloat = 1.6
+    private static let blackOutlineColor = NSColor(calibratedWhite: 1.0, alpha: 0.94)
     static let contourMint = NSColor(calibratedRed: 0.82, green: 0.92, blue: 0.89, alpha: 0.76)
     static let whiskerColor = NSColor(calibratedRed: 0.88, green: 0.90, blue: 0.92, alpha: 0.72)
 
@@ -133,12 +135,32 @@ enum CatRenderer {
         // 2. Mini Angled 65% Mechanical Keyboard + Dynamic Keycap Glow
         drawKeyboard(in: ctx, physics: physics, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme, showLegends: settings.showKeyLegends, flipped: flipped, marquee: settings.keyboardMarquee)
 
+        let headCenter = headPosition(physics, coat: coat)
+        let drawBlackRim = (coat == .classicBlack)
+
+        // Pass 1: crisp outer white outline for Classic Black Cat so it pops cleanly on dark backgrounds with zero internal seams
+        if drawBlackRim {
+            if physics.tailTyping.value < 0.5 {
+                drawTail(in: ctx, physics: physics, coat: coat, outlineOnly: true)
+            }
+            drawEarsLayer(in: ctx, center: headCenter, physics: physics, coat: coat, outlineOnly: true)
+            drawUnifiedSilhouette(
+                in: ctx,
+                seatX: seatX,
+                seatY: seatY,
+                headCenter: headCenter,
+                breath: breath,
+                physics: physics,
+                coat: coat,
+                outlineOnly: true
+            )
+        }
+
         if physics.tailTyping.value < 0.5 {
             drawTail(in: ctx, physics: physics, coat: coat)
         }
 
         // 4. 3D-Projected Ears (behind crown silhouette so Siamese seal-point ears emerge cleanly from cream skull!)
-        let headCenter = headPosition(physics, coat: coat)
         drawEarsLayer(in: ctx, center: headCenter, physics: physics, coat: coat)
 
         // 5. Unified C1-Continuous Head + Neck + Pear Torso Silhouette + Siamese 2.5D Face Mask
@@ -164,6 +186,7 @@ enum CatRenderer {
         drawFrontPaws(in: ctx, seatX: seatX, seatY: seatY, breath: breath, physics: physics, coat: coat)
 
         if physics.tailTyping.value >= 0.5 {
+            if drawBlackRim { drawTail(in: ctx, physics: physics, coat: coat, outlineOnly: true) }
             drawTail(in: ctx, physics: physics, coat: coat)
         }
 
@@ -740,10 +763,21 @@ enum CatRenderer {
         return (root, c1, c2, tip)
     }
 
-    private static func drawTail(in ctx: CGContext, physics: CatPhysics, coat: CatCoatTheme) {
+    private static func drawTail(in ctx: CGContext, physics: CatPhysics, coat: CatCoatTheme, outlineOnly: Bool = false) {
         let (root, c1, c2, tip) = tailCurve(physics)
 
         ctx.saveGState()
+        if outlineOnly {
+            ctx.setStrokeColor(blackOutlineColor.cgColor)
+            ctx.setLineWidth(11.0 + blackOutlineWidth * 2.0)
+            ctx.setLineCap(.round)
+            ctx.setLineJoin(.round)
+            ctx.move(to: root)
+            ctx.addCurve(to: tip, control1: c1, control2: c2)
+            ctx.strokePath()
+            ctx.restoreGState()
+            return
+        }
         let tailColor = earTailColor(coat)
         ctx.setStrokeColor(tailColor.cgColor)
         ctx.setLineWidth(coat == .siamese ? 9.5 : 11.0)
@@ -782,7 +816,8 @@ enum CatRenderer {
         headCenter: CGPoint,
         breath: CGFloat,
         physics: CatPhysics,
-        coat: CatCoatTheme
+        coat: CatCoatTheme,
+        outlineOnly: Bool = false
     ) {
         let yaw = physics.headYaw.value
         let pitch = physics.headPitch.value
@@ -847,6 +882,25 @@ enum CatRenderer {
         path.addCurve(to: lCheek, control1: B(-waistCtrlW, waistCtrlY + breath * 0.5), control2: H(leftCheekX + neckPinchX, neckCtrlY))
         path.addCurve(to: crown,  control1: H(leftCheekX - 1.5, cheekCtrlTopY), control2: H(-crownCtrlW + cheekShift * 0.3, crownBaseY + crownDrop))
         path.closeSubpath()
+
+        if outlineOnly {
+            ctx.saveGState()
+            ctx.setStrokeColor(blackOutlineColor.cgColor)
+            ctx.setLineWidth(blackOutlineWidth * 2.0)
+            ctx.setLineJoin(.round)
+            ctx.setLineCap(.round)
+            ctx.addPath(path)
+            ctx.strokePath()
+            ctx.translateBy(x: seatX, y: seatY)
+            ctx.rotate(by: bTilt)
+            ctx.scaleBy(x: sx, y: sy)
+            ctx.strokeEllipse(in: CGRect(x: -35.0, y: 3.0, width: 17.0, height: 11.0))
+            if physics.hindFootActive.value < 0.35 {
+                ctx.strokeEllipse(in: CGRect(x: 18.0, y: 4.5, width: 17.0, height: 12.5))
+            }
+            ctx.restoreGState()
+            return
+        }
 
         ctx.saveGState()
         if coat != .siamese {
@@ -970,7 +1024,7 @@ enum CatRenderer {
         }
 
         // Subtle bottom rim highlights on tucked haunches
-        let rimColor = (coat == .siamese) ? siameseCream.withAlphaComponent(0.55) : creaseColor(coat).withAlphaComponent(0.58)
+        let rimColor = (coat == .siamese) ? siameseCream.withAlphaComponent(0.55) : (coat == .classicBlack ? blackOutlineColor.withAlphaComponent(0.0) : creaseColor(coat).withAlphaComponent(0.58))
         ctx.setStrokeColor(rimColor.cgColor)
         ctx.setLineWidth(1.3)
         ctx.setLineCap(.round)
@@ -1094,7 +1148,8 @@ enum CatRenderer {
         in ctx: CGContext,
         center: CGPoint,
         physics: CatPhysics,
-        coat: CatCoatTheme
+        coat: CatCoatTheme,
+        outlineOnly: Bool = false
     ) {
         ctx.saveGState()
         ctx.translateBy(x: center.x, y: center.y)
@@ -1105,8 +1160,8 @@ enum CatRenderer {
         let fold = physics.earFold.value
         let twitch = physics.earTwitch.value * 0.045
 
-        drawEar3D(in: ctx, isLeft: true, yawRad: yawRad, pitchRad: pitchRad, fold: fold, twitch: twitch, coat: coat)
-        drawEar3D(in: ctx, isLeft: false, yawRad: yawRad, pitchRad: pitchRad, fold: fold, twitch: -twitch, coat: coat)
+        drawEar3D(in: ctx, isLeft: true, yawRad: yawRad, pitchRad: pitchRad, fold: fold, twitch: twitch, coat: coat, outlineOnly: outlineOnly)
+        drawEar3D(in: ctx, isLeft: false, yawRad: yawRad, pitchRad: pitchRad, fold: fold, twitch: -twitch, coat: coat, outlineOnly: outlineOnly)
 
         ctx.restoreGState()
     }
@@ -1334,7 +1389,8 @@ enum CatRenderer {
         pitchRad: CGFloat,
         fold: CGFloat,
         twitch: CGFloat,
-        coat: CatCoatTheme
+        coat: CatCoatTheme,
+        outlineOnly: Bool = false
     ) {
         let sign: CGFloat = isLeft ? -1.0 : 1.0
         let isSiamese = (coat == .siamese)
@@ -1369,6 +1425,16 @@ enum CatRenderer {
         ear.closeSubpath()
 
         ctx.saveGState()
+        if outlineOnly {
+            ctx.setStrokeColor(blackOutlineColor.cgColor)
+            ctx.setLineWidth(blackOutlineWidth * 2.0)
+            ctx.setLineJoin(.round)
+            ctx.setLineCap(.round)
+            ctx.addPath(ear)
+            ctx.strokePath()
+            ctx.restoreGState()
+            return
+        }
         ctx.setFillColor(earTailColor(coat).cgColor)
         ctx.addPath(ear)
         ctx.fillPath()
@@ -1730,12 +1796,22 @@ enum CatRenderer {
         }
 
         if patterned(coat) || coat == .classicBlack {
-            ctx.setFillColor(pawColor(coat).cgColor)
             let cuff = CGRect(x: bottom.x - 7.5, y: bottom.y - 13, width: 15, height: 18)
-            ctx.addPath(CGPath(roundedRect: cuff, cornerWidth: 6.5, cornerHeight: 6.5, transform: nil))
+            let cuffPath = CGPath(roundedRect: cuff, cornerWidth: 6.5, cornerHeight: 6.5, transform: nil)
+            if coat == .classicBlack {
+                ctx.saveGState()
+                ctx.setStrokeColor(blackOutlineColor.cgColor)
+                ctx.setLineWidth(blackOutlineWidth * 1.8)
+                ctx.setLineCap(.round)
+                ctx.addArc(center: CGPoint(x: bottom.x, y: bottom.y - 1.5), radius: 7.2, startAngle: 0.15, endAngle: .pi - 0.15, clockwise: false)
+                ctx.strokePath()
+                ctx.restoreGState()
+            }
+            ctx.setFillColor(pawColor(coat).cgColor)
+            ctx.addPath(cuffPath)
             ctx.fillPath()
         }
-        let lineColor = (coat == .siamese) ? siameseCrease : creaseColor(coat)
+        let lineColor = (coat == .siamese) ? siameseCrease : (coat == .classicBlack ? blackOutlineColor.withAlphaComponent(0.75) : creaseColor(coat))
         ctx.setStrokeColor(lineColor.cgColor)
         ctx.setLineWidth(1.45)
         ctx.setLineCap(.round)
@@ -1799,6 +1875,24 @@ enum CatRenderer {
         let pawRect = CGRect(x: end.x - pawR, y: end.y - pawR * 0.85, width: pawR * 2, height: pawR * 1.7)
 
         ctx.saveGState()
+        if coat == .classicBlack {
+            ctx.setStrokeColor(blackOutlineColor.cgColor)
+            ctx.setLineWidth(blackOutlineWidth * 2.0)
+            ctx.setLineCap(.round)
+            ctx.setLineJoin(.round)
+            let startIdx = 2
+            if leftEdge.count > startIdx + 1 {
+                ctx.move(to: leftEdge[startIdx])
+                for idx in (startIdx + 1)..<leftEdge.count { ctx.addLine(to: leftEdge[idx]) }
+                ctx.strokePath()
+            }
+            if rightEdge.count > startIdx + 1 {
+                ctx.move(to: rightEdge[startIdx])
+                for idx in (startIdx + 1)..<rightEdge.count { ctx.addLine(to: rightEdge[idx]) }
+                ctx.strokePath()
+            }
+            ctx.strokeEllipse(in: pawRect)
+        }
         if coat != .siamese {
             ctx.setFillColor((patterned(coat) ? pawColor(coat) : limbColor(coat)).cgColor)
             ctx.addPath(limbPath)
@@ -1851,7 +1945,7 @@ enum CatRenderer {
 
         // Crisp separation stroke along upper-to-mid arm where it crosses the torso
         let highlightEdge = outlineOnLeftSide ? leftEdge : rightEdge
-        if highlightEdge.count > 6 {
+        if highlightEdge.count > 6 && coat != .classicBlack {
             let strokeColor = (coat == .siamese)
                 ? siameseOutline.withAlphaComponent(outlineAlpha * 0.78)
                 : creaseColor(coat).withAlphaComponent(outlineAlpha * 0.9)

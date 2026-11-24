@@ -85,6 +85,12 @@ public:
         drawKeyboard(g, physics, settings.keyboardTheme, settings.eyeTheme, settings.showKeyLegends, settings.keyboardMarquee);
 
         if (settings.coatTheme == CatCoatTheme::Dazed) drawDazedSword(g, seatX, seatY, physics);
+        bool drawBlackRim = (settings.coatTheme == CatCoatTheme::ClassicBlack);
+        if (drawBlackRim) {
+            if (physics.tailTyping.value < 0.5f) drawTail(g, seatX, seatY, physics, settings.coatTheme, true);
+            drawEarsLayer(g, headCenter, physics, settings.coatTheme, true);
+            drawUnifiedSilhouette(g, seatX, seatY, headCenter, breath, physics, settings.coatTheme, true);
+        }
         if (physics.tailTyping.value < 0.5f) drawTail(g, seatX, seatY, physics, settings.coatTheme);
 
         // 4. 3D-Projected Ears (behind crown silhouette)
@@ -104,7 +110,7 @@ public:
         // 8. Front Paws (Idle Sitting & Dynamic Reaching)
         drawFrontPaws(g, seatX, seatY, breath, physics, settings.coatTheme);
 
-        if (physics.tailTyping.value >= 0.5f) drawTail(g, seatX, seatY, physics, settings.coatTheme);
+        if (physics.tailTyping.value >= 0.5f) { if (drawBlackRim) drawTail(g, seatX, seatY, physics, settings.coatTheme, true); drawTail(g, seatX, seatY, physics, settings.coatTheme); }
 
         // 9. Floating Keycap Badges (keyboard + mouse clicks)
         if (!physics.floatingKeycaps.empty()) {
@@ -172,6 +178,8 @@ public:
 
 private:
     static Gdiplus::Color catBlack(BYTE a = 255)      { return Gdiplus::Color(a, 22, 22, 24); }
+    static constexpr float BlackOutlineW = 1.6f;
+    static Gdiplus::Color blackOutline(BYTE a = 240)  { return Gdiplus::Color(a, 255, 255, 255); }
     static Gdiplus::Color contourMint(BYTE a = 194)   { return Gdiplus::Color(a, 209, 235, 227); }
     static Gdiplus::Color whiskerWhite(BYTE a = 174)  { return Gdiplus::Color(a, 224, 230, 235); }
     static Gdiplus::Color siameseCream(BYTE a = 255)   { return Gdiplus::Color(a, 246, 239, 228); }
@@ -615,7 +623,7 @@ private:
 
     // MARK: - Tail
 
-    static void drawTail(Gdiplus::Graphics& g, float seatX, float seatY, const CatPhysics& physics, CatCoatTheme coat) {
+    static void drawTail(Gdiplus::Graphics& g, float seatX, float seatY, const CatPhysics& physics, CatCoatTheme coat, bool outlineOnly = false) {
         using namespace Gdiplus;
         float p = physics.tailPhase;
         float hunt = std::clamp(physics.huntIntensity.value, 0.0f, 1.0f);
@@ -644,11 +652,33 @@ private:
         tip.X += (target.x - tip.X) * reach;
         tip.Y += (target.y - tip.Y) * reach;
 
+        if (outlineOnly) {
+            Pen outPen(blackOutline(), 11.0f + BlackOutlineW * 2.0f);
+            outPen.SetStartCap(LineCapRound); outPen.SetEndCap(LineCapRound); outPen.SetLineJoin(LineJoinRound);
+            g.DrawBezier(&outPen, root, c1, c2, tip);
+            return;
+        }
         bool dazed = coat == CatCoatTheme::Dazed;
         Pen tailPen(dazed ? rgb(0x283157) : earTailColor(coat), dazed ? 13.0f : (coat == CatCoatTheme::Siamese ? 9.5f : 11.0f));
         tailPen.SetStartCap(LineCapRound);
         tailPen.SetEndCap(LineCapRound);
         tailPen.SetLineJoin(LineJoinRound);
+        if (outlineOnly) {
+            Pen outPen(blackOutline(), BlackOutlineW * 2.0f);
+            outPen.SetLineJoin(LineJoinRound); outPen.SetStartCap(LineCapRound); outPen.SetEndCap(LineCapRound);
+            g.DrawPath(&outPen, &path);
+            GraphicsState ps = g.Save();
+            g.TranslateTransform(seatX, seatY);
+            g.RotateTransform(bTilt * RadToDeg);
+            g.ScaleTransform(sx, sy);
+            g.DrawEllipse(&outPen, -35.0f, 3.0f, 17.0f, 11.0f);
+            if (physics.hindFootActive.value < 0.35f) {
+                g.DrawEllipse(&outPen, 18.0f, 4.5f, 17.0f, 12.5f);
+            }
+            g.Restore(ps);
+            return;
+        }
+
         if (coat == CatCoatTheme::Tabby) {
             tabby::drawTail(g, tailPen, root, c1, c2, tip);
             return;
@@ -674,7 +704,7 @@ private:
 
     // MARK: - 3D-Projected Ears
 
-    static void drawEarsLayer(Gdiplus::Graphics& g, Pt center, const CatPhysics& physics, CatCoatTheme coat) {
+    static void drawEarsLayer(Gdiplus::Graphics& g, Pt center, const CatPhysics& physics, CatCoatTheme coat, bool outlineOnly = false) {
         using namespace Gdiplus;
         GraphicsState st = g.Save();
         g.TranslateTransform(center.x, center.y);
@@ -685,12 +715,12 @@ private:
         float fold = physics.earFold.value;
         float twitch = physics.earTwitch.value * 0.045f;
 
-        drawEar3D(g, true, yawRad, pitchRad, fold, twitch, coat);
-        drawEar3D(g, false, yawRad, pitchRad, fold, -twitch, coat);
+        drawEar3D(g, true, yawRad, pitchRad, fold, twitch, coat, outlineOnly);
+        drawEar3D(g, false, yawRad, pitchRad, fold, -twitch, coat, outlineOnly);
         g.Restore(st);
     }
 
-    static void drawEar3D(Gdiplus::Graphics& g, bool isLeft, float yawRad, float pitchRad, float fold, float twitch, CatCoatTheme coat) {
+    static void drawEar3D(Gdiplus::Graphics& g, bool isLeft, float yawRad, float pitchRad, float fold, float twitch, CatCoatTheme coat, bool outlineOnly = false) {
         using namespace Gdiplus;
         float sign = isLeft ? -1.0f : 1.0f;
         if (coat == CatCoatTheme::Dazed) {
@@ -735,6 +765,12 @@ private:
                           {.68f, .16f, .44f, .18f, .29f, .1f}});
             return;
         }
+        if (outlineOnly) {
+            Pen outPen(blackOutline(), BlackOutlineW * 2.0f);
+            outPen.SetLineJoin(LineJoinRound); outPen.SetStartCap(LineCapRound); outPen.SetEndCap(LineCapRound);
+            g.DrawPath(&outPen, &ear);
+            return;
+        }
         SolidBrush b(earTailColor(coat));
         g.FillPath(&b, &ear);
 
@@ -776,7 +812,7 @@ private:
 
     // MARK: - Unified C1-Continuous Cat Silhouette (+ Siamese 2.5D Face Mask)
 
-    static void drawUnifiedSilhouette(Gdiplus::Graphics& g, float seatX, float seatY, Pt headCenter, float breath, const CatPhysics& physics, CatCoatTheme coat) {
+    static void drawUnifiedSilhouette(Gdiplus::Graphics& g, float seatX, float seatY, Pt headCenter, float breath, const CatPhysics& physics, CatCoatTheme coat, bool outlineOnly = false) {
         using namespace Gdiplus;
         if (coat == CatCoatTheme::Dazed) {
             drawDazedSilhouette(g, seatX, seatY, headCenter, physics);
@@ -935,7 +971,7 @@ private:
             g.FillEllipse(&pawBrush, rightHindX, rightHindY, hindW, rightHindH);
         }
 
-        Pen rimPen(coat == CatCoatTheme::Siamese ? siameseCream(140) : creaseColor(coat,148), 1.3f);
+        Pen rimPen(coat == CatCoatTheme::Siamese ? siameseCream(140) : (coat == CatCoatTheme::ClassicBlack ? blackOutline(0) : creaseColor(coat,148)), 1.3f);
         rimPen.SetStartCap(LineCapRound); rimPen.SetEndCap(LineCapRound);
         g.DrawArc(&rimPen, leftHindX + hindW * 0.5f - 7.5f, leftHindY + leftHindH * 0.5f - 7.5f, 15.0f, 15.0f, 15.0f, 150.0f);
         if (physics.hindFootActive.value < 0.35f) {
@@ -1556,12 +1592,17 @@ private:
             g.FillPath(&grad, &lp);
         }
 
+        if (coat == CatCoatTheme::ClassicBlack) {
+            Pen outPen(blackOutline(), BlackOutlineW * 1.8f);
+            outPen.SetStartCap(LineCapRound); outPen.SetEndCap(LineCapRound);
+            g.DrawArc(&outPen, bottom.x - 7.2f, bottom.y - 8.7f, 14.4f, 14.4f, 10.0f, 160.0f);
+        }
         if (coat != CatCoatTheme::Siamese) {
             SolidBrush cuff(pawColor(coat));
             g.FillRectangle(&cuff, bottom.x-7.5f, bottom.y-13.0f, 15.0f, 13.0f);
             g.FillEllipse(&cuff, bottom.x-7.5f, bottom.y-5.0f, 15.0f, 10.0f);
         }
-        Pen p(coat == CatCoatTheme::Siamese ? siameseCrease() : creaseColor(coat), 1.45f);
+        Pen p(coat == CatCoatTheme::Siamese ? siameseCrease() : (coat == CatCoatTheme::ClassicBlack ? blackOutline(190) : creaseColor(coat)), 1.45f);
         p.SetStartCap(LineCapRound); p.SetEndCap(LineCapRound);
 
         GraphicsPath p1;
@@ -1679,6 +1720,15 @@ private:
             return;
         }
 
+        if (coat == CatCoatTheme::ClassicBlack) {
+            Pen outPen(blackOutline(), BlackOutlineW * 2.0f);
+            outPen.SetStartCap(LineCapRound); outPen.SetEndCap(LineCapRound); outPen.SetLineJoin(LineJoinRound);
+            if ((int)leftEdge.size() > 3) {
+                g.DrawLines(&outPen, leftEdge.data() + 2, (INT)leftEdge.size() - 2);
+                g.DrawLines(&outPen, rightEdge.data() + 2, (INT)rightEdge.size() - 2);
+            }
+            g.DrawEllipse(&outPen, pawRect);
+        }
         if (coat == CatCoatTheme::Tabby) {
             tabby::drawLimb(g, limbPath, pawRect, start, ctrl, end, startW, endW);
         } else if (coat != CatCoatTheme::Siamese) {
@@ -1729,7 +1779,7 @@ private:
         const auto& hiEdge = outlineOnLeft ? leftEdge : rightEdge;
         int startIdx = 2;
         int endIdx = (int)((hiEdge.size() - 1) * 0.68f);
-        if (endIdx > startIdx) {
+        if (endIdx > startIdx && coat != CatCoatTheme::ClassicBlack) {
             Color sc = (coat == CatCoatTheme::Siamese)
                 ? siameseOutline((BYTE)(outlineAlpha * 199))
                 : creaseColor(coat, (BYTE)(outlineAlpha * 229));
