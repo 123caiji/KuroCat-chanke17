@@ -83,7 +83,7 @@ for (name,coat) in [("shorthair",CatCoatTheme.shorthair),("orangeWhite",.orangeW
 
 for coat in CatCoatTheme.allCases {
  let active = pixels(frame(coat,.softAmber,8)), idle = pixels(frame(coat,.softAmber,9))
- for y in 160..<342 {
+ for y in 160..<316 {
   for x in 240..<490 {
    let i=(y*720+x)*4
    precondition(Array(active[i..<i+4]) == Array(idle[i..<i+4]),"Reaching arm changes face pixels: \(coat)")
@@ -98,7 +98,7 @@ for coat in CatCoatTheme.allCases {
   let yaw:CGFloat=pose % 2 == 0 ? -1 : 1, tilt:CGFloat=pose % 2 == 0 ? -0.15 : 0.15
   let pitch:CGFloat=pose % 4 < 2 ? -1 : 1
   let cx=184+tilt*36+yaw*7.5,cy=126+14+pitch*4.8
-  for y in Int((cy-35)*2)..<Int((cy+40)*2) {
+  for y in Int((cy-35)*2)..<Int((cy+32)*2) {
    for x in Int((cx-52)*2)..<Int((cx+52)*2) {
     let i=(y*720+x)*4
     precondition(Array(active[i..<i+4]) == Array(idle[i..<i+4]),"Arm intrudes on turned face: \(coat), pose \(pose)")

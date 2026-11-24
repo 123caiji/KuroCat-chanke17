@@ -1227,8 +1227,8 @@ private:
         auto shoulder = [&](float x) -> Pt {
             float sy=physics.bodySquash.value, sx=1+(1-sy)*0.55f;
             float c=std::cos(physics.bodyTilt.value), s=std::sin(physics.bodyTilt.value);
-            float floor=126+siameseLift+physics.headOffsetY.value+physics.headPitch.value*4.8f+breath*1.1f+52;
-            return {seatX+x*sx*c+43*sy*s, std::max(seatY+x*sx*s-43*sy*c,floor)};
+            float floor=126+siameseLift+physics.headOffsetY.value+physics.headPitch.value*4.8f+breath*1.1f+42;
+            return {seatX+x*sx*c+58*sy*s, std::max(seatY+x*sx*s-58*sy*c,floor)};
         };
         Pt leftShoulder=shoulder(-shX), rightShoulder=shoulder(shX);
 

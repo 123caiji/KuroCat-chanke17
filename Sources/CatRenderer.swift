@@ -1514,9 +1514,9 @@ enum CatRenderer {
         func shoulder(_ x: CGFloat) -> CGPoint {
             let sy = physics.bodySquash.value, sx = 1 + (1 - sy) * 0.55
             let c = cos(physics.bodyTilt.value), s = sin(physics.bodyTilt.value)
-            let faceBottom = 126 + siameseLift + physics.headOffsetY.value + physics.headPitch.value * 4.8 + breath * 1.1 + 52
-            return CGPoint(x: seatX + x*sx*c + 43*sy*s,
-                           y: max(seatY + x*sx*s - 43*sy*c, faceBottom))
+            let faceBottom = 126 + siameseLift + physics.headOffsetY.value + physics.headPitch.value * 4.8 + breath * 1.1 + 42
+            return CGPoint(x: seatX + x*sx*c + 58*sy*s,
+                           y: max(seatY + x*sx*s - 58*sy*c, faceBottom))
         }
         let leftShoulder = shoulder(-shX)
         let rightShoulder = shoulder(shX)
