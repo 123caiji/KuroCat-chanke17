@@ -62,24 +62,40 @@ public:
         float scruff = std::clamp(physics.scruffDrag.value, 0.0f, 1.0f);
         float lie = std::clamp(physics.lieIntensity.value, 0.0f, 1.0f);
         float dizzy = std::clamp(physics.dizzyIntensity.value, 0.0f, 1.0f);
+        float lieS = lie * lie * (3.0f - 2.0f * lie);
+        float dizzyFallRaw = std::clamp((dizzy - 0.50f) / 0.50f, 0.0f, 1.0f);
+        float dizzyFall = dizzyFallRaw * dizzyFallRaw * (3.0f - 2.0f * dizzyFallRaw);
+        float preWobble = std::clamp((dizzy - 0.12f) / 0.38f, 0.0f, 1.0f) * (1.0f - dizzyFall);
+
         float seatX = CatPhysics::SeatAnchor.x + physics.bodyShiftX.value;
-        float seatY = CatPhysics::SeatAnchor.y - scruff * 26.0f + lie * 16.0f + dizzy * 14.0f;
+        float seatY = CatPhysics::SeatAnchor.y - scruff * 22.0f + lieS * 10.0f;
+        float fallAngle = -dizzyFall * 1.46f + std::sin(physics.time * 9.5f) * 0.16f * preWobble;
+        float fallShiftX = dizzyFall * 56.0f;
+        float fallShiftY = dizzyFall * 20.0f;
 
         float siameseLift = (settings.coatTheme == CatCoatTheme::Siamese) ? -3.0f : 0.0f;
         Pt headCenter = {
-            seatX + physics.bodyTilt.value * 36.0f + physics.headYaw.value * 7.5f,
-            126.0f + siameseLift - scruff * 18.0f + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f
+            seatX + physics.bodyTilt.value * 36.0f + physics.headYaw.value * 7.5f - lieS * 4.0f,
+            126.0f + siameseLift - scruff * 22.0f + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f + lieS * 60.0f
         };
 
         drawMouse(cr, physics, settings.keyboardTheme);
         drawKeyboard(cr, physics, settings.keyboardTheme, settings.eyeTheme, settings.showKeyLegends, settings.keyboardMarquee);
+        cairo_save(cr);
+        if (dizzy > 0.01f) {
+            cairo_translate(cr, seatX + fallShiftX, seatY + fallShiftY);
+            cairo_rotate(cr, fallAngle);
+            cairo_translate(cr, -seatX, -seatY);
+        }
+
         bool drawBlackRim = (settings.coatTheme == CatCoatTheme::ClassicBlack);
+        bool tailInFront = (physics.tailTyping.value >= 0.5f) || (lieS >= 0.45f);
         if (drawBlackRim) {
-            if (physics.tailTyping.value < 0.5f) drawTail(cr, seatX, seatY, physics, settings.coatTheme, true);
+            if (!tailInFront) drawTail(cr, seatX, seatY, physics, settings.coatTheme, true);
             drawEarsLayer(cr, headCenter, physics, settings.coatTheme, true);
             drawUnifiedSilhouette(cr, seatX, seatY, headCenter, breath, physics, settings.coatTheme, true);
         }
-        if (physics.tailTyping.value < 0.5f) drawTail(cr, seatX, seatY, physics, settings.coatTheme);
+        if (!tailInFront) drawTail(cr, seatX, seatY, physics, settings.coatTheme);
         drawEarsLayer(cr, headCenter, physics, settings.coatTheme);
         drawUnifiedSilhouette(cr, seatX, seatY, headCenter, breath, physics, settings.coatTheme);
 
@@ -90,7 +106,44 @@ public:
         drawHeadFeatures(cr, headCenter, physics, settings.eyeTheme, settings.coatTheme);
         drawFrontPaws(cr, seatX, seatY, breath, physics, settings.coatTheme);
 
-        if (physics.tailTyping.value >= 0.5f) { if (drawBlackRim) drawTail(cr, seatX, seatY, physics, settings.coatTheme, true); drawTail(cr, seatX, seatY, physics, settings.coatTheme); }
+        if (tailInFront) {
+            if (drawBlackRim) drawTail(cr, seatX, seatY, physics, settings.coatTheme, true);
+            drawTail(cr, seatX, seatY, physics, settings.coatTheme);
+        }
+        cairo_restore(cr);
+
+        // Upright orbiting golden dizzy stars floating right above the head (appear FIRST before falling!)
+        if (dizzy > 0.10f) {
+            double relX = headCenter.x - seatX;
+            double relY = headCenter.y - seatY;
+            double worldHeadX = seatX + fallShiftX + relX * std::cos(fallAngle) - relY * std::sin(fallAngle);
+            double worldHeadY = seatY + fallShiftY + relX * std::sin(fallAngle) + relY * std::cos(fallAngle);
+            double dAlpha = std::min(1.0, (dizzy - 0.10) / 0.22);
+            double starLift = 42.0 + dizzyFall * 10.0;
+            cairo_save(cr);
+            cairo_translate(cr, worldHeadX, worldHeadY - starLift);
+            for (int i = 0; i < 3; ++i) {
+                double ang = physics.dizzyPhase * 0.85 + i * (PI * 2.0 / 3.0);
+                double sx = std::cos(ang) * 26.0;
+                double sy = std::sin(ang) * 6.5;
+                double r = 4.4 * (0.75 + 0.25 * std::sin(ang));
+                cairo_save(cr);
+                cairo_translate(cr, sx, sy);
+                cairo_rotate(cr, physics.dizzyPhase + i);
+                cairo_set_source_rgba(cr, 1.0, 0.86, 0.22, 0.96 * dAlpha);
+                cairo_new_path(cr);
+                for (int k = 0; k < 8; ++k) {
+                    double rad = (k % 2 == 0) ? r : r * 0.42;
+                    double a = k * PI * 0.25;
+                    if (k == 0) cairo_move_to(cr, std::cos(a) * rad, std::sin(a) * rad);
+                    else cairo_line_to(cr, std::cos(a) * rad, std::sin(a) * rad);
+                }
+                cairo_close_path(cr);
+                cairo_fill(cr);
+                cairo_restore(cr);
+            }
+            cairo_restore(cr);
+        }
 
         if (!physics.floatingKeycaps.empty()) {
             drawFloatingKeycaps(cr, physics);
@@ -627,25 +680,32 @@ private:
         cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
         cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
         double reach = std::clamp(physics.tailTyping.value, 0.0f, 1.0f);
-        double flickScale = 1.0 - reach;
+        double lie = std::clamp(physics.lieIntensity.value, 0.0f, 1.0f);
+        double lieS = lie * lie * (3.0 - 2.0 * lie);
+        double flickScale = (1.0 - reach) * (1.0 - lieS);
         Pt flick = physics.tailFlick.point();
         double fx = flick.x * flickScale;
         double fy = flick.y * flickScale;
         double curl = physics.tailCurl.value * flickScale;
         Pt target = physics.tailTip.point();
+        double x0=seatX+34.0, y0=seatY-6.0;
         double x1=seatX+64+12*reach+fx*0.25, y1=seatY+2+wag1*0.35+huntDrop*0.4-18*reach+fy*0.22+curl*0.35;
         double x2=seatX+66+wag2*0.4+fx*0.65-curl*0.45, y2=seatY-26+wag1*0.7+huntDrop+fy*0.60-curl*0.55;
         double x3=seatX+91+wag2*0.5+fx, y3=seatY-30+wag1*0.85+huntDrop+fy;
         x2+=(target.x+24-x2)*reach; y2+=(target.y-30-y2)*reach;
         x3+=(target.x-x3)*reach; y3+=(target.y-y3)*reach;
-        cairo_move_to(cr, seatX + 34.0, seatY - 6.0);
+        double sleepWag = std::sin(p * 0.6f) * 2.0;
+        x0 += (seatX + 40.0 - x0) * lieS; y0 += (seatY - 2.0 - y0) * lieS;
+        x1 += (seatX + 54.0 - x1) * lieS; y1 += (seatY + 13.0 - y1) * lieS;
+        x2 += (seatX + 14.0 - x2) * lieS; y2 += (seatY + 17.0 - y2) * lieS;
+        x3 += (seatX - 28.0 - x3) * lieS; y3 += (seatY + 8.0 + sleepWag - y3) * lieS;
+        cairo_move_to(cr, x0, y0);
         cairo_curve_to(cr, x1, y1, x2, y2, x3, y3);
         cairo_stroke(cr);
         if (!outlineOnly && patterned(coat)) {
             cairo_set_operator(cr,CAIRO_OPERATOR_ATOP);
             setCol(cr,rgb(coat==CatCoatTheme::Shorthair ? 0x55595A : 0xA57543,0.50));
             cairo_set_line_width(cr,3.5);cairo_set_line_cap(cr,CAIRO_LINE_CAP_BUTT);
-            double x0=seatX+34,y0=seatY-6;
             // Use the same curved tail for the coat rings while reaching a key.
             for (double t: {0.50,0.78}) {
                 double u=1-t,x=u*u*u*x0+3*u*u*t*x1+3*u*t*t*x2+t*t*t*x3;
@@ -656,6 +716,15 @@ private:
                 cairo_move_to(cr,x+nx,y+ny);cairo_line_to(cr,x-nx,y-ny);cairo_stroke(cr);
             }
             cairo_pop_group_to_source(cr);cairo_set_operator(cr,CAIRO_OPERATOR_OVER);cairo_paint(cr);
+        }
+        if (!outlineOnly && lieS > 0.35) {
+            double rAlpha = std::min(1.0, (lieS - 0.35) / 0.45) * 0.72;
+            setCol(cr, coat == CatCoatTheme::Siamese ? siameseCrease : creaseColor(coat), rAlpha);
+            cairo_set_line_width(cr, 1.45);
+            cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+            cairo_move_to(cr, x0 - 4.0, y0 - 3.0);
+            cairo_curve_to(cr, x1 - 6.0, y1 - 5.5, x2, y2 - 5.5, x3 + 2.0, y3 - 4.5);
+            cairo_stroke(cr);
         }
         cairo_restore(cr);
     }
@@ -738,8 +807,10 @@ private:
         };
 
         float cB = std::cos(bTilt), sB = std::sin(bTilt);
-        float sy = physics.bodySquash.value;
-        float sx = 1.0f + (1.0f - sy) * 0.55f;
+        float lie = std::clamp(physics.lieIntensity.value, 0.0f, 1.0f);
+        float lieS = lie * lie * (3.0f - 2.0f * lie);
+        float sy = physics.bodySquash.value * (1.0f - lieS * 0.42f);
+        float sx = (1.0f + (1.0f - physics.bodySquash.value) * 0.55f) * (1.0f + lieS * 0.03f);
         auto B = [&](float lx, float ly) -> Pt {
             float rx = lx * sx, ry = ly * sy;
             return { seatX + rx * cB - ry * sB, seatY + rx * sB + ry * cB };
@@ -1003,33 +1074,6 @@ private:
             cairo_restore(cr);
         }
 
-        // Orbiting golden dizzy stars above head
-        float dizzy = std::clamp(physics.dizzyIntensity.value, 0.0f, 1.0f);
-        if (dizzy > 0.15f) {
-            cairo_save(cr);
-            for (int i = 0; i < 3; ++i) {
-                double ang = physics.dizzyPhase * 0.85 + i * (PI * 2.0 / 3.0);
-                double sx = std::cos(ang) * 26.0;
-                double sy = -36.0 + std::sin(ang) * 6.5;
-                double r = 4.2 * (0.75 + 0.25 * std::sin(ang));
-                cairo_save(cr);
-                cairo_translate(cr, sx, sy);
-                cairo_rotate(cr, physics.dizzyPhase + i);
-                cairo_set_source_rgba(cr, 1.0, 0.86, 0.22, 0.95 * dizzy);
-                cairo_new_path(cr);
-                for (int k = 0; k < 8; ++k) {
-                    double rad = (k % 2 == 0) ? r : r * 0.42;
-                    double a = k * PI * 0.25;
-                    if (k == 0) cairo_move_to(cr, std::cos(a) * rad, std::sin(a) * rad);
-                    else cairo_line_to(cr, std::cos(a) * rad, std::sin(a) * rad);
-                }
-                cairo_close_path(cr);
-                cairo_fill(cr);
-                cairo_restore(cr);
-            }
-            cairo_restore(cr);
-        }
-
         cairo_restore(cr);
     }
 
@@ -1145,9 +1189,9 @@ private:
         cairo_translate(cr, proj.x, proj.y);
         cairo_scale(cr, foreX, foreY);
 
-        // Mode 0: Dizzy spinning spiral eyes (@ @) after 10s of rapid mouse shaking
+        // Mode 0: Dizzy spinning spiral eyes (@ @) — appear AFTER initial golden stars warning (>0.28)
         float dizzy = std::clamp(physics.dizzyIntensity.value, 0.0f, 1.0f);
-        if (dizzy > 0.25f) {
+        if (dizzy > 0.28f) {
             cairo_set_source_rgba(cr, 0.98, 0.98, 0.96, 0.95);
             cairo_new_path(cr);
             fillEllipse(cr, 0.0, 0.0, 11.5, 11.0);
@@ -1314,15 +1358,18 @@ private:
 
         bool isSiamese = (coat == CatCoatTheme::Siamese);
         float siameseLift = isSiamese ? -3.0f : 0.0f;
-        float idleTopY = isSiamese ? (seatY - 31.0f) : (seatY - 30.0f);
-        float idleTopX = isSiamese ? 16.5f : 18.0f;
-        float idleBotX = isSiamese ? 15.0f : 16.0f;
+        float lie = std::clamp(physics.lieIntensity.value, 0.0f, 1.0f);
+        float lieS = lie * lie * (3.0f - 2.0f * lie);
+        float idleTopY = (isSiamese ? (seatY - 31.0f) : (seatY - 30.0f)) + lieS * 24.0f;
+        float idleTopX = (isSiamese ? 16.5f : 18.0f) - lieS * 5.0f;
+        float idleBotX = (isSiamese ? 15.0f : 16.0f) - lieS * 4.5f;
+        float idleBotY = seatY + 12.0f - lieS * 4.0f;
         float shX = isSiamese ? 18.5f : 20.0f;
         float limbStartW = isSiamese ? 17.0f : 19.0f;
         float limbEndW = isSiamese ? 12.5f : 13.5f;
 
         auto shoulder = [&](float x) -> Pt {
-            float sy=physics.bodySquash.value, sx=1+(1-sy)*0.55f;
+            float sy=physics.bodySquash.value*(1.0f-lieS*0.42f), sx=(1+(1-physics.bodySquash.value)*0.55f)*(1.0f+lieS*0.03f);
             float c=std::cos(physics.bodyTilt.value), s=std::sin(physics.bodyTilt.value);
             float floor=126+siameseLift+physics.headOffsetY.value+physics.headPitch.value*4.8f+breath*1.1f+42;
             return {seatX+x*sx*c+58*sy*s, std::max(seatY+x*sx*s-58*sy*c,floor)};
@@ -1330,14 +1377,14 @@ private:
         Pt lSh=shoulder(-shX), rSh=shoulder(shX);
 
         if (lDist < 6.0f && !physics.leftPawOnMouse && !physics.leftPawTyping) {
-            drawIdleFrontLeg(cr, { seatX - idleTopX, idleTopY }, { seatX - idleBotX, seatY + 12.0f }, true, coat);
+            if (lieS < 0.78f) drawIdleFrontLeg(cr, { seatX - idleTopX, idleTopY }, { seatX - idleBotX, idleBotY }, true, coat);
         } else {
             Pt mid = { (lSh.x + lPos.x) * 0.5f - (physics.leftPawOnMouse ? 8.0f : 4.0f), (lSh.y + lPos.y) * 0.5f - 6.0f };
             drawLimb(cr, lSh, mid, lPos, limbStartW, limbEndW, false, 0.78f, coat);
         }
 
         if (rDist < 6.0f && !physics.rightPawTyping) {
-            drawIdleFrontLeg(cr, { seatX + idleTopX, idleTopY }, { seatX + idleBotX, seatY + 12.0f }, false, coat);
+            if (lieS < 0.78f) drawIdleFrontLeg(cr, { seatX + idleTopX, idleTopY }, { seatX + idleBotX, idleBotY }, false, coat);
         } else {
             Pt mid = { (rSh.x + rPos.x) * 0.5f + 4.0f, (rSh.y + rPos.y) * 0.5f - 6.0f };
             drawLimb(cr, rSh, mid, rPos, limbStartW, limbEndW, true, 0.78f, coat);

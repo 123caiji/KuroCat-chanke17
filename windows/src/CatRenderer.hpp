@@ -70,12 +70,20 @@ public:
         float scruff = std::clamp(physics.scruffDrag.value, 0.0f, 1.0f);
         float lie = std::clamp(physics.lieIntensity.value, 0.0f, 1.0f);
         float dizzy = std::clamp(physics.dizzyIntensity.value, 0.0f, 1.0f);
-        float seatY = CatPhysics::SeatAnchor.y - scruff * 22.0f + lie * 16.0f + dizzy * 14.0f;
+        float lieS = lie * lie * (3.0f - 2.0f * lie);
+        float dizzyFallRaw = std::clamp((dizzy - 0.50f) / 0.50f, 0.0f, 1.0f);
+        float dizzyFall = dizzyFallRaw * dizzyFallRaw * (3.0f - 2.0f * dizzyFallRaw);
+        float preWobble = std::clamp((dizzy - 0.12f) / 0.38f, 0.0f, 1.0f) * (1.0f - dizzyFall);
+
+        float seatY = CatPhysics::SeatAnchor.y - scruff * 22.0f + lieS * 10.0f;
+        float fallAngle = -dizzyFall * 1.46f + std::sin(physics.time * 9.5f) * 0.16f * preWobble;
+        float fallShiftX = dizzyFall * 56.0f;
+        float fallShiftY = dizzyFall * 20.0f;
 
         float siameseLift = (settings.coatTheme == CatCoatTheme::Siamese) ? -3.0f : 0.0f;
         Pt headCenter = {
-            seatX + physics.bodyTilt.value * 36.0f + physics.headYaw.value * 7.5f,
-            126.0f + siameseLift + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f - scruff * 22.0f
+            seatX + physics.bodyTilt.value * 36.0f + physics.headYaw.value * 7.5f - lieS * 4.0f,
+            126.0f + siameseLift + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f - scruff * 22.0f + lieS * 60.0f
         };
 
         // 1. Mini White Mouse (facing cat)
@@ -84,14 +92,22 @@ public:
         // 2. Mini 65% Mechanical Keyboard (facing cat) + Backlit Glow
         drawKeyboard(g, physics, settings.keyboardTheme, settings.eyeTheme, settings.showKeyLegends, settings.keyboardMarquee);
 
+        GraphicsState fallState = g.Save();
+        if (dizzy > 0.01f) {
+            g.TranslateTransform(seatX + fallShiftX, seatY + fallShiftY);
+            g.RotateTransform(fallAngle * RadToDeg);
+            g.TranslateTransform(-seatX, -seatY);
+        }
+
         if (settings.coatTheme == CatCoatTheme::Dazed) drawDazedSword(g, seatX, seatY, physics);
         bool drawBlackRim = (settings.coatTheme == CatCoatTheme::ClassicBlack);
+        bool tailInFront = (physics.tailTyping.value >= 0.5f) || (lieS >= 0.45f);
         if (drawBlackRim) {
-            if (physics.tailTyping.value < 0.5f) drawTail(g, seatX, seatY, physics, settings.coatTheme, true);
+            if (!tailInFront) drawTail(g, seatX, seatY, physics, settings.coatTheme, true);
             drawEarsLayer(g, headCenter, physics, settings.coatTheme, true);
             drawUnifiedSilhouette(g, seatX, seatY, headCenter, breath, physics, settings.coatTheme, true);
         }
-        if (physics.tailTyping.value < 0.5f) drawTail(g, seatX, seatY, physics, settings.coatTheme);
+        if (!tailInFront) drawTail(g, seatX, seatY, physics, settings.coatTheme);
 
         // 4. 3D-Projected Ears (behind crown silhouette)
         drawEarsLayer(g, headCenter, physics, settings.coatTheme);
@@ -110,7 +126,40 @@ public:
         // 8. Front Paws (Idle Sitting & Dynamic Reaching)
         drawFrontPaws(g, seatX, seatY, breath, physics, settings.coatTheme);
 
-        if (physics.tailTyping.value >= 0.5f) { if (drawBlackRim) drawTail(g, seatX, seatY, physics, settings.coatTheme, true); drawTail(g, seatX, seatY, physics, settings.coatTheme); }
+        if (tailInFront) {
+            if (drawBlackRim) drawTail(g, seatX, seatY, physics, settings.coatTheme, true);
+            drawTail(g, seatX, seatY, physics, settings.coatTheme);
+        }
+
+        g.Restore(fallState);
+
+        // Upright orbiting golden dizzy stars floating right above the head (appear FIRST before falling!)
+        if (dizzy > 0.10f) {
+            float relX = headCenter.x - seatX;
+            float relY = headCenter.y - seatY;
+            float worldHeadX = seatX + fallShiftX + relX * std::cos(fallAngle) - relY * std::sin(fallAngle);
+            float worldHeadY = seatY + fallShiftY + relX * std::sin(fallAngle) + relY * std::cos(fallAngle);
+            float dAlpha = std::min(1.0f, (dizzy - 0.10f) / 0.22f);
+            float starLift = 42.0f + dizzyFall * 10.0f;
+            GraphicsState ss = g.Save();
+            g.TranslateTransform(worldHeadX, worldHeadY - starLift);
+            SolidBrush sb(Color((BYTE)(245 * dAlpha), 255, 220, 56));
+            for (int i = 0; i < 3; ++i) {
+                float ang = physics.dizzyPhase * 0.85f + (float)i * (6.283185f / 3.0f);
+                float sx = std::cos(ang) * 26.0f;
+                float sy = std::sin(ang) * 6.5f;
+                float r = 4.4f * (0.75f + 0.25f * std::sin(ang));
+                PointF pts[8];
+                float rot = physics.dizzyPhase + (float)i;
+                for (int k = 0; k < 8; ++k) {
+                    float rad = (k % 2 == 0) ? r : r * 0.42f;
+                    float a = rot + (float)k * 0.785398f;
+                    pts[k] = PointF(sx + std::cos(a) * rad, sy + std::sin(a) * rad);
+                }
+                g.FillPolygon(&sb, pts, 8);
+            }
+            g.Restore(ss);
+        }
 
         // 9. Floating Keycap Badges (keyboard + mouse clicks)
         if (!physics.floatingKeycaps.empty()) {
@@ -633,7 +682,9 @@ private:
         float huntDrop = hunt * 14.0f;
 
         float reach = std::clamp(physics.tailTyping.value, 0.0f, 1.0f);
-        float flickScale = 1.0f - reach;
+        float lie = std::clamp(physics.lieIntensity.value, 0.0f, 1.0f);
+        float lieS = lie * lie * (3.0f - 2.0f * lie);
+        float flickScale = (1.0f - reach) * (1.0f - lieS);
         Pt flick = physics.tailFlick.point();
         float fx = flick.x * flickScale;
         float fy = flick.y * flickScale;
@@ -652,6 +703,17 @@ private:
         tip.X += (target.x - tip.X) * reach;
         tip.Y += (target.y - tip.Y) * reach;
 
+        // When curling up to sleep, tail sweeps smoothly around the front to wrap cozily around the cat ball!
+        float sleepWag = std::sin(p * 0.6f) * 2.0f;
+        root.X += (seatX + 40.0f - root.X) * lieS;
+        root.Y += (seatY - 2.0f - root.Y) * lieS;
+        c1.X += (seatX + 54.0f - c1.X) * lieS;
+        c1.Y += (seatY + 13.0f - c1.Y) * lieS;
+        c2.X += (seatX + 14.0f - c2.X) * lieS;
+        c2.Y += (seatY + 17.0f - c2.Y) * lieS;
+        tip.X += (seatX - 28.0f - tip.X) * lieS;
+        tip.Y += (seatY + 8.0f + sleepWag - tip.Y) * lieS;
+
         if (outlineOnly) {
             Pen outPen(blackOutline(), 11.0f + BlackOutlineW * 2.0f);
             outPen.SetStartCap(LineCapRound); outPen.SetEndCap(LineCapRound); outPen.SetLineJoin(LineJoinRound);
@@ -668,6 +730,17 @@ private:
             return;
         }
         g.DrawBezier(&tailPen, root, c1, c2, tip);
+        if (lieS > 0.35f) {
+            float rAlpha = std::min(1.0f, (lieS - 0.35f) / 0.45f) * 0.72f;
+            Color rc = (coat == CatCoatTheme::Siamese) ? siameseCrease() : creaseColor(coat);
+            Pen rimPen(Color((BYTE)(rc.GetA() * rAlpha), rc.GetR(), rc.GetG(), rc.GetB()), 1.45f);
+            rimPen.SetStartCap(LineCapRound); rimPen.SetEndCap(LineCapRound);
+            g.DrawBezier(&rimPen,
+                PointF(root.X - 4.0f, root.Y - 3.0f),
+                PointF(c1.X - 6.0f, c1.Y - 5.5f),
+                PointF(c2.X, c2.Y - 5.5f),
+                PointF(tip.X + 2.0f, tip.Y - 4.5f));
+        }
         if (patterned(coat)) {
             GraphicsState state = g.Save();
             GraphicsPath outline; outline.AddBezier(root,c1,c2,tip); outline.Widen(&tailPen);
@@ -814,8 +887,10 @@ private:
         };
 
         float cB = std::cos(bTilt), sB = std::sin(bTilt);
-        float sy = physics.bodySquash.value;
-        float sx = 1.0f + (1.0f - sy) * 0.55f;
+        float lie = std::clamp(physics.lieIntensity.value, 0.0f, 1.0f);
+        float lieS = lie * lie * (3.0f - 2.0f * lie);
+        float sy = physics.bodySquash.value * (1.0f - lieS * 0.42f);
+        float sx = (1.0f + (1.0f - physics.bodySquash.value) * 0.55f) * (1.0f + lieS * 0.03f);
         auto B = [&](float lx, float ly) -> PointF {
             float rx = lx * sx, ry = ly * sy;
             return PointF(seatX + rx * cB - ry * sB, seatY + rx * sB + ry * cB);
@@ -1157,19 +1232,6 @@ private:
             }
             g.Restore(as);
         }
-
-        float dizzy = std::clamp(physics.dizzyIntensity.value, 0.0f, 1.0f);
-        if (dizzy > 0.25f) {
-            float dAlpha = std::min(1.0f, (dizzy - 0.25f) / 0.35f);
-            SolidBrush sb(Color((BYTE)(235 * dAlpha), 255, 217, 56));
-            for (int i = 0; i < 3; ++i) {
-                float ang = physics.dizzyPhase * 0.65f + (float)i * (6.283185f / 3.0f);
-                float sx = std::cos(ang) * 32.0f;
-                float sy = -38.0f + std::sin(ang) * 7.5f;
-                float sr = 3.8f + std::sin(ang) * 1.0f;
-                g.FillEllipse(&sb, sx - sr, sy - sr, sr * 2.0f, sr * 2.0f);
-            }
-        }
         g.Restore(st);
     }
 
@@ -1362,7 +1424,7 @@ private:
         // Mode 1: Happy closed glowing curved line eyes (petting head!)
         // Mode 0: Dizzy spinning spiral eyes (@ @) after 10s of rapid mouse shaking
         float dizzy = std::clamp(physics.dizzyIntensity.value, 0.0f, 1.0f);
-        if (dizzy > 0.25f) {
+        if (dizzy > 0.28f) {
             SolidBrush bg(Color(242, 250, 250, 245));
             g.FillEllipse(&bg, -11.5f, -11.0f, 23.0f, 22.0f);
             Pen sp(Color(242, 36, 36, 46), 1.85f);
@@ -1536,15 +1598,18 @@ private:
 
         bool isSiamese = (coat == CatCoatTheme::Siamese);
         float siameseLift = isSiamese ? -3.0f : 0.0f;
-        float idleTopY = isSiamese ? (seatY - 31.0f) : (seatY - 30.0f);
-        float idleTopX = isSiamese ? 16.5f : 18.0f;
-        float idleBotX = isSiamese ? 15.0f : 16.0f;
+        float lie = std::clamp(physics.lieIntensity.value, 0.0f, 1.0f);
+        float lieS = lie * lie * (3.0f - 2.0f * lie);
+        float idleTopY = (isSiamese ? (seatY - 31.0f) : (seatY - 30.0f)) + lieS * 24.0f;
+        float idleTopX = (isSiamese ? 16.5f : 18.0f) - lieS * 5.0f;
+        float idleBotX = (isSiamese ? 15.0f : 16.0f) - lieS * 4.5f;
+        float idleBotY = seatY + 12.0f - lieS * 4.0f;
         float shX = isSiamese ? 18.5f : 20.0f;
         float limbStartW = isSiamese ? 17.0f : 19.0f;
         float limbEndW = isSiamese ? 12.5f : 13.5f;
 
         auto shoulder = [&](float x) -> Pt {
-            float sy=physics.bodySquash.value, sx=1+(1-sy)*0.55f;
+            float sy=physics.bodySquash.value*(1.0f-lieS*0.42f), sx=(1+(1-physics.bodySquash.value)*0.55f)*(1.0f+lieS*0.03f);
             float c=std::cos(physics.bodyTilt.value), s=std::sin(physics.bodyTilt.value);
             float floor=126+siameseLift+physics.headOffsetY.value+physics.headPitch.value*4.8f+breath*1.1f+42;
             return {seatX+x*sx*c+58*sy*s, std::max(seatY+x*sx*s-58*sy*c,floor)};
@@ -1552,7 +1617,7 @@ private:
         Pt leftShoulder=shoulder(-shX), rightShoulder=shoulder(shX);
 
         if (lDist < 6.0f && !physics.leftPawOnMouse && !physics.leftPawTyping) {
-            drawIdleFrontLeg(g, { seatX - idleTopX, idleTopY }, { seatX - idleBotX, seatY + 12.0f }, true, coat);
+            if (lieS < 0.78f) drawIdleFrontLeg(g, { seatX - idleTopX, idleTopY }, { seatX - idleBotX, idleBotY }, true, coat);
         } else {
             Pt mid = { (leftShoulder.x + lPos.x) * 0.5f - (physics.leftPawOnMouse ? 8.0f : 4.0f),
                        (leftShoulder.y + lPos.y) * 0.5f - 6.0f };
@@ -1560,7 +1625,7 @@ private:
         }
 
         if (rDist < 6.0f && !physics.rightPawTyping) {
-            drawIdleFrontLeg(g, { seatX + idleTopX, idleTopY }, { seatX + idleBotX, seatY + 12.0f }, false, coat);
+            if (lieS < 0.78f) drawIdleFrontLeg(g, { seatX + idleTopX, idleTopY }, { seatX + idleBotX, idleBotY }, false, coat);
         } else {
             Pt mid = { (rightShoulder.x + rPos.x) * 0.5f + 4.0f, (rightShoulder.y + rPos.y) * 0.5f - 6.0f };
             drawLimb(g, rightShoulder, mid, rPos, limbStartW, limbEndW, true, 0.78f, coat, true);

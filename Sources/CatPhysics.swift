@@ -658,6 +658,11 @@ final class CatPhysics {
             dizzyTimer = max(0, dizzyTimer - dt)
             dizzyIntensity.target = 1.0
             dizzyPhase += dt * 7.5
+        } else if fastMouseDuration > 6.8 {
+            // Stage 2 (6.8s -> 10.0s): Pre-dizzy warning — stars appear first, then spiral eyes & upright wobble!
+            let pre = min(1.0, (fastMouseDuration - 6.8) / 3.2)
+            dizzyIntensity.target = pre * 0.48
+            dizzyPhase += dt * 7.5
         } else {
             dizzyIntensity.target = 0.0
         }
@@ -752,8 +757,9 @@ final class CatPhysics {
             leftPawTyping = true
             leftPawOnMouse = false
         } else if dizzy > 0.35 {
-            leftPaw.target = CGPoint(x: CatPhysics.seatAnchor.x + 28, y: CatPhysics.seatAnchor.y + 22)
-            leftPawTyping = true
+            // Relaxed paws staying natural inside the toppled cat frame
+            leftPaw.target = CatPhysics.leftPawRest
+            leftPawTyping = false
             leftPawOnMouse = false
         } else if let lk = leftKey {
             leftPaw.target = KeyboardLayout.canvasPoint(for: lk)
@@ -764,7 +770,8 @@ final class CatPhysics {
             leftPawTyping = false
             leftPawOnMouse = true
         } else {
-            leftPaw.target = CGPoint(x: CatPhysics.leftPawRest.x + lie * 4, y: CatPhysics.leftPawRest.y + lie * 14)
+            // Keep paws tucked neatly in rest position when curling into a sleeping cat ball!
+            leftPaw.target = CatPhysics.leftPawRest
             leftPawTyping = false
             leftPawOnMouse = false
         }
@@ -774,13 +781,13 @@ final class CatPhysics {
             rightPaw.target = CGPoint(x: CatPhysics.seatAnchor.x + 16 + scruffSwing.value * 26, y: CatPhysics.seatAnchor.y + 12)
             rightPawTyping = true
         } else if dizzy > 0.35 {
-            rightPaw.target = CGPoint(x: CatPhysics.seatAnchor.x + 68, y: CatPhysics.seatAnchor.y + 26)
-            rightPawTyping = true
+            rightPaw.target = CatPhysics.rightPawRest
+            rightPawTyping = false
         } else if let rk = rightKey {
             rightPaw.target = KeyboardLayout.canvasPoint(for: rk)
             rightPawTyping = true
         } else {
-            rightPaw.target = CGPoint(x: CatPhysics.rightPawRest.x - lie * 4, y: CatPhysics.rightPawRest.y + lie * 14)
+            rightPaw.target = CatPhysics.rightPawRest
             rightPawTyping = false
         }
 
@@ -838,13 +845,13 @@ final class CatPhysics {
             targetShiftX = (avgX - 184) * 0.14
             targetBodyTilt = (avgX - 184) * 0.0011
         }
-        bodyShiftX.target = max(-16, min(16, targetShiftX)) + dizzy * 48.0
-        bodyTilt.target = max(-0.12, min(0.12, targetBodyTilt)) + scruffSwing.value * scruff + dizzy * 0.46
-        // Coiled low hunting crouch, elongated scruff dangle, or flattened loaf while lying/dizzy!
-        bodySquash.target = 1.0 - hunt * 0.11 + scruff * 0.16 - lie * 0.22 - dizzy * 0.14
+        bodyShiftX.target = max(-16, min(16, targetShiftX))
+        bodyTilt.target = max(-0.12, min(0.12, targetBodyTilt)) + scruffSwing.value * scruff
+        // Keep body sleek & natural during lie/dizzy (zero fat distortion; renderer handles smooth rigid fall & forward sprawl!)
+        bodySquash.target = 1.0 - hunt * 0.11 + scruff * 0.16
 
         headOffsetY.target = ((leftPawTyping || rightPawTyping) ? 3.5 : (sleepiness * 5.0 + hunt * 10.5))
-            - scruff * 10.0 + lie * 34.0 + dizzy * 22.0
+            - scruff * 10.0
         earFold.target = max(petHeadIntensity * 0.7, petBodyIntensity * 0.45) + sleepiness * 0.25 - hunt * 0.18
             + scruff * 0.35 + anger * 0.45 + dizzy * 0.35
         earTwitch.target = 0
@@ -906,7 +913,7 @@ final class CatPhysics {
 
         // Subtle natural head roll coupled to head turning (curious tilt / locked-on hunt!)
         if now - lastPetTime > 0.28 {
-            headTilt.target = bodyTilt.target * 0.45 + headYaw.value * (0.11 + hunt * 0.05) - headYaw.value * headPitch.value * 0.04
+            headTilt.target = bodyTilt.target * 0.45 + headYaw.value * (0.11 + hunt * 0.05) - headYaw.value * headPitch.value * 0.04 + lie * 0.12
         }
         headTilt.step(dt: dt, stiffness: 130, damping: 16)
 

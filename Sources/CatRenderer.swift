@@ -123,11 +123,17 @@ enum CatRenderer {
         }
         let coat = settings.coatTheme
         let breath = physics.breathingOffset
-        let seatX = CatPhysics.seatAnchor.x + physics.bodyShiftX.value
         let scruff = max(0, min(1, physics.scruffDrag.value))
         let lie = max(0, min(1, physics.lieIntensity.value))
         let dizzy = max(0, min(1, physics.dizzyIntensity.value))
-        let seatY = CatPhysics.seatAnchor.y - scruff * 22.0 + lie * 16.0 + dizzy * 14.0
+        let lieS = lie * lie * (3.0 - 2.0 * lie)
+        // Dizzy has 2 stages: [0.12..0.50] upright stars + spiral eyes + wobble; [0.50..1.0] smooth sideways collapse onto keyboard!
+        let dizzyFallRaw = max(0, min(1, (dizzy - 0.50) / 0.50))
+        let dizzyFall = dizzyFallRaw * dizzyFallRaw * (3.0 - 2.0 * dizzyFallRaw)
+        let preWobble = max(0, min(1, (dizzy - 0.12) / 0.38)) * (1.0 - dizzyFall)
+
+        let seatX = CatPhysics.seatAnchor.x + physics.bodyShiftX.value
+        let seatY = CatPhysics.seatAnchor.y - scruff * 22.0 + lieS * 10.0
 
         // 1. Mini White Mouse (left of keyboard)
         drawMouse(in: ctx, physics: physics, theme: settings.keyboardTheme)
@@ -135,20 +141,33 @@ enum CatRenderer {
         // 2. Mini Angled 65% Mechanical Keyboard + Dynamic Keycap Glow
         drawKeyboard(in: ctx, physics: physics, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme, showLegends: settings.showKeyLegends, flipped: flipped, marquee: settings.keyboardMarquee)
 
-        let headCenter = headPosition(physics, coat: coat)
+        // Rigid-body wobble (pre-dizzy) -> natural sideways collapse onto the keyboard (dizzy >= 0.5)
+        let fallAngle: CGFloat = -dizzyFall * 1.46 + sin(physics.time * 9.5) * 0.16 * preWobble
+        let fallShiftX: CGFloat = dizzyFall * 56.0
+        let fallShiftY: CGFloat = dizzyFall * 20.0
+        let baseHead = headPosition(physics, coat: coat)
+        let localHeadCenter = CGPoint(x: baseHead.x - lieS * 4.0, y: baseHead.y + lieS * 60.0)
         let drawBlackRim = (coat == .classicBlack)
+        let tailInFront = (physics.tailTyping.value >= 0.5) || (lieS >= 0.45)
+
+        ctx.saveGState()
+        if dizzy > 0.01 {
+            ctx.translateBy(x: seatX + fallShiftX, y: seatY + fallShiftY)
+            ctx.rotate(by: fallAngle)
+            ctx.translateBy(x: -seatX, y: -seatY)
+        }
 
         // Pass 1: crisp outer white outline for Classic Black Cat so it pops cleanly on dark backgrounds with zero internal seams
         if drawBlackRim {
-            if physics.tailTyping.value < 0.5 {
+            if !tailInFront {
                 drawTail(in: ctx, physics: physics, coat: coat, outlineOnly: true)
             }
-            drawEarsLayer(in: ctx, center: headCenter, physics: physics, coat: coat, outlineOnly: true)
+            drawEarsLayer(in: ctx, center: localHeadCenter, physics: physics, coat: coat, outlineOnly: true)
             drawUnifiedSilhouette(
                 in: ctx,
                 seatX: seatX,
                 seatY: seatY,
-                headCenter: headCenter,
+                headCenter: localHeadCenter,
                 breath: breath,
                 physics: physics,
                 coat: coat,
@@ -156,19 +175,19 @@ enum CatRenderer {
             )
         }
 
-        if physics.tailTyping.value < 0.5 {
+        if !tailInFront {
             drawTail(in: ctx, physics: physics, coat: coat)
         }
 
         // 4. 3D-Projected Ears (behind crown silhouette so Siamese seal-point ears emerge cleanly from cream skull!)
-        drawEarsLayer(in: ctx, center: headCenter, physics: physics, coat: coat)
+        drawEarsLayer(in: ctx, center: localHeadCenter, physics: physics, coat: coat)
 
         // 5. Unified C1-Continuous Head + Neck + Pear Torso Silhouette + Siamese 2.5D Face Mask
         drawUnifiedSilhouette(
             in: ctx,
             seatX: seatX,
             seatY: seatY,
-            headCenter: headCenter,
+            headCenter: localHeadCenter,
             breath: breath,
             physics: physics,
             coat: coat
@@ -180,14 +199,50 @@ enum CatRenderer {
         }
 
         // 7. 2.5D Turning Head Features: Luminous Eyes & Whiskers
-        drawHeadFeatures(in: ctx, center: headCenter, physics: physics, eyeTheme: settings.eyeTheme, coat: coat)
+        drawHeadFeatures(in: ctx, center: localHeadCenter, physics: physics, eyeTheme: settings.eyeTheme, coat: coat)
 
         // 8. Front Arms / Paws (over torso & keyboard/mouse with crisp separation outlines / Siamese chocolate socks!)
         drawFrontPaws(in: ctx, seatX: seatX, seatY: seatY, breath: breath, physics: physics, coat: coat)
 
-        if physics.tailTyping.value >= 0.5 {
+        if tailInFront {
             if drawBlackRim { drawTail(in: ctx, physics: physics, coat: coat, outlineOnly: true) }
             drawTail(in: ctx, physics: physics, coat: coat)
+        }
+
+        ctx.restoreGState()
+
+        // Upright orbiting golden dizzy stars floating right above the head (appear FIRST before falling!)
+        if dizzy > 0.10 {
+            let relX = localHeadCenter.x - seatX
+            let relY = localHeadCenter.y - seatY
+            let worldHeadX = seatX + fallShiftX + relX * cos(fallAngle) - relY * sin(fallAngle)
+            let worldHeadY = seatY + fallShiftY + relX * sin(fallAngle) + relY * cos(fallAngle)
+            let dAlpha = min(1.0, (dizzy - 0.10) / 0.22)
+            let starLift: CGFloat = 42.0 + dizzyFall * 10.0
+            ctx.saveGState()
+            ctx.translateBy(x: worldHeadX, y: worldHeadY - starLift)
+            for i in 0..<3 {
+                let ang = physics.dizzyPhase * 0.85 + CGFloat(i) * (.pi * 2.0 / 3.0)
+                let sx = cos(ang) * 26.0
+                let sy = sin(ang) * 6.5
+                let r: CGFloat = 4.4 * (0.75 + 0.25 * sin(ang))
+                ctx.saveGState()
+                ctx.translateBy(x: sx, y: sy)
+                ctx.rotate(by: physics.dizzyPhase + CGFloat(i))
+                ctx.setFillColor(NSColor(calibratedRed: 1.0, green: 0.86, blue: 0.22, alpha: 0.96 * dAlpha).cgColor)
+                let star = CGMutablePath()
+                for k in 0..<8 {
+                    let rad = (k % 2 == 0) ? r : r * 0.42
+                    let a = CGFloat(k) * .pi * 0.25
+                    let pt = CGPoint(x: cos(a) * rad, y: sin(a) * rad)
+                    if k == 0 { star.move(to: pt) } else { star.addLine(to: pt) }
+                }
+                star.closeSubpath()
+                ctx.addPath(star)
+                ctx.fillPath()
+                ctx.restoreGState()
+            }
+            ctx.restoreGState()
         }
 
         // 8. Floating Mechanical Keycap Badges (keyboard + mouse clicks)
@@ -737,8 +792,8 @@ enum CatRenderer {
         let seatX = CatPhysics.seatAnchor.x + physics.bodyShiftX.value
         let scruff = max(0, min(1, physics.scruffDrag.value))
         let lie = max(0, min(1, physics.lieIntensity.value))
-        let dizzy = max(0, min(1, physics.dizzyIntensity.value))
-        let seatY = CatPhysics.seatAnchor.y - scruff * 22.0 + lie * 16.0 + dizzy * 14.0
+        let lieS = lie * lie * (3.0 - 2.0 * lie)
+        let seatY = CatPhysics.seatAnchor.y - scruff * 22.0 + lieS * 10.0
         let p = physics.tailPhase
         let hunt = max(0, min(1, physics.huntIntensity.value))
         let agility = max(0, min(1, physics.tailAgility.value))
@@ -748,23 +803,37 @@ enum CatRenderer {
         let huntDrop = hunt * 14.0
 
         // Signature low sweep out to the right, then playful upward curl at the tip!
-        let root = CGPoint(x: seatX + 34, y: seatY - 6)
+        let baseRoot = CGPoint(x: seatX + 34, y: seatY - 6)
         let reach = max(0, min(1, physics.tailTyping.value))
         let target = physics.tailTip.point
-        let flickScale = 1.0 - reach
+        let flickScale = (1.0 - reach) * (1.0 - lieS)
         let fx = physics.tailFlick.point.x * flickScale
         let fy = physics.tailFlick.point.y * flickScale
         let curl = physics.tailCurl.value * flickScale
-        let c1 = CGPoint(x: seatX + 64 + 12 * reach + fx * 0.25, y: seatY + 2 + wag1 * 0.35 + huntDrop * 0.4 - 18 * reach + fy * 0.22 + curl * 0.35)
+        let baseC1 = CGPoint(x: seatX + 64 + 12 * reach + fx * 0.25, y: seatY + 2 + wag1 * 0.35 + huntDrop * 0.4 - 18 * reach + fy * 0.22 + curl * 0.35)
         let idleC2 = CGPoint(x: seatX + 66 + wag2 * 0.4 + fx * 0.65 - curl * 0.45, y: seatY - 26 + wag1 * 0.7 + huntDrop + fy * 0.60 - curl * 0.55)
         let idleTip = CGPoint(x: seatX + 91 + wag2 * 0.5 + fx, y: seatY - 30 + wag1 * 0.85 + huntDrop + fy)
-        let c2 = CGPoint(x: idleC2.x + (target.x + 24 - idleC2.x) * reach, y: idleC2.y + (target.y - 30 - idleC2.y) * reach)
-        let tip = CGPoint(x: idleTip.x + (target.x - idleTip.x) * reach, y: idleTip.y + (target.y - idleTip.y) * reach)
+        let baseC2 = CGPoint(x: idleC2.x + (target.x + 24 - idleC2.x) * reach, y: idleC2.y + (target.y - 30 - idleC2.y) * reach)
+        let baseTip = CGPoint(x: idleTip.x + (target.x - idleTip.x) * reach, y: idleTip.y + (target.y - idleTip.y) * reach)
+
+        // When curling up to sleep, tail sweeps smoothly around the front to wrap cozily around the cat ball!
+        let sleepWag = sin(p * 0.6) * 2.0
+        let wrapRoot = CGPoint(x: seatX + 40, y: seatY - 2)
+        let wrapC1 = CGPoint(x: seatX + 54, y: seatY + 13)
+        let wrapC2 = CGPoint(x: seatX + 14, y: seatY + 17)
+        let wrapTip = CGPoint(x: seatX - 28, y: seatY + 8 + sleepWag)
+
+        let root = CGPoint(x: baseRoot.x + (wrapRoot.x - baseRoot.x) * lieS, y: baseRoot.y + (wrapRoot.y - baseRoot.y) * lieS)
+        let c1 = CGPoint(x: baseC1.x + (wrapC1.x - baseC1.x) * lieS, y: baseC1.y + (wrapC1.y - baseC1.y) * lieS)
+        let c2 = CGPoint(x: baseC2.x + (wrapC2.x - baseC2.x) * lieS, y: baseC2.y + (wrapC2.y - baseC2.y) * lieS)
+        let tip = CGPoint(x: baseTip.x + (wrapTip.x - baseTip.x) * lieS, y: baseTip.y + (wrapTip.y - baseTip.y) * lieS)
         return (root, c1, c2, tip)
     }
 
     private static func drawTail(in ctx: CGContext, physics: CatPhysics, coat: CatCoatTheme, outlineOnly: Bool = false) {
         let (root, c1, c2, tip) = tailCurve(physics)
+        let lie = max(0, min(1, physics.lieIntensity.value))
+        let lieS = lie * lie * (3.0 - 2.0 * lie)
 
         ctx.saveGState()
         if outlineOnly {
@@ -787,6 +856,23 @@ enum CatRenderer {
         ctx.addCurve(to: tip, control1: c1, control2: c2)
         let tailLine = ctx.path
         ctx.strokePath()
+        // Crisp upper separation rim on wrapped sleeping tail so it stands out cleanly against the curled torso!
+        if lieS > 0.35 {
+            let rAlpha = min(1.0, (lieS - 0.35) / 0.45) * 0.72
+            let rimCol = (coat == .siamese) ? siameseCrease : creaseColor(coat)
+            ctx.saveGState()
+            ctx.setStrokeColor(rimCol.withAlphaComponent(rAlpha).cgColor)
+            ctx.setLineWidth(1.45)
+            ctx.setLineCap(.round)
+            ctx.move(to: CGPoint(x: root.x - 4, y: root.y - 3))
+            ctx.addCurve(
+                to: CGPoint(x: tip.x + 2, y: tip.y - 4.5),
+                control1: CGPoint(x: c1.x - 6, y: c1.y - 5.5),
+                control2: CGPoint(x: c2.x, y: c2.y - 5.5)
+            )
+            ctx.strokePath()
+            ctx.restoreGState()
+        }
         if patterned(coat), let line = tailLine {
             ctx.saveGState()
             ctx.addPath(line.copy(strokingWithWidth: 11, lineCap: .round, lineJoin: .round, miterLimit: 10))
@@ -833,8 +919,10 @@ enum CatRenderer {
         }
 
         let cB = cos(bTilt), sB = sin(bTilt)
-        let sy = physics.bodySquash.value
-        let sx = 1.0 + (1.0 - sy) * 0.55
+        let lie = max(0, min(1, physics.lieIntensity.value))
+        let lieS = lie * lie * (3.0 - 2.0 * lie)
+        let sy = physics.bodySquash.value * (1.0 - lieS * 0.42)
+        let sx = (1.0 + (1.0 - physics.bodySquash.value) * 0.55) * (1.0 + lieS * 0.03)
         func B(_ lx: CGFloat, _ ly: CGFloat) -> CGPoint {
             let rx = lx * sx
             let ry = ly * sy
@@ -1248,29 +1336,6 @@ enum CatRenderer {
             ctx.restoreGState()
         }
 
-        let dizzy = max(0, min(1, physics.dizzyIntensity.value))
-        if dizzy > 0.25 {
-            let dAlpha = min(1.0, (dizzy - 0.25) / 0.35)
-            ctx.saveGState()
-            for i in 0..<3 {
-                let ang = physics.dizzyPhase * 0.65 + CGFloat(i) * (.pi * 2.0 / 3.0)
-                let sx = cos(ang) * 32.0
-                let sy = -38.0 + sin(ang) * 7.5
-                let starR: CGFloat = 3.8 + sin(ang) * 1.0
-                ctx.setFillColor(NSColor(calibratedRed: 1.0, green: 0.85, blue: 0.22, alpha: 0.92 * dAlpha).cgColor)
-                let sp = CGMutablePath()
-                sp.move(to: CGPoint(x: sx, y: sy - starR))
-                sp.addQuadCurve(to: CGPoint(x: sx + starR, y: sy), control: CGPoint(x: sx + starR * 0.25, y: sy - starR * 0.25))
-                sp.addQuadCurve(to: CGPoint(x: sx, y: sy + starR), control: CGPoint(x: sx + starR * 0.25, y: sy + starR * 0.25))
-                sp.addQuadCurve(to: CGPoint(x: sx - starR, y: sy), control: CGPoint(x: sx - starR * 0.25, y: sy + starR * 0.25))
-                sp.addQuadCurve(to: CGPoint(x: sx, y: sy - starR), control: CGPoint(x: sx - starR * 0.25, y: sy - starR * 0.25))
-                sp.closeSubpath()
-                ctx.addPath(sp)
-                ctx.fillPath()
-            }
-            ctx.restoreGState()
-        }
-
         ctx.restoreGState()
     }
 
@@ -1483,9 +1548,9 @@ enum CatRenderer {
         ctx.translateBy(x: proj.pt.x, y: proj.pt.y)
         ctx.scaleBy(x: foreshortenX, y: foreshortenY)
 
-        // Mode 0: Dizzy spinning spiral eyes (@ @) after 10s of rapid mouse shaking!
+        // Mode 0: Dizzy spinning spiral eyes (@ @) — appear AFTER initial golden stars warning (>0.28)!
         let dizzy = max(0, min(1, physics.dizzyIntensity.value))
-        if dizzy > 0.25 {
+        if dizzy > 0.28 {
             ctx.setFillColor(NSColor(calibratedRed: 0.98, green: 0.98, blue: 0.96, alpha: 0.95).cgColor)
             ctx.fillEllipse(in: CGRect(x: -11.5, y: -11.0, width: 23.0, height: 22.0))
             ctx.setStrokeColor(NSColor(calibratedRed: 0.14, green: 0.14, blue: 0.18, alpha: 0.95).cgColor)
@@ -1709,12 +1774,17 @@ enum CatRenderer {
         // Attach to the transformed chest, below the moving face rather than its white blaze.
         let isSiamese = (coat == .siamese)
         let siameseLift: CGFloat = isSiamese ? -3.0 : 0.0
-        let idleTopY: CGFloat = isSiamese ? seatY - 31 : seatY - 30
-        let idleTopX: CGFloat = isSiamese ? 16.5 : 18.0
-        let idleBotX: CGFloat = isSiamese ? 15.0 : 16.0
+        let lie = max(0, min(1, physics.lieIntensity.value))
+        let lieS = lie * lie * (3.0 - 2.0 * lie)
+        // When curling into a cozy sleeping ball, tuck front legs neatly inward underneath the chin (揣手手)!
+        let idleTopY: CGFloat = (isSiamese ? seatY - 31 : seatY - 30) + lieS * 24.0
+        let idleTopX: CGFloat = (isSiamese ? 16.5 : 18.0) - lieS * 5.0
+        let idleBotX: CGFloat = (isSiamese ? 15.0 : 16.0) - lieS * 4.5
+        let idleBotY: CGFloat = seatY + 12.0 - lieS * 4.0
         let shX: CGFloat = isSiamese ? 18.5 : 20.0
         func shoulder(_ x: CGFloat) -> CGPoint {
-            let sy = physics.bodySquash.value, sx = 1 + (1 - sy) * 0.55
+            let sy = physics.bodySquash.value * (1.0 - lieS * 0.42)
+            let sx = (1.0 + (1.0 - physics.bodySquash.value) * 0.55) * (1.0 + lieS * 0.03)
             let c = cos(physics.bodyTilt.value), s = sin(physics.bodyTilt.value)
             let faceBottom = 126 + siameseLift + physics.headOffsetY.value + physics.headPitch.value * 4.8 + breath * 1.1 + 42
             return CGPoint(x: seatX + x*sx*c + 58*sy*s,
@@ -1725,7 +1795,9 @@ enum CatRenderer {
 
         // Left arm
         if lDist < 6.0 && !physics.leftPawOnMouse && !physics.leftPawTyping {
-            drawIdleFrontLeg(in: ctx, top: CGPoint(x: seatX - idleTopX, y: idleTopY), bottom: CGPoint(x: seatX - idleBotX, y: seatY + 12), isLeft: true, coat: coat)
+            if lieS < 0.78 {
+                drawIdleFrontLeg(in: ctx, top: CGPoint(x: seatX - idleTopX, y: idleTopY), bottom: CGPoint(x: seatX - idleBotX, y: idleBotY), isLeft: true, coat: coat)
+            }
         } else {
             let mid = CGPoint(
                 x: (leftShoulder.x + lPos.x) * 0.5 - (physics.leftPawOnMouse ? 8 : 4),
@@ -1746,7 +1818,9 @@ enum CatRenderer {
 
         // Right arm
         if rDist < 6.0 && !physics.rightPawTyping {
-            drawIdleFrontLeg(in: ctx, top: CGPoint(x: seatX + idleTopX, y: idleTopY), bottom: CGPoint(x: seatX + idleBotX, y: seatY + 12), isLeft: false, coat: coat)
+            if lieS < 0.78 {
+                drawIdleFrontLeg(in: ctx, top: CGPoint(x: seatX + idleTopX, y: idleTopY), bottom: CGPoint(x: seatX + idleBotX, y: idleBotY), isLeft: false, coat: coat)
+            }
         } else {
             let mid = CGPoint(
                 x: (rightShoulder.x + rPos.x) * 0.5 + 4,

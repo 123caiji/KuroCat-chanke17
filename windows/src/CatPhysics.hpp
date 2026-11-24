@@ -502,6 +502,11 @@ public:
             dizzyTimer_ = std::max(0.0f, dizzyTimer_ - dt);
             dizzyIntensity.target = 1.0f;
             dizzyPhase += dt * 7.5f;
+        } else if (fastMouseDuration_ > 6.8f) {
+            // Stage 2 (6.8s -> 10.0s): Pre-dizzy warning — stars appear first, then spiral eyes & upright wobble!
+            float pre = std::min(1.0f, (fastMouseDuration_ - 6.8f) / 3.2f);
+            dizzyIntensity.target = pre * 0.48f;
+            dizzyPhase += dt * 7.5f;
         } else {
             dizzyIntensity.target = 0.0f;
         }
@@ -598,16 +603,16 @@ public:
             rightPawTyping = false;
             leftPawOnMouse = false;
         } else if (dizzy > 0.35f) {
-            leftPaw.setTarget({ SeatAnchor.x + 26.0f, 226.0f });
-            rightPaw.setTarget({ SeatAnchor.x + 62.0f, 232.0f });
+            leftPaw.setTarget(LeftPawRest);
+            rightPaw.setTarget(RightPawRest);
             hindFoot.setTarget(HindFootRest);
             hindFootActive.target = 0.0f;
             leftPawTyping = false;
             rightPawTyping = false;
             leftPawOnMouse = false;
         } else if (lie > 0.45f) {
-            leftPaw.setTarget({ SeatAnchor.x - 32.0f, 230.0f });
-            rightPaw.setTarget({ SeatAnchor.x + 28.0f, 230.0f });
+            leftPaw.setTarget(LeftPawRest);
+            rightPaw.setTarget(RightPawRest);
             hindFoot.setTarget(HindFootRest);
             hindFootActive.target = 0.0f;
             leftPawTyping = false;
@@ -695,11 +700,11 @@ public:
             targetShiftX = (avgX - 184.0f) * 0.14f;
             targetBodyTilt = (avgX - 184.0f) * 0.0011f;
         }
-        bodyShiftX.target = std::clamp(targetShiftX, -16.0f, 16.0f) + dizzy * 48.0f;
-        bodyTilt.target = std::clamp(targetBodyTilt, -0.12f, 0.12f) + scruffSwing.value * scruff + dizzy * 0.46f;
-        bodySquash.target = 1.0f - hunt * 0.11f + scruff * 0.16f - lie * 0.22f - dizzy * 0.14f;
+        bodyShiftX.target = std::clamp(targetShiftX, -16.0f, 16.0f);
+        bodyTilt.target = std::clamp(targetBodyTilt, -0.12f, 0.12f) + scruffSwing.value * scruff;
+        bodySquash.target = 1.0f - hunt * 0.11f + scruff * 0.16f;
         headOffsetY.target = ((leftPawTyping || rightPawTyping) ? 3.5f : (sleepiness * 5.0f + hunt * 10.5f))
-            - scruff * 10.0f + lie * 34.0f + dizzy * 22.0f;
+            - scruff * 10.0f;
         earFold.target = std::max(petHeadIntensity * 0.7f, petBodyIntensity * 0.45f) + sleepiness * 0.25f - hunt * 0.18f
             + scruff * 0.35f + anger * 0.45f + dizzy * 0.35f;
         earTwitch.target = 0.0f;
@@ -751,7 +756,7 @@ public:
         headPitch.step(dt, headStiff, headDamp);
 
         if (now - lastPetTime_ > 0.28) {
-            headTilt.target = bodyTilt.target * 0.45f + headYaw.value * (0.11f + hunt * 0.05f) - headYaw.value * headPitch.value * 0.04f;
+            headTilt.target = bodyTilt.target * 0.45f + headYaw.value * (0.11f + hunt * 0.05f) - headYaw.value * headPitch.value * 0.04f + lie * 0.12f;
         }
         headTilt.step(dt, 130.0f, 16.0f);
 
