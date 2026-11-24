@@ -1456,7 +1456,7 @@ private:
                 PointF( rx + 2.0f, -ry + (isLeft ? drop : 1.0f)),
                 PointF(-rx - 2.0f, -ry + (isLeft ? 1.0f : drop))
             };
-            Color browCol = (coat == CatCoatTheme::Siamese) ? siamesePoint(255) : furColor(coat);
+            Color browCol = (coat == CatCoatTheme::Siamese) ? siamesePoint(255) : (coat == CatCoatTheme::Dazed ? rgb(0x4E5792) : (coat == CatCoatTheme::Tabby ? tabby::brown() : bodyColor(coat)));
             SolidBrush browBrush(browCol);
             g.FillPolygon(&browBrush, browPts, 4);
         }
