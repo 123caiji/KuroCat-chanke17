@@ -185,10 +185,7 @@ private:
     static Gdiplus::Color limbColor(CatCoatTheme c) { return c == CatCoatTheme::OrangeWhite ? rgb(0xD8AA73) : bodyColor(c); }
     static Gdiplus::Color pawColor(CatCoatTheme c) { return patterned(c) ? rgb(0xF2EEE4) : (c == CatCoatTheme::Siamese ? siamesePoint() : catBlack()); }
     static Gdiplus::Color earTailColor(CatCoatTheme c) { return c == CatCoatTheme::Siamese ? siamesePoint() : limbColor(c); }
-    static Gdiplus::Color creaseColor(CatCoatTheme c, BYTE a = 255) {
-        if (c == CatCoatTheme::Dazed) return rgb(0x8D94CC, a);
-        return patterned(c) ? rgb(0x8B8171, (BYTE)(a*0.60f)) : contourMint(a);
-    }
+    static Gdiplus::Color creaseColor(CatCoatTheme c, BYTE a = 255) { return patterned(c) ? rgb(0x8B8171, (BYTE)(a*0.60f)) : contourMint(a); }
     static Gdiplus::PointF coatMarkPoint(CoatPoint p, bool headSurface, bool skull, CatCoatTheme coat, float seatX, float seatY, Pt head, const CatPhysics& physics, bool whiteSurface=false) {
         if (headSurface) {
             float radius=std::max(0.0f,1-p.x*p.x/(46*46)-p.y*p.y/(40*40));
@@ -1556,12 +1553,15 @@ private:
             pawRect.Inflate(pawR * 0.28f, pawR * 0.46f);
             if (frontPaw) {
                 drawDazedArm(g, limbPath, leftEdge, rightEdge, pawRect);
-                return;
+            } else {
+                SolidBrush fur(rgb(0xE3C99F));
+                g.FillPath(&fur, &limbPath);
+                drawDazedPaw(g, pawRect);
             }
-            SolidBrush sleeve(rgb(0x3D477E));
-            g.FillPath(&sleeve, &limbPath);
-            drawDazedPaw(g, pawRect);
-        } else if (coat != CatCoatTheme::Siamese) {
+            return;
+        }
+
+        if (coat != CatCoatTheme::Siamese) {
             SolidBrush b(patterned(coat) ? pawColor(coat) : limbColor(coat));
             g.FillPath(&b, &limbPath);
             if (!patterned(coat)) g.FillEllipse(&b, pawRect);
