@@ -719,6 +719,7 @@ private:
                 siameseCream(),
                 siameseLatte()
             );
+            bodyGrad.SetWrapMode(WrapModeTileFlipXY);
             g.FillPath(&bodyGrad, &path);
 
             // 2.5D Rotating Seal-Point "挖煤" Face Mask!
@@ -1113,10 +1114,28 @@ private:
                 g.FillPolygon(&cuff, points.data(), (INT)points.size()); g.FillEllipse(&cuff, pawRect);
             }
         } else {
-            LinearGradientBrush grad(PointF(start.x, start.y), PointF(end.x, end.y), siameseCream(0), siamesePoint(255));
-            Color cols[4] = { siameseCream(0), siameseCream(255), siameseMocha(255), siamesePoint(255) };
-            REAL pos[4] = { 0.0f, 0.16f, 0.48f, 1.0f };
-            grad.SetInterpolationColors(cols, pos, 4);
+            // Pad gradient endpoints beyond the rounded shoulder cap & paw tip and use
+            // WrapModeTileFlipXY; otherwise GDI+ LinearGradientBrush defaults to WrapModeTile
+            // and wraps pixels behind `start` to the dark `siamesePoint` end stop!
+            float gdx = end.x - start.x, gdy = end.y - start.y;
+            float span = std::max(1.0f, std::hypot(gdx, gdy));
+            float ux = gdx / span, uy = gdy / span;
+            float pad = std::max(startW, endW) + 6.0f;
+            float total = span + pad * 2.0f;
+            PointF gStart(start.x - ux * pad, start.y - uy * pad);
+            PointF gEnd(end.x + ux * pad, end.y + uy * pad);
+            LinearGradientBrush grad(gStart, gEnd, siameseCream(0), siamesePoint(255));
+            grad.SetWrapMode(WrapModeTileFlipXY);
+            Color cols[6] = { siameseCream(0), siameseCream(0), siameseCream(255), siameseMocha(255), siamesePoint(255), siamesePoint(255) };
+            REAL pos[6] = {
+                0.0f,
+                pad / total,
+                (pad + span * 0.16f) / total,
+                (pad + span * 0.48f) / total,
+                (pad + span) / total,
+                1.0f
+            };
+            grad.SetInterpolationColors(cols, pos, 6);
             g.FillPath(&grad, &limbPath);
 
             SolidBrush pawBrush(siamesePoint());
