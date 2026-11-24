@@ -37,7 +37,25 @@ public:
         return CatHitZone::None;
     }
 
+    /// Edit-mode hit test in unflipped 360x320 canvas coordinates:
+    /// 0..3 = corner resize handles, 10 = flip button, 11 = done button, 12 = inside edit box, -1 = outside.
+    static int hitTestEditOverlay(Pt p) {
+        if (p.x >= 92.0f && p.x <= 178.0f && p.y >= 10.0f && p.y <= 38.0f) return 10;
+        if (p.x >= 182.0f && p.x <= 268.0f && p.y >= 10.0f && p.y <= 38.0f) return 11;
+        constexpr Pt corners[4] = { {10.0f, 10.0f}, {350.0f, 10.0f}, {10.0f, 310.0f}, {350.0f, 310.0f} };
+        for (int i = 0; i < 4; ++i) {
+            if (std::hypot(p.x - corners[i].x, p.y - corners[i].y) <= 18.0f) return i;
+        }
+        if (p.x >= 6.0f && p.x <= 354.0f && p.y >= 6.0f && p.y <= 314.0f) return 12;
+        return -1;
+    }
+
     static void draw(cairo_t* cr, const CatPhysics& physics, const CatSettings& settings) {
+        cairo_save(cr);
+        if (settings.flipHorizontal) {
+            cairo_translate(cr, CatPhysics::CanvasWidth, 0.0);
+            cairo_scale(cr, -1.0, 1.0);
+        }
         cairo_set_antialias(cr, CAIRO_ANTIALIAS_BEST);
 
         float breath = std::sin(physics.time * 2.1f) * 1.6f;
@@ -69,6 +87,70 @@ public:
             drawFloatingKeycaps(cr, physics);
         }
         drawSparkles(cr, physics, settings.eyeTheme);
+        cairo_restore(cr);
+
+        if (settings.isEditMode) {
+            drawEditOverlay(cr, settings.isEnglish, settings.scale);
+        }
+    }
+
+    static void drawEditOverlay(cairo_t* cr, bool isEnglish, float scale) {
+        cairo_save(cr);
+        addRoundedRect(cr, 10.0, 10.0, 340.0, 300.0, 12.0);
+        cairo_set_source_rgba(cr, 0.16, 0.56, 0.98, 0.07);
+        cairo_fill_preserve(cr);
+        double dashes[2] = { 6.0, 4.0 };
+        cairo_set_dash(cr, dashes, 2, 0.0);
+        cairo_set_source_rgba(cr, 0.20, 0.62, 1.0, 0.92);
+        cairo_set_line_width(cr, 1.8);
+        cairo_stroke(cr);
+        cairo_set_dash(cr, nullptr, 0, 0.0);
+
+        constexpr Pt corners[4] = { {10.0f, 10.0f}, {350.0f, 10.0f}, {10.0f, 310.0f}, {350.0f, 310.0f} };
+        for (const auto& c : corners) {
+            cairo_new_path(cr);
+            cairo_arc(cr, c.x, c.y, 6.5, 0.0, PI * 2.0);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 1.0);
+            cairo_fill_preserve(cr);
+            cairo_set_source_rgba(cr, 0.14, 0.52, 0.96, 1.0);
+            cairo_set_line_width(cr, 2.0);
+            cairo_stroke(cr);
+        }
+
+        auto drawBtn = [&](double x, double y, double w, double h, const char* txt, bool primary) {
+            addRoundedRect(cr, x, y, w, h, 11.0);
+            if (primary) cairo_set_source_rgba(cr, 0.16, 0.54, 0.96, 0.95);
+            else cairo_set_source_rgba(cr, 0.14, 0.15, 0.19, 0.88);
+            cairo_fill_preserve(cr);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.28);
+            cairo_set_line_width(cr, 0.9);
+            cairo_stroke(cr);
+
+            cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+            cairo_set_font_size(cr, 10.5);
+            cairo_text_extents_t te = {};
+            cairo_text_extents(cr, txt, &te);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 1.0);
+            cairo_move_to(cr, x + (w - te.width) * 0.5 - te.x_bearing, y + (h - te.height) * 0.5 - te.y_bearing);
+            cairo_show_text(cr, txt);
+        };
+
+        drawBtn(94.0, 12.0, 82.0, 24.0, isEnglish ? "Flip" : "翻转", false);
+        drawBtn(184.0, 12.0, 82.0, 24.0, isEnglish ? "Done" : "完成", true);
+
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "%.0f%%", scale * 100.0f);
+        addRoundedRect(cr, 158.0, 290.0, 44.0, 16.0, 6.0);
+        cairo_set_source_rgba(cr, 0.12, 0.13, 0.16, 0.82);
+        cairo_fill(cr);
+        cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+        cairo_set_font_size(cr, 9.5);
+        cairo_text_extents_t te = {};
+        cairo_text_extents(cr, buf, &te);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 1.0);
+        cairo_move_to(cr, 180.0 - te.width * 0.5 - te.x_bearing, 298.0 - te.height * 0.5 - te.y_bearing);
+        cairo_show_text(cr, buf);
+        cairo_restore(cr);
     }
 
 private:
@@ -840,16 +922,102 @@ private:
             cairo_set_source_rgba(cr, 0.14, 0.09, 0.08, 0.95);
             cairo_fill(cr);
             cairo_set_source_rgba(cr, 0.78, 0.66, 0.56, 0.55);
-            cairo_set_line_width(cr, 1.05);
-            cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
-            cairo_new_path(cr);
-            cairo_move_to(cr, mL.x, mL.y);
-            quadCurveTo(cr, mL.x, mL.y, (mL.x + mM.x) * 0.5, mL.y + 1.6, mM.x, mM.y);
-            quadCurveTo(cr, mM.x, mM.y, (mM.x + mR.x) * 0.5, mR.y + 1.6, mR.x, mR.y);
-            cairo_stroke(cr);
+            if (physics.yawnAmount < 0.15f) {
+                cairo_set_line_width(cr, 1.05);
+                cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+                cairo_new_path(cr);
+                cairo_move_to(cr, mL.x, mL.y);
+                quadCurveTo(cr, mL.x, mL.y, (mL.x + mM.x) * 0.5, mL.y + 1.6, mM.x, mM.y);
+                quadCurveTo(cr, mM.x, mM.y, (mM.x + mR.x) * 0.5, mR.y + 1.6, mR.x, mR.y);
+                cairo_stroke(cr);
+            }
         }
         if (patterned(coat)) drawPatternedMuzzle(cr, yawRad, pitchRad);
+        if (physics.yawnAmount > 0.03f) drawYawnMouth(cr, yawRad, pitchRad, physics.yawnAmount, coat);
         drawWhiskers3D(cr, yawRad, pitchRad, physics, coat);
+        cairo_restore(cr);
+    }
+
+    static void drawYawnMouth(cairo_t* cr, float yawRad, float pitchRad, float yawn, CatCoatTheme coat) {
+        double y = std::clamp(yawn, 0.0f, 1.0f);
+        Pt c = projectHead3D(0.0f, (float)(16.2 + y * 2.2), 30.2f, yawRad, pitchRad);
+        double rx = 3.2 + y * 5.8;
+        double ry = 1.6 + y * 7.4;
+
+        auto mouthPath = [&]() {
+            cairo_new_path(cr);
+            cairo_move_to(cr, 0.0, -ry * 0.92);
+            cairo_curve_to(cr, rx * 0.68, -ry * 0.92, rx * 1.05, -ry * 0.42, rx, ry * 0.08);
+            cairo_curve_to(cr, rx * 0.95, ry * 0.72, rx * 0.50, ry, 0.0, ry);
+            cairo_curve_to(cr, -rx * 0.50, ry, -rx * 0.95, ry * 0.72, -rx, ry * 0.08);
+            cairo_curve_to(cr, -rx * 1.05, -ry * 0.42, -rx * 0.68, -ry * 0.92, 0.0, -ry * 0.92);
+            cairo_close_path(cr);
+        };
+
+        cairo_save(cr);
+        cairo_translate(cr, c.x, c.y);
+
+        mouthPath();
+        cairo_set_source_rgba(cr, 0.78, 0.19, 0.25, 0.98);
+        cairo_fill(cr);
+
+        cairo_save(cr);
+        mouthPath();
+        cairo_clip(cr);
+
+        cairo_save(cr);
+        cairo_translate(cr, 0.0, -ry * 0.26);
+        cairo_scale(cr, rx * 0.65, ry * 0.46);
+        cairo_set_source_rgba(cr, 0.55, 0.10, 0.16, 0.55);
+        cairo_arc(cr, 0.0, 0.0, 1.0, 0.0, PI * 2.0);
+        cairo_fill(cr);
+        cairo_restore(cr);
+
+        if (y > 0.22) {
+            double tAlpha = std::min(1.0, (y - 0.22) / 0.35);
+            cairo_set_source_rgba(cr, 0.95, 0.48, 0.55, 0.92 * tAlpha);
+            cairo_new_path(cr);
+            cairo_move_to(cr, -rx * 0.62, ry * 0.55);
+            quadCurveTo(cr, -rx * 0.62, ry * 0.55, -rx * 0.32, ry * 0.16, 0.0, ry * 0.36);
+            quadCurveTo(cr, 0.0, ry * 0.36, rx * 0.32, ry * 0.16, rx * 0.62, ry * 0.55);
+            quadCurveTo(cr, rx * 0.62, ry * 0.55, 0.0, ry * 1.25, -rx * 0.62, ry * 0.55);
+            cairo_close_path(cr);
+            cairo_fill(cr);
+        }
+
+        if (y > 0.28) {
+            double fScale = std::min(1.0, (y - 0.28) / 0.32);
+            cairo_set_source_rgba(cr, 1.0, 0.99, 0.96, 0.98);
+            double uBaseY = -ry * 0.80, uLen = (2.6 + y * 2.2) * fScale, uHW = (1.15 + y * 0.55) * fScale;
+            for (double sign : { -1.0, 1.0 }) {
+                double fx = sign * rx * 0.46;
+                cairo_new_path(cr);
+                cairo_move_to(cr, fx - uHW, uBaseY - 0.8);
+                cairo_line_to(cr, fx + uHW, uBaseY - 0.8);
+                cairo_line_to(cr, fx - sign * 0.25, uBaseY + uLen);
+                cairo_close_path(cr);
+                cairo_fill(cr);
+            }
+            double lBaseY = ry * 0.84, lLen = (1.6 + y * 1.3) * fScale, lHW = (0.85 + y * 0.35) * fScale;
+            for (double sign : { -1.0, 1.0 }) {
+                double fx = sign * rx * 0.36;
+                cairo_new_path(cr);
+                cairo_move_to(cr, fx - lHW, lBaseY + 0.8);
+                cairo_line_to(cr, fx + lHW, lBaseY + 0.8);
+                cairo_line_to(cr, fx - sign * 0.15, lBaseY - lLen);
+                cairo_close_path(cr);
+                cairo_fill(cr);
+            }
+        }
+        cairo_restore(cr);
+
+        mouthPath();
+        if (coat == CatCoatTheme::ClassicBlack || coat == CatCoatTheme::Siamese)
+            cairo_set_source_rgba(cr, 0.42, 0.08, 0.12, 0.85);
+        else
+            cairo_set_source_rgba(cr, 0.56, 0.22, 0.26, 0.72);
+        cairo_set_line_width(cr, 1.0);
+        cairo_stroke(cr);
         cairo_restore(cr);
     }
 

@@ -77,6 +77,16 @@ final class CatSettings {
     var obsCaptureMode: Int {
         didSet { UserDefaults.standard.set(obsCaptureMode, forKey: "KuroCat.OBSCaptureMode") }
     }
+    var flipHorizontal: Bool {
+        didSet { UserDefaults.standard.set(flipHorizontal, forKey: "KuroCat.FlipHorizontal") }
+    }
+    /// "zh" or "en"
+    var language: String {
+        didSet { UserDefaults.standard.set(language, forKey: "KuroCat.Language") }
+    }
+    var isEnglish: Bool { language == "en" }
+    /// Runtime-only interactive resize & flip bounding box (toggled via double-click or menu)
+    var isEditMode: Bool = false
     var petInteraction: Bool {
         didSet { UserDefaults.standard.set(petInteraction, forKey: "KuroCat.PetInteraction") }
     }
@@ -108,6 +118,8 @@ final class CatSettings {
         tailEasterEgg = d.object(forKey: "KuroCat.TailEasterEgg") as? Bool ?? true
         keyboardMarquee = d.object(forKey: "KuroCat.KeyboardMarquee") as? Bool ?? true
         obsCaptureMode = d.object(forKey: "KuroCat.OBSCaptureMode") as? Int ?? 0
+        flipHorizontal = d.object(forKey: "KuroCat.FlipHorizontal") as? Bool ?? false
+        language = d.string(forKey: "KuroCat.Language") ?? "zh"
         petInteraction = d.object(forKey: "KuroCat.PetInteraction") as? Bool ?? true
         fullClickThrough = d.object(forKey: "KuroCat.FullClickThrough") as? Bool ?? false
         fullScreenOverlay = d.object(forKey: "KuroCat.FullScreenOverlay") as? Bool ?? true
@@ -273,6 +285,10 @@ final class CatPhysics {
 
     // Sleepy idle state
     private(set) var sleepiness: CGFloat = 0 // 0 = awake, 1 = napping
+    private(set) var yawnAmount: CGFloat = 0 // 0 = closed, 1 = peak wide yawn before sleep
+    private var yawnTimer: CGFloat = 0
+    private var isYawning = false
+    private var hasYawnedThisIdle = false
     private var sleepZCooldown: CGFloat = 0
 
     // Recent key memory so fast single taps linger visibly (~140ms)
@@ -283,7 +299,7 @@ final class CatPhysics {
     // Computed eye closure (0 = wide open, 0.55 = half squint, 1 = fully closed)
     var effectiveEyeClosure: CGFloat {
         let petClose = max(petHeadIntensity * 1.0, petBodyIntensity * 0.62)
-        let sleepClose = sleepiness * 0.92
+        let sleepClose = max(sleepiness * 0.92, yawnAmount * 0.96)
         return min(1.0, max(blinkProgress, max(petClose, sleepClose)))
     }
 
@@ -350,8 +366,9 @@ final class CatPhysics {
             }
             pupilScale.target = 1.12
             earTwitch.velocity -= 2.2
-            if CatSettings.shared.showMouseBadges {
-                let label = button == 0 ? "左键" : (button == 1 ? "右键" : "中键")
+            if CatSettings.shared.showKeyBadges {
+                let en = CatSettings.shared.isEnglish
+                let label = button == 0 ? (en ? "LMB" : "左键") : (button == 1 ? (en ? "RMB" : "右键") : (en ? "MMB" : "中键"))
                 let pt = CGPoint(
                     x: CatPhysics.mouseBaseCenter.x + mouseOffset.point.x,
                     y: CatPhysics.mouseBaseCenter.y + mouseOffset.point.y - 6
@@ -527,9 +544,35 @@ final class CatPhysics {
             }
         }
 
-        // 2. Sleepy idle detection
+        // 2. Sleepy idle detection (+ cute yawn right before drifting off to sleep!)
         let lastAnyActivity = max(curLastKeyTime, max(curLastMouseMove, lastPetTime))
         let idleSeconds = lastAnyActivity > 0 ? (now - lastAnyActivity) : 0
+        if activeKeys.isEmpty && idleSeconds > 42 && !isYawning && !hasYawnedThisIdle {
+            isYawning = true
+            hasYawnedThisIdle = true
+            yawnTimer = 0
+        }
+        if !activeKeys.isEmpty || idleSeconds < 5 {
+            isYawning = false
+            hasYawnedThisIdle = false
+            yawnAmount = max(0, yawnAmount - dt * 6.0)
+        } else if isYawning {
+            yawnTimer += dt
+            if yawnTimer < 0.65 {
+                let u = yawnTimer / 0.65
+                yawnAmount = u * u * (3 - 2 * u)
+            } else if yawnTimer < 1.55 {
+                yawnAmount = 1.0
+            } else if yawnTimer < 2.35 {
+                let u = (2.35 - yawnTimer) / 0.80
+                yawnAmount = u * u * (3 - 2 * u)
+            } else {
+                yawnAmount = 0
+                isYawning = false
+            }
+        } else {
+            yawnAmount = max(0, yawnAmount - dt * 4.0)
+        }
         if activeKeys.isEmpty && idleSeconds > 45 {
             let targetSleep = min(1.0, CGFloat((idleSeconds - 45) / 35.0))
             sleepiness += (targetSleep - sleepiness) * dt * 1.5

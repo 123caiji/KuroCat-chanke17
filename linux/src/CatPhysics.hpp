@@ -41,6 +41,9 @@ struct CatSettings {
     bool tailEasterEgg = true;
     bool keyboardMarquee = true;
     int obsCaptureMode = 0; // 0 = off, 1 = OBS transparent window capture, 2 = OBS green screen (#00FF00)
+    bool flipHorizontal = false;
+    bool isEnglish = false;
+    bool isEditMode = false; // runtime-only interactive resize & flip box
     bool petInteraction = true;
     bool fullClickThrough = false;
     bool alwaysOnTop = true;
@@ -82,6 +85,8 @@ struct CatSettings {
                 else if (k == "tailEasterEgg") tailEasterEgg = (std::stoi(v) != 0);
                 else if (k == "keyboardMarquee") keyboardMarquee = (std::stoi(v) != 0);
                 else if (k == "obsCaptureMode") obsCaptureMode = std::clamp(std::stoi(v), 0, 2);
+                else if (k == "flipHorizontal") flipHorizontal = (std::stoi(v) != 0);
+                else if (k == "isEnglish") isEnglish = (std::stoi(v) != 0);
                 else if (k == "petInteraction") petInteraction = (std::stoi(v) != 0);
                 else if (k == "fullClickThrough") fullClickThrough = (std::stoi(v) != 0);
                 else if (k == "alwaysOnTop") alwaysOnTop = (std::stoi(v) != 0);
@@ -110,6 +115,8 @@ struct CatSettings {
           << "tailEasterEgg=" << (tailEasterEgg ? 1 : 0) << "\n"
           << "keyboardMarquee=" << (keyboardMarquee ? 1 : 0) << "\n"
           << "obsCaptureMode=" << obsCaptureMode << "\n"
+          << "flipHorizontal=" << (flipHorizontal ? 1 : 0) << "\n"
+          << "isEnglish=" << (isEnglish ? 1 : 0) << "\n"
           << "petInteraction=" << (petInteraction ? 1 : 0) << "\n"
           << "fullClickThrough=" << (fullClickThrough ? 1 : 0) << "\n"
           << "alwaysOnTop=" << (alwaysOnTop ? 1 : 0) << "\n"
@@ -220,10 +227,14 @@ public:
     float petBodyIntensity = 0.0f;
     int totalPetSessions = 0;
     float sleepiness = 0.0f;
+    float yawnAmount = 0.0f;
+    float yawnTimer_ = 0.0f;
+    bool isYawning_ = false;
+    bool hasYawnedThisIdle_ = false;
 
     float effectiveEyeClosure() const {
         float petClose = std::max(petHeadIntensity, petBodyIntensity * 0.62f);
-        float sleepClose = sleepiness * 0.92f;
+        float sleepClose = std::max(sleepiness * 0.92f, yawnAmount * 0.96f);
         return std::min(1.0f, std::max(blinkProgress_, std::max(petClose, sleepClose)));
     }
 
@@ -273,8 +284,10 @@ public:
             }
             pupilScale.target = 1.12f;
             earTwitch.velocity -= 2.2f;
-            if (settings.showMouseBadges) {
-                std::string lbl = (button == 0) ? "左键" : (button == 1 ? "右键" : "中键");
+            if (settings.showKeyBadges) {
+                std::string lbl = settings.isEnglish
+                    ? (button == 0 ? "LMB" : (button == 1 ? "RMB" : "MMB"))
+                    : ((button == 0) ? "左键" : (button == 1 ? "右键" : "中键"));
                 Pt pt = { MouseBaseCenter.x + mouseOffset.point().x, MouseBaseCenter.y + mouseOffset.point().y - 6.0f };
                 spawnFloatingKeycap(lbl, pt, now);
             }
@@ -393,6 +406,32 @@ public:
 
         double lastAny = std::max(engine.lastKeyActivityTime, std::max(engine.lastMouseMoveTime, lastPetTime_));
         double idleSec = lastAny > 0.0 ? (now - lastAny) : 0.0;
+        if (activeKeys.empty() && idleSec > 42.0 && !isYawning_ && !hasYawnedThisIdle_) {
+            isYawning_ = true;
+            hasYawnedThisIdle_ = true;
+            yawnTimer_ = 0.0f;
+        }
+        if (!activeKeys.empty() || idleSec < 5.0) {
+            isYawning_ = false;
+            hasYawnedThisIdle_ = false;
+            yawnAmount = std::max(0.0f, yawnAmount - dt * 6.0f);
+        } else if (isYawning_) {
+            yawnTimer_ += dt;
+            if (yawnTimer_ < 0.65f) {
+                float u = yawnTimer_ / 0.65f;
+                yawnAmount = u * u * (3.0f - 2.0f * u);
+            } else if (yawnTimer_ < 1.55f) {
+                yawnAmount = 1.0f;
+            } else if (yawnTimer_ < 2.35f) {
+                float u = (2.35f - yawnTimer_) / 0.80f;
+                yawnAmount = u * u * (3.0f - 2.0f * u);
+            } else {
+                yawnAmount = 0.0f;
+                isYawning_ = false;
+            }
+        } else {
+            yawnAmount = std::max(0.0f, yawnAmount - dt * 4.0f);
+        }
         if (activeKeys.empty() && idleSec > 45.0) {
             float targetSleep = std::min(1.0f, (float)((idleSec - 45.0) / 35.0));
             sleepiness += (targetSleep - sleepiness) * dt * 1.5f;
