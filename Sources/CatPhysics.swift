@@ -32,7 +32,7 @@ enum EyeColorTheme: String, CaseIterable {
     var primaryColor: NSColor {
         switch self {
         case .neonChartreuse: return NSColor(calibratedRed: 0.79, green: 0.95, blue: 0.25, alpha: 1.0) // #C9F240
-        case .siameseBlue:    return NSColor(calibratedRed: 0.64, green: 0.83, blue: 0.93, alpha: 1.0) // #A4D4EE 通透浅蓝
+        case .siameseBlue:    return NSColor(calibratedRed: 0.69, green: 0.855, blue: 0.95, alpha: 1.0) // #B0DAF2 通透浅淡冰蓝
         case .warmAmber:      return NSColor(calibratedRed: 0.98, green: 0.76, blue: 0.22, alpha: 1.0)
         case .iceCyan:        return NSColor(calibratedRed: 0.45, green: 0.92, blue: 0.96, alpha: 1.0)
         case .referenceHazel: return NSColor(calibratedRed: 218.0/255, green: 178.0/255, blue: 87.0/255, alpha: 1)

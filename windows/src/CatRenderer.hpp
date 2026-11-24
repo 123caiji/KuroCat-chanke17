@@ -22,7 +22,7 @@ public:
     static CatHitZone hitTest(Pt p, const CatPhysics& physics, CatCoatTheme coat = CatCoatTheme::ClassicBlack) {
         float cx = CatPhysics::SeatAnchor.x + physics.bodyShiftX.value;
         float breath = std::sin(physics.time * 2.1f) * 1.6f;
-        float siameseLift = (coat == CatCoatTheme::Siamese) ? -7.0f : 0.0f;
+        float siameseLift = (coat == CatCoatTheme::Siamese) ? -3.0f : 0.0f;
         Pt headCenter = { cx + physics.bodyTilt.value * 36.0f + physics.headYaw.value * 7.5f,
                           126.0f + siameseLift + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f };
 
@@ -48,7 +48,7 @@ public:
         float seatX = CatPhysics::SeatAnchor.x + physics.bodyShiftX.value;
         float seatY = CatPhysics::SeatAnchor.y;
 
-        float siameseLift = (settings.coatTheme == CatCoatTheme::Siamese) ? -7.0f : 0.0f;
+        float siameseLift = (settings.coatTheme == CatCoatTheme::Siamese) ? -3.0f : 0.0f;
         Pt headCenter = {
             seatX + physics.bodyTilt.value * 36.0f + physics.headYaw.value * 7.5f,
             126.0f + siameseLift + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f
@@ -93,12 +93,14 @@ private:
     static Gdiplus::Color catBlack(BYTE a = 255)      { return Gdiplus::Color(a, 22, 22, 24); }
     static Gdiplus::Color contourMint(BYTE a = 194)   { return Gdiplus::Color(a, 209, 235, 227); }
     static Gdiplus::Color whiskerWhite(BYTE a = 174)  { return Gdiplus::Color(a, 224, 230, 235); }
-    static Gdiplus::Color siameseCream(BYTE a = 255)  { return Gdiplus::Color(a, 241, 231, 213); }
-    static Gdiplus::Color siameseLatte(BYTE a = 255)  { return Gdiplus::Color(a, 221, 203, 177); }
-    static Gdiplus::Color siameseMocha(BYTE a = 255)  { return Gdiplus::Color(a, 115, 87, 69); }
-    static Gdiplus::Color siamesePoint(BYTE a = 255)  { return Gdiplus::Color(a, 45, 33, 27); }
-    static Gdiplus::Color siameseOutline(BYTE a = 224){ return Gdiplus::Color(a, 66, 48, 40); }
-    static Gdiplus::Color siameseWhisker(BYTE a = 174){ return Gdiplus::Color(a, 92, 69, 56); }
+    static Gdiplus::Color siameseCream(BYTE a = 255)   { return Gdiplus::Color(a, 246, 239, 228); }
+    static Gdiplus::Color siameseLatte(BYTE a = 255)   { return Gdiplus::Color(a, 234, 219, 200); }
+    static Gdiplus::Color siameseMocha(BYTE a = 255)   { return Gdiplus::Color(a, 106, 80, 65); }
+    static Gdiplus::Color siamesePoint(BYTE a = 255)   { return Gdiplus::Color(a, 53, 38, 31); }
+    static Gdiplus::Color siameseInnerEar(BYTE a = 255){ return Gdiplus::Color(a, 93, 70, 58); }
+    static Gdiplus::Color siameseOutline(BYTE a = 107) { return Gdiplus::Color(a, 173, 150, 128); }
+    static Gdiplus::Color siameseCrease(BYTE a = 138)  { return Gdiplus::Color(a, 141, 120, 103); }
+    static Gdiplus::Color siameseWhisker(BYTE a = 158) { return Gdiplus::Color(a, 122, 99, 83); }
 
     static bool patterned(CatCoatTheme c) { return c == CatCoatTheme::Shorthair || c == CatCoatTheme::OrangeWhite; }
     static Gdiplus::Color rgb(unsigned int hex, BYTE a = 255) { return Gdiplus::Color(a, (hex >> 16) & 255, (hex >> 8) & 255, hex & 255); }
@@ -134,7 +136,7 @@ private:
     static Gdiplus::Color eyePrimary(EyeColorTheme t, BYTE a = 255) {
         switch (t) {
             case EyeColorTheme::NeonChartreuse: return Gdiplus::Color(a, 201, 242, 64);
-            case EyeColorTheme::SiameseBlue:    return Gdiplus::Color(a, 164, 212, 238);
+            case EyeColorTheme::SiameseBlue:    return Gdiplus::Color(a, 176, 218, 242);
             case EyeColorTheme::WarmAmber:      return Gdiplus::Color(a, 250, 194, 56);
             case EyeColorTheme::IceCyan:        return Gdiplus::Color(a, 115, 235, 245);
             case EyeColorTheme::ReferenceHazel: return Gdiplus::Color(a, 218, 178, 87);
@@ -418,7 +420,7 @@ private:
         PointF c2(seatX + 66.0f + wag2 * 0.4f, seatY - 26.0f + wag1 * 0.7f + huntDrop);
         PointF tip(seatX + 91.0f + wag2 * 0.5f, seatY - 30.0f + wag1 * 0.85f + huntDrop);
 
-        Pen tailPen(earTailColor(coat), 11.0f);
+        Pen tailPen(earTailColor(coat), coat == CatCoatTheme::Siamese ? 9.5f : 11.0f);
         tailPen.SetStartCap(LineCapRound);
         tailPen.SetEndCap(LineCapRound);
         tailPen.SetLineJoin(LineJoinRound);
@@ -463,16 +465,16 @@ private:
         using namespace Gdiplus;
         float sign = isLeft ? -1.0f : 1.0f;
         bool isSiamese = (coat == CatCoatTheme::Siamese);
-        float foldAngle = sign * ((isSiamese ? 0.16f : 0.06f) + fold * 0.34f) + twitch;
-        float earLen = isSiamese ? 43.0f : 32.0f;
+        float foldAngle = sign * ((isSiamese ? 0.14f : 0.06f) + fold * 0.34f) + twitch;
+        float earLen = isSiamese ? 29.5f : 32.0f;
         float tipDx = std::sin(foldAngle) * earLen;
         float tipDy = -std::cos(foldAngle) * earLen;
 
-        Pt innerBase = projectHead3D(sign * (isSiamese ? 7.0f : 9.0f), isSiamese ? -17.0f : -16.0f, 0.0f, yawRad, pitchRad);
-        Pt outerBase = projectHead3D(sign * (isSiamese ? 34.5f : 35.0f), isSiamese ? -1.5f : -5.0f, -2.0f, yawRad, pitchRad);
-        Pt tip3D     = projectHead3D(sign * (isSiamese ? 25.5f : 24.5f) + tipDx, (isSiamese ? -21.0f : -20.0f) + tipDy, -3.0f, yawRad, pitchRad);
+        Pt innerBase = projectHead3D(sign * (isSiamese ? 10.0f : 9.0f), isSiamese ? -16.5f : -16.0f, 0.0f, yawRad, pitchRad);
+        Pt outerBase = projectHead3D(sign * (isSiamese ? 35.5f : 35.0f), isSiamese ? -4.5f : -5.0f, -2.0f, yawRad, pitchRad);
+        Pt tip3D     = projectHead3D(sign * (isSiamese ? 25.0f : 24.5f) + tipDx, (isSiamese ? -18.5f : -20.0f) + tipDy, -3.0f, yawRad, pitchRad);
 
-        float tipSpread = isSiamese ? 3.4f : 3.8f;
+        float tipSpread = isSiamese ? 4.2f : 3.8f;
         Pt tipL = { tip3D.x - sign * tipSpread, tip3D.y + 2.8f };
         Pt tipR = { tip3D.x + sign * tipSpread, tip3D.y + 3.2f };
 
@@ -484,6 +486,18 @@ private:
 
         SolidBrush b(earTailColor(coat));
         g.FillPath(&b, &ear);
+
+        if (isSiamese) {
+            Pt inI  = { innerBase.x + (tip3D.x - innerBase.x) * 0.24f + sign * 3.0f, innerBase.y + (tip3D.y - innerBase.y) * 0.16f };
+            Pt outI = { outerBase.x + (tip3D.x - outerBase.x) * 0.20f - sign * 3.8f, outerBase.y + (tip3D.y - outerBase.y) * 0.18f };
+            Pt tipI = { (innerBase.x + outerBase.x) * 0.16f + tip3D.x * 0.68f, (innerBase.y + outerBase.y) * 0.14f + tip3D.y * 0.72f + 2.5f };
+            GraphicsPath inner;
+            addQuadBezier(inner, inI, { (inI.x + tipI.x) * 0.5f - sign * 0.8f, (inI.y + tipI.y) * 0.5f }, tipI);
+            addQuadBezier(inner, tipI, { (outI.x + tipI.x) * 0.5f + sign * 1.2f, (outI.y + tipI.y) * 0.5f }, outI);
+            inner.CloseFigure();
+            SolidBrush ib(siameseInnerEar());
+            g.FillPath(&ib, &inner);
+        }
     }
 
     // MARK: - Unified C1-Continuous Cat Silhouette (+ Siamese 2.5D Face Mask)
@@ -511,33 +525,38 @@ private:
         bool isSiamese = (coat == CatCoatTheme::Siamese);
         float cheekShift = yaw * 3.0f;
         float crownDrop = pitch * 2.0f;
-        float cheekHalfW = isSiamese ? 37.5f : 42.5f;
-        float crownCtrlW = isSiamese ? 23.0f : 26.0f;
-        float crownBaseY = isSiamese ? -31.5f : -30.0f;
-        float hipHalfW = isSiamese ? 42.5f : 49.0f;
-        float waistCtrlW = isSiamese ? 43.5f : 51.5f;
-        float botOuterW = isSiamese ? 40.5f : 47.0f;
-        float botInnerW = isSiamese ? 31.0f : 36.0f;
-        float botHalfW = isSiamese ? 21.0f : 24.0f;
+        float cheekHalfW = 42.5f;
+        float crownCtrlW = isSiamese ? 25.0f : 26.0f;
+        float crownBaseY = isSiamese ? -29.5f : -30.0f;
+        float cheekY = isSiamese ? 6.5f : 5.0f;
+        float cheekCtrlTopY = isSiamese ? -13.0f : -14.0f;
+        float neckPinchX = isSiamese ? 6.5f : 2.5f;
+        float neckCtrlY = isSiamese ? 27.5f : 24.0f;
+        float hipHalfW = isSiamese ? 44.5f : 49.0f;
+        float waistCtrlW = isSiamese ? 41.0f : 51.5f;
+        float waistCtrlY = isSiamese ? -50.0f : -48.0f;
+        float botOuterW = isSiamese ? 42.0f : 47.0f;
+        float botInnerW = isSiamese ? 32.0f : 36.0f;
+        float botHalfW = isSiamese ? 22.0f : 24.0f;
         float leftCheekX = -cheekHalfW + cheekShift * 0.4f;
         float rightCheekX = cheekHalfW + cheekShift * 0.4f;
 
         PointF crown  = H(cheekShift * 0.2f, crownBaseY + crownDrop);
-        PointF rCheek = H(rightCheekX, 5.0f);
+        PointF rCheek = H(rightCheekX, cheekY);
         PointF rHip   = B(hipHalfW, -14.0f);
         PointF rBot   = B(botHalfW, 12.0f);
         PointF lBot   = B(-botHalfW, 12.0f);
         PointF lHip   = B(-hipHalfW, -14.0f);
-        PointF lCheek = H(leftCheekX, 5.0f);
+        PointF lCheek = H(leftCheekX, cheekY);
 
         GraphicsPath path;
-        path.AddBezier(crown, H(crownCtrlW + cheekShift * 0.3f, crownBaseY + crownDrop), H(rightCheekX + 1.5f, -14.0f), rCheek);
-        path.AddBezier(rCheek, H(rightCheekX - 2.5f, 24.0f), B(waistCtrlW, -48.0f + breath * 0.5f), rHip);
+        path.AddBezier(crown, H(crownCtrlW + cheekShift * 0.3f, crownBaseY + crownDrop), H(rightCheekX + 1.5f, cheekCtrlTopY), rCheek);
+        path.AddBezier(rCheek, H(rightCheekX - neckPinchX, neckCtrlY), B(waistCtrlW, waistCtrlY + breath * 0.5f), rHip);
         path.AddBezier(rHip, B(botOuterW, 5.0f), B(botInnerW, 12.0f), rBot);
         path.AddLine(rBot, lBot);
         path.AddBezier(lBot, B(-botInnerW, 12.0f), B(-botOuterW, 5.0f), lHip);
-        path.AddBezier(lHip, B(-waistCtrlW, -48.0f + breath * 0.5f), H(leftCheekX + 2.5f, 24.0f), lCheek);
-        path.AddBezier(lCheek, H(leftCheekX - 1.5f, -14.0f), H(-crownCtrlW + cheekShift * 0.3f, crownBaseY + crownDrop), crown);
+        path.AddBezier(lHip, B(-waistCtrlW, waistCtrlY + breath * 0.5f), H(leftCheekX + neckPinchX, neckCtrlY), lCheek);
+        path.AddBezier(lCheek, H(leftCheekX - 1.5f, cheekCtrlTopY), H(-crownCtrlW + cheekShift * 0.3f, crownBaseY + crownDrop), crown);
         path.CloseFigure();
 
         if (coat != CatCoatTheme::Siamese) {
@@ -566,9 +585,9 @@ private:
             // 2.5D Rotating Seal-Point "挖煤" Face Mask!
             float yawRad = yaw * 0.50f;
             float pitchRad = pitch * 0.36f;
-            Pt maskC = projectHead3D(0.0f, 2.5f, 27.0f, yawRad, pitchRad);
-            float maskSX = std::max(0.76f, std::cos(yawRad * 0.7f)) * 1.10f;
-            float maskSY = std::max(0.82f, std::cos(pitchRad * 0.7f)) * 0.85f;
+            Pt maskC = projectHead3D(0.0f, 3.0f, 27.0f, yawRad, pitchRad);
+            float maskSX = std::max(0.76f, std::cos(yawRad * 0.7f)) * 1.24f;
+            float maskSY = std::max(0.82f, std::cos(pitchRad * 0.7f)) * 0.88f;
 
             GraphicsState ms = g.Save();
             g.TranslateTransform(headCenter.x, headCenter.y);
@@ -577,18 +596,33 @@ private:
             g.ScaleTransform(maskSX, maskSY);
 
             GraphicsPath maskEllipse;
-            maskEllipse.AddEllipse(-28.5f, -28.5f, 57.0f, 57.0f);
+            maskEllipse.AddEllipse(-31.5f, -31.5f, 63.0f, 63.0f);
             PathGradientBrush maskBrush(&maskEllipse);
-            Color cols[4] = { Color(0, 115, 87, 69), Color(178, 115, 87, 69), siamesePoint(245), siamesePoint(255) };
-            REAL pos[4] = { 0.0f, 0.26f, 0.56f, 1.0f };
+            Color cols[4] = { siameseMocha(0), siameseMocha(158), siamesePoint(235), siamesePoint(255) };
+            REAL pos[4] = { 0.0f, 0.26f, 0.58f, 1.0f };
             maskBrush.SetInterpolationColors(cols, pos, 4);
             g.FillPath(&maskBrush, &maskEllipse);
-
             g.Restore(ms);
+
+            Pt muzC = projectHead3D(0.0f, 7.5f, 28.0f, yawRad, pitchRad);
+            GraphicsState ms2 = g.Save();
+            g.TranslateTransform(headCenter.x, headCenter.y);
+            g.RotateTransform(hTilt * RadToDeg);
+            g.TranslateTransform(muzC.x, muzC.y);
+            g.ScaleTransform(std::max(0.76f, std::cos(yawRad * 0.7f)) * 1.04f, std::max(0.82f, std::cos(pitchRad * 0.7f)) * 0.76f);
+            GraphicsPath muzEllipse;
+            muzEllipse.AddEllipse(-19.5f, -19.5f, 39.0f, 39.0f);
+            PathGradientBrush muzBrush(&muzEllipse);
+            Color mCols[3] = { siamesePoint(0), siamesePoint(216), siamesePoint(255) };
+            REAL mPos[3] = { 0.0f, 0.50f, 1.0f };
+            muzBrush.SetInterpolationColors(mCols, mPos, 3);
+            g.FillPath(&muzBrush, &muzEllipse);
+            g.Restore(ms2);
+
             g.Restore(cs);
 
-            // Clean subtle warm-cocoa outline so Siamese pops on white & dark wallpapers
-            Pen outPen(siameseOutline(), 1.5f);
+            // Ultra-soft plush rim on Siamese cream body
+            Pen outPen(siameseOutline(), 1.0f);
             g.DrawPath(&outPen, &path);
         }
 
@@ -643,6 +677,25 @@ private:
 
         drawEye3D(g, true, yawRad, pitchRad, physics, eyeTheme, coat);
         drawEye3D(g, false, yawRad, pitchRad, physics, eyeTheme, coat);
+        if (coat == CatCoatTheme::Siamese) {
+            Pt nose = projectHead3D(0.0f, 8.2f, 29.0f, yawRad, pitchRad);
+            Pt mL   = projectHead3D(-4.2f, 12.2f, 28.4f, yawRad, pitchRad);
+            Pt mM   = projectHead3D(0.0f, 11.2f, 28.8f, yawRad, pitchRad);
+            Pt mR   = projectHead3D(4.2f, 12.2f, 28.4f, yawRad, pitchRad);
+            GraphicsPath np;
+            addQuadBezier(np, { nose.x - 2.3f, nose.y - 1.1f }, { nose.x, nose.y - 1.6f }, { nose.x + 2.3f, nose.y - 1.1f });
+            addQuadBezier(np, { nose.x + 2.3f, nose.y - 1.1f }, { nose.x + 1.8f, nose.y + 0.6f }, { nose.x, nose.y + 1.5f });
+            addQuadBezier(np, { nose.x, nose.y + 1.5f }, { nose.x - 1.8f, nose.y + 0.6f }, { nose.x - 2.3f, nose.y - 1.1f });
+            np.CloseFigure();
+            SolidBrush nb(Color(242, 36, 23, 20));
+            g.FillPath(&nb, &np);
+            GraphicsPath mp;
+            addQuadBezier(mp, mL, { (mL.x + mM.x) * 0.5f, mL.y + 1.6f }, mM);
+            addQuadBezier(mp, mM, { (mM.x + mR.x) * 0.5f, mR.y + 1.6f }, mR);
+            Pen mpen(Color(140, 199, 168, 143), 1.05f);
+            mpen.SetStartCap(LineCapRound); mpen.SetEndCap(LineCapRound);
+            g.DrawPath(&mpen, &mp);
+        }
         drawWhiskers3D(g, yawRad, pitchRad, physics, coat);
         g.Restore(st);
     }
@@ -687,8 +740,9 @@ private:
         float hunt = std::clamp(physics.huntIntensity.value, 0.0f, 1.0f);
         g.RotateTransform(sign * (0.06f * (1.0f - hunt * 0.6f)) * RadToDeg);
 
-        float rx = 12.0f + hunt * 1.1f;
-        float ry = 10.8f + hunt * 1.8f;
+        bool isSiameseEye = (coat == CatCoatTheme::Siamese && eyeTheme == EyeColorTheme::SiameseBlue);
+        float rx = isSiameseEye ? (11.4f + hunt * 1.3f) : (12.0f + hunt * 1.1f);
+        float ry = isSiameseEye ? (9.8f + hunt * 2.0f) : (10.8f + hunt * 1.8f);
 
         GraphicsPath eyeClip;
         eyeClip.AddEllipse(-rx, -ry, rx * 2.0f, ry * 2.0f);
@@ -708,21 +762,12 @@ private:
         SolidBrush irisBrush(eyeCol);
         g.FillRectangle(&irisBrush, -rx - 1.0f, -ry - 1.0f, rx * 2.0f + 2.0f, ry * 2.0f + 2.0f);
         if (eyeTheme == EyeColorTheme::SiameseBlue) {
-            GraphicsPath irisPath;
-            irisPath.AddEllipse(-rx * 1.06f, -ry * 1.06f, rx * 2.12f, ry * 2.12f);
-            PathGradientBrush irisGrad(&irisPath);
-            irisGrad.SetCenterPoint(PointF(-rx * 0.14f, -ry * 0.18f));
-            Color iCols[4] = {
-                Color(255, 95, 152, 190),  // outer soft limbal ring
-                Color(255, 125, 184, 217), // soft misty blue
-                Color(255, 166, 214, 239), // pale watery sky blue
-                Color(255, 222, 242, 252)  // airy translucent center
-            };
-            REAL iPos[4] = { 0.0f, 0.14f, 0.44f, 1.0f };
-            irisGrad.SetInterpolationColors(iCols, iPos, 4);
-            g.FillPath(&irisGrad, &irisPath);
-            SolidBrush sheen(Color(97, 255, 255, 255));
-            g.FillEllipse(&sheen, -rx * 0.56f, -ry * 0.62f, rx * 0.58f, ry * 0.36f);
+            LinearGradientBrush irisGrad(PointF(0.0f, -ry - 1.0f), PointF(0.0f, ry + 1.0f), Color(255, 143, 196, 230), Color(255, 219, 241, 252));
+            irisGrad.SetWrapMode(WrapModeTileFlipXY);
+            Color iCols[3] = { Color(255, 143, 196, 230), Color(255, 181, 222, 245), Color(255, 219, 241, 252) };
+            REAL iPos[3] = { 0.0f, 0.55f, 1.0f };
+            irisGrad.SetInterpolationColors(iCols, iPos, 3);
+            g.FillRectangle(&irisGrad, -rx - 1.0f, -ry - 1.0f, rx * 2.0f + 2.0f, ry * 2.0f + 2.0f);
         }
 
         // Pupil morphs smoothly from vertical slit -> HUGE round black boba pupil!
@@ -749,12 +794,16 @@ private:
         SolidBrush pupilBrush(catBlack());
         g.FillEllipse(&pupilBrush, px - pupilW * 0.5f, py - pupilH * 0.5f, pupilW, pupilH);
 
-        // Tiny crisp white sparkle glint as boba hunting pupils dilate!
+        // Tiny crisp white sparkle glint as boba hunting pupils dilate (and delicate catchlight on Siamese blue eyes!)
         if (hunt > 0.25f) {
             BYTE ga = (BYTE)(std::min(1.0f, (hunt - 0.25f) / 0.55f) * 235.0f);
             float gr = 2.1f + hunt * 0.9f;
             SolidBrush gb(Color(ga, 255, 255, 255));
             g.FillEllipse(&gb, px - pupilW * 0.22f - gr * 0.5f, py - pupilH * 0.22f - gr * 0.5f, gr * 2.0f, gr * 2.0f);
+        } else if (eyeTheme == EyeColorTheme::SiameseBlue) {
+            float gr = 1.65f;
+            SolidBrush gb(Color(220, 255, 255, 255));
+            g.FillEllipse(&gb, px - 2.9f - gr, py - 3.6f - gr, gr * 2.0f, gr * 2.0f);
         }
 
         g.Restore(cs);
@@ -795,11 +844,11 @@ private:
         float rDist = std::hypot(rPos.x - CatPhysics::RightPawRest.x, rPos.y - CatPhysics::RightPawRest.y);
 
         bool isSiamese = (coat == CatCoatTheme::Siamese);
-        float siameseLift = isSiamese ? -7.0f : 0.0f;
-        float idleTopY = isSiamese ? (seatY - 34.0f) : (seatY - 30.0f);
-        float idleTopX = isSiamese ? 15.5f : 18.0f;
-        float idleBotX = isSiamese ? 14.0f : 16.0f;
-        float shX = isSiamese ? 17.5f : 20.0f;
+        float siameseLift = isSiamese ? -3.0f : 0.0f;
+        float idleTopY = isSiamese ? (seatY - 31.0f) : (seatY - 30.0f);
+        float idleTopX = isSiamese ? 16.5f : 18.0f;
+        float idleBotX = isSiamese ? 15.0f : 16.0f;
+        float shX = isSiamese ? 18.5f : 20.0f;
         float limbStartW = isSiamese ? 17.0f : 19.0f;
         float limbEndW = isSiamese ? 12.5f : 13.5f;
 
@@ -850,7 +899,7 @@ private:
             g.FillRectangle(&cuff, bottom.x-7.5f, bottom.y-13.0f, 15.0f, 13.0f);
             g.FillEllipse(&cuff, bottom.x-7.5f, bottom.y-5.0f, 15.0f, 10.0f);
         }
-        Pen p(coat == CatCoatTheme::Siamese ? siameseOutline(158) : creaseColor(coat), 1.45f);
+        Pen p(coat == CatCoatTheme::Siamese ? siameseCrease() : creaseColor(coat), 1.45f);
         p.SetStartCap(LineCapRound); p.SetEndCap(LineCapRound);
 
         GraphicsPath p1;

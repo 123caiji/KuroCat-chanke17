@@ -47,7 +47,7 @@
 
 namespace {
 
-constexpr const wchar_t* APP_VERSION = L"1.3.4";
+constexpr const wchar_t* APP_VERSION = L"1.3.5";
 constexpr const wchar_t* VERSION_PROP = L"KuroCatVersion"; // set on the tray owner window so newer builds can take over older ones
 constexpr const wchar_t* TRAY_OWNER_CLASS = L"KuroCatTrayOwnerClass";
 constexpr const wchar_t* OVERLAY_CLASS = L"KuroCatOverlayWindowClass";

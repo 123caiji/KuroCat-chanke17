@@ -59,10 +59,11 @@ for coat in [CatCoatTheme.classicBlack,.shorthair] {
   }
  }
 }
-// Verify redesigned Siamese (sleeker/taller proportions, larger ears, translucent pale blue eyes) renders cleanly in all states
+// Verify redesigned Siamese (sleeker proportions, big ears, translucent pale blue eyes) renders cleanly in all states
 for state in 0..<8 {
  let c = frame(.siamese, .siameseBlue, state)
  precondition(pixels(c).filter{$0 != 0}.count > 10000, "Empty Siamese render in state \(state)")
+ save(c, "siamese-\(state).png")
 }
 for (name,coat) in [("shorthair",CatCoatTheme.shorthair),("orangeWhite",.orangeWhite)] {
  for state in 0..<8 {
@@ -100,7 +101,7 @@ for coat in CatCoatTheme.allCases {
   let active=pixels(frame(coat,.referenceHazel,8,false,pose)),idle=pixels(frame(coat,.referenceHazel,9,false,pose))
   let yaw:CGFloat=pose % 2 == 0 ? -1 : 1, tilt:CGFloat=pose % 2 == 0 ? -0.15 : 0.15
   let pitch:CGFloat=pose % 4 < 2 ? -1 : 1
-  let cx=184+tilt*36+yaw*7.5,cy=126+(coat == .siamese ? -7.0 : 0.0)+14+pitch*4.8
+  let cx=184+tilt*36+yaw*7.5,cy=126+(coat == .siamese ? -3.0 : 0.0)+14+pitch*4.8
   for y in Int((cy-35)*2)..<Int((cy+40)*2) {
    for x in Int((cx-52)*2)..<Int((cx+52)*2) {
     let i=(y*720+x)*4
