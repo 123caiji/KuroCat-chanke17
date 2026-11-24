@@ -270,7 +270,7 @@ final class CatPhysics {
     private(set) var tailPhase: CGFloat = 0
     private var nextBlinkTime: CGFloat = 3.2
     private var blinkProgress: CGFloat = 0 // 0 = open, 1 = closed
-    private var isBlinking = false
+    private(set) var isBlinking = false
     private var blinkTimer: CGFloat = 0
 
     // Petting state
@@ -287,7 +287,7 @@ final class CatPhysics {
     private(set) var sleepiness: CGFloat = 0 // 0 = awake, 1 = napping
     private(set) var yawnAmount: CGFloat = 0 // 0 = closed, 1 = peak wide yawn before sleep
     private var yawnTimer: CGFloat = 0
-    private var isYawning = false
+    private(set) var isYawning = false
     private var hasYawnedThisIdle = false
     private var sleepZCooldown: CGFloat = 0
 
@@ -302,6 +302,8 @@ final class CatPhysics {
         let sleepClose = max(sleepiness * 0.92, yawnAmount * 0.96)
         return min(1.0, max(blinkProgress, max(petClose, sleepClose)))
     }
+
+    var breathingOffset: CGFloat { sin(time * 2.1) * 1.6 }
 
     /// True when eyes should draw the signature glowing lime horizontal closed-eye lines
     var isHappyClosedEyes: Bool {

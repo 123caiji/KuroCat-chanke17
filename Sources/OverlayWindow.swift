@@ -1,6 +1,64 @@
 import Foundation
 import AppKit
 
+private struct IdleFrame {
+    struct Appearance: Equatable {
+        let coat: CatCoatTheme
+        let keyboard: KeyboardTheme
+        let eyes: EyeColorTheme
+        let showsLegends: Bool
+        let size: CGSize
+        let flipped: Bool
+        let captureMode: Int
+        let showEditControls: Bool
+        let englishLabels: Bool
+    }
+
+    let appearance: Appearance
+    let hasEffects: Bool
+    let head: CGPoint
+    let tail: CGPoint
+    let tailBend: CGPoint
+    let leftPaw: CGPoint
+    let rightPaw: CGPoint
+    let eyeClosure: CGFloat
+    let headTurn: CGPoint
+    let headTilt: CGFloat
+
+    init(physics: CatPhysics, settings: CatSettings, size: CGSize) {
+        let coat = settings.coatTheme
+        appearance = Appearance(coat: coat, keyboard: settings.keyboardTheme, eyes: settings.eyeTheme,
+                                showsLegends: settings.showKeyLegends, size: size, flipped: settings.flipHorizontal,
+                                captureMode: settings.obsCaptureMode, showEditControls: settings.isEditMode,
+                                englishLabels: settings.isEnglish)
+        hasEffects = settings.keyboardMarquee || !physics.sparkles.isEmpty
+            || !physics.floatingKeycaps.isEmpty || !physics.keyGlow.isEmpty
+        head = CatRenderer.headPosition(physics, coat: coat)
+        let tailCurve = CatRenderer.tailCurve(physics)
+        tail = tailCurve.tip
+        tailBend = tailCurve.control2
+        leftPaw = physics.leftPaw.point
+        rightPaw = physics.rightPaw.point
+        eyeClosure = physics.effectiveEyeClosure
+        headTurn = CGPoint(x: physics.headYaw.value, y: physics.headPitch.value)
+        headTilt = physics.headTilt.value
+    }
+
+    func visiblyDiffers(from previous: IdleFrame) -> Bool {
+        if appearance != previous.appearance || hasEffects || previous.hasEffects { return true }
+        func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(a.x - b.x, a.y - b.y) }
+        // Estimate how far visible features moved in canvas coordinates, then convert to screen points.
+        let movement = max(distance(head, previous.head), distance(tail, previous.tail),
+                           distance(tailBend, previous.tailBend),
+                           distance(leftPaw, previous.leftPaw), distance(rightPaw, previous.rightPaw),
+                           abs(eyeClosure - previous.eyeClosure) * 40, distance(headTurn, previous.headTurn) * 24,
+                           abs(headTilt - previous.headTilt) * 52)
+        let scale = max(appearance.size.width / CatPhysics.canvasSize.width,
+                        appearance.size.height / CatPhysics.canvasSize.height)
+        return movement * scale >= 0.65
+    }
+}
+
 final class CatCanvasView: NSView {
     let physics = CatPhysics()
     var onRequestPermission: (() -> Void)?
@@ -14,6 +72,9 @@ final class CatCanvasView: NSView {
     private var dragStartScreenPt: CGPoint = .zero
     private var dragStartWindowOrigin: CGPoint = .zero
     private var isShowingOpenHand = false
+    private var lastDrawnFrame: IdleFrame?
+
+    var isDraggingOrResizing: Bool { isDragging || activeResizeCorner >= 0 }
 
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { false }
@@ -31,8 +92,14 @@ final class CatCanvasView: NSView {
         let status = InputEngine.shared.status
         CatRenderer.draw(in: ctx, physics: physics, showPermissionPill: status.needsAttention,
                          permissionPillText: status.permissionPillText)
-
+        lastDrawnFrame = IdleFrame(physics: physics, settings: CatSettings.shared, size: bounds.size)
         ctx.restoreGState()
+    }
+
+    func idleFrameNeedsDisplay() -> Bool {
+        guard let previous = lastDrawnFrame else { return true }
+        let current = IdleFrame(physics: physics, settings: CatSettings.shared, size: bounds.size)
+        return current.visiblyDiffers(from: previous)
     }
 
     func canvasPoint(fromScreenPoint screenPt: CGPoint) -> CGPoint? {
@@ -49,9 +116,7 @@ final class CatCanvasView: NSView {
     func updateHoverAndClickThrough() {
         guard let win = window else { return }
         let screenPt = NSEvent.mouseLocation
-        let showPill = InputEngine.shared.status.needsAttention
-
-        if isDragging || activeResizeCorner >= 0 {
+        if isDraggingOrResizing {
             win.ignoresMouseEvents = false
             return
         }
@@ -89,6 +154,7 @@ final class CatCanvasView: NSView {
         let catPt = CatSettings.shared.flipHorizontal
             ? CGPoint(x: CatPhysics.canvasSize.width - pt.x, y: pt.y)
             : pt
+        let showPill = InputEngine.shared.status.needsAttention
         let zone = CatRenderer.hitTest(point: catPt, physics: physics, showPermissionPill: showPill)
         physics.updateTailHover(canvasPoint: catPt)
 
