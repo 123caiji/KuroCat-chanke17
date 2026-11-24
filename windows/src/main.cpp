@@ -1,6 +1,16 @@
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0601
+#endif
+#ifndef WINVER
+#define WINVER 0x0601
+#endif
 #define NOMINMAX
+#ifndef UNICODE
 #define UNICODE
+#endif
+#ifndef _UNICODE
 #define _UNICODE
+#endif
 #include <windows.h>
 #include <shellapi.h>
 #include <winhttp.h>
@@ -9,7 +19,6 @@
 #include <wtsapi32.h>
 #include <string>
 #include <vector>
-#include <thread>
 #include <cmath>
 #include <cwchar>
 #include <algorithm>
@@ -17,6 +26,16 @@
 #include "InputEngine.hpp"
 #include "CatPhysics.hpp"
 #include "CatRenderer.hpp"
+
+#ifndef WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY
+#define WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY 4
+#endif
+#ifndef WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_1
+#define WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_1 0x00000200
+#endif
+#ifndef WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2
+#define WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 0x00000800
+#endif
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -28,7 +47,7 @@
 
 namespace {
 
-constexpr const wchar_t* APP_VERSION = L"1.3.3";
+constexpr const wchar_t* APP_VERSION = L"1.3.4";
 constexpr const wchar_t* VERSION_PROP = L"KuroCatVersion"; // set on the tray owner window so newer builds can take over older ones
 constexpr const wchar_t* TRAY_OWNER_CLASS = L"KuroCatTrayOwnerClass";
 constexpr const wchar_t* OVERLAY_CLASS = L"KuroCatOverlayWindowClass";
@@ -439,42 +458,102 @@ std::string fetchWorkBuddyPath(HINTERNET hConnect, LPCWSTR path) {
     return body;
 }
 
-void startAsyncUpdateCheck(HWND notifyHwnd, bool manual, int delayMs = 0) {
-    std::thread([notifyHwnd, manual, delayMs]() {
-        if (delayMs > 0) Sleep((DWORD)delayMs);
-        auto* res = new UpdateCheckResult();
-        res->manual = manual;
+HINTERNET openWinHttpSession(const std::wstring& ua) {
+    // Windows 8.1+ supports AUTOMATIC_PROXY; Windows 7 requires DEFAULT_PROXY.
+    HINTERNET hSession = WinHttpOpen(ua.c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!hSession) {
+        hSession = WinHttpOpen(ua.c_str(), WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    }
+    if (hSession) {
+        // Enable TLS 1.2 explicitly for Windows 7 SP1 (KB3140245) compatibility
+        DWORD protos = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_1 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1;
+        WinHttpSetOption(hSession, WINHTTP_OPTION_SECURE_PROTOCOLS, &protos, sizeof(protos));
+    }
+    return hSession;
+}
 
-        std::wstring ua = std::wstring(L"KuroCat/") + APP_VERSION;
-        HINTERNET hSession = WinHttpOpen(ua.c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-        if (hSession) {
-            WinHttpSetTimeouts(hSession, 8000, 8000, 8000, 8000);
-            HINTERNET hConnect = WinHttpConnect(hSession, L"kurocat-download.app.workbuddy.host", INTERNET_DEFAULT_HTTPS_PORT, 0);
-            if (hConnect) {
-                std::string body = fetchWorkBuddyPath(hConnect, L"/version.json?sharecode=JVAABIVZ7L");
-                std::string tag = extractJsonStringField(body, "tag_name");
-                std::string url = extractJsonStringField(body, "html_url");
+void enableBestDpiAwareness() {
+    // 1. Windows 10 1703+: Per-Monitor V2 DPI Awareness (dynamically loaded so Win7/8 won't fail to launch)
+    if (HMODULE hUser32 = GetModuleHandleW(L"user32.dll")) {
+        using SetDpiCtxFn = BOOL(WINAPI*)(HANDLE);
+        auto fn = reinterpret_cast<SetDpiCtxFn>(GetProcAddress(hUser32, "SetProcessDpiAwarenessContext"));
+        if (fn && fn(reinterpret_cast<HANDLE>(static_cast<INT_PTR>(-4)))) {
+            return;
+        }
+    }
+    // 2. Windows 8.1+: Per-Monitor DPI Awareness via shcore.dll
+    if (HMODULE hShcore = LoadLibraryW(L"shcore.dll")) {
+        using SetDpiAwareFn = HRESULT(WINAPI*)(int);
+        auto fn = reinterpret_cast<SetDpiAwareFn>(GetProcAddress(hShcore, "SetProcessDpiAwareness"));
+        bool ok = (fn && SUCCEEDED(fn(2)));
+        FreeLibrary(hShcore);
+        if (ok) return;
+    }
+    // 3. Windows Vista / 7: System DPI Awareness
+    if (HMODULE hUser32 = GetModuleHandleW(L"user32.dll")) {
+        using SetSysDpiFn = BOOL(WINAPI*)();
+        auto fn = reinterpret_cast<SetSysDpiFn>(GetProcAddress(hUser32, "SetProcessDPIAware"));
+        if (fn) fn();
+    }
+}
 
-                if (tag.empty()) {
-                    std::string html = fetchWorkBuddyPath(hConnect, L"/?sharecode=JVAABIVZ7L");
-                    tag = extractVersionFromHtml(html);
-                }
+struct UpdateCheckThreadParams {
+    HWND notifyHwnd;
+    bool manual;
+    int delayMs;
+};
 
-                if (!tag.empty()) {
-                    res->ok = true;
-                    res->latestTag = utf8ToWide(tag);
-                    res->releaseUrl = url.empty() ? UPDATE_PAGE_URL : utf8ToWide(url);
-                    res->hasUpdate = isSemVerNewer(res->latestTag, APP_VERSION);
-                }
-                WinHttpCloseHandle(hConnect);
+DWORD WINAPI updateCheckThreadProc(LPVOID param) {
+    auto* p = static_cast<UpdateCheckThreadParams*>(param);
+    HWND notifyHwnd = p->notifyHwnd;
+    bool manual = p->manual;
+    int delayMs = p->delayMs;
+    delete p;
+
+    if (delayMs > 0) Sleep((DWORD)delayMs);
+    auto* res = new UpdateCheckResult();
+    res->manual = manual;
+
+    std::wstring ua = std::wstring(L"KuroCat/") + APP_VERSION;
+    HINTERNET hSession = openWinHttpSession(ua);
+    if (hSession) {
+        WinHttpSetTimeouts(hSession, 8000, 8000, 8000, 8000);
+        HINTERNET hConnect = WinHttpConnect(hSession, L"kurocat-download.app.workbuddy.host", INTERNET_DEFAULT_HTTPS_PORT, 0);
+        if (hConnect) {
+            std::string body = fetchWorkBuddyPath(hConnect, L"/version.json?sharecode=JVAABIVZ7L");
+            std::string tag = extractJsonStringField(body, "tag_name");
+            std::string url = extractJsonStringField(body, "html_url");
+
+            if (tag.empty()) {
+                std::string html = fetchWorkBuddyPath(hConnect, L"/?sharecode=JVAABIVZ7L");
+                tag = extractVersionFromHtml(html);
             }
-            WinHttpCloseHandle(hSession);
-        }
 
-        if (!PostMessageW(notifyHwnd, WM_UPDATE_CHECK_DONE, 0, reinterpret_cast<LPARAM>(res))) {
-            delete res;
+            if (!tag.empty()) {
+                res->ok = true;
+                res->latestTag = utf8ToWide(tag);
+                res->releaseUrl = url.empty() ? UPDATE_PAGE_URL : utf8ToWide(url);
+                res->hasUpdate = isSemVerNewer(res->latestTag, APP_VERSION);
+            }
+            WinHttpCloseHandle(hConnect);
         }
-    }).detach();
+        WinHttpCloseHandle(hSession);
+    }
+
+    if (!PostMessageW(notifyHwnd, WM_UPDATE_CHECK_DONE, 0, reinterpret_cast<LPARAM>(res))) {
+        delete res;
+    }
+    return 0;
+}
+
+void startAsyncUpdateCheck(HWND notifyHwnd, bool manual, int delayMs = 0) {
+    auto* params = new UpdateCheckThreadParams{ notifyHwnd, manual, delayMs };
+    HANDLE hThread = CreateThread(nullptr, 0, updateCheckThreadProc, params, 0, nullptr);
+    if (hThread) {
+        CloseHandle(hThread);
+    } else {
+        delete params;
+    }
 }
 
 struct UpdateDownloadResult {
@@ -482,17 +561,13 @@ struct UpdateDownloadResult {
     std::wstring batPath;
 };
 
-void startInAppUpdate(AppState& app) {
-    if (app.isUpdating || !app.menuOwnerHwnd) return;
-    app.isUpdating = true;
-    HWND notifyHwnd = app.menuOwnerHwnd;
+DWORD WINAPI updateDownloadThreadProc(LPVOID param) {
+    HWND notifyHwnd = reinterpret_cast<HWND>(param);
+    auto* res = new UpdateDownloadResult();
+    std::string exeBytes;
 
-    std::thread([notifyHwnd]() {
-        auto* res = new UpdateDownloadResult();
-        std::string exeBytes;
-
-        std::wstring ua = std::wstring(L"KuroCat/") + APP_VERSION;
-        HINTERNET hSession = WinHttpOpen(ua.c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    std::wstring ua = std::wstring(L"KuroCat/") + APP_VERSION;
+    HINTERNET hSession = openWinHttpSession(ua);
         if (hSession) {
             WinHttpSetTimeouts(hSession, 10000, 10000, 30000, 60000);
             HINTERNET hConnect = WinHttpConnect(hSession, L"kurocat-download.app.workbuddy.host", INTERNET_DEFAULT_HTTPS_PORT, 0);
@@ -599,7 +674,18 @@ void startInAppUpdate(AppState& app) {
         if (!PostMessageW(notifyHwnd, WM_UPDATE_DOWNLOAD_DONE, 0, reinterpret_cast<LPARAM>(res))) {
             delete res;
         }
-    }).detach();
+    return 0;
+}
+
+void startInAppUpdate(AppState& app) {
+    if (app.isUpdating || !app.menuOwnerHwnd) return;
+    app.isUpdating = true;
+    HANDLE hThread = CreateThread(nullptr, 0, updateDownloadThreadProc, app.menuOwnerHwnd, 0, nullptr);
+    if (hThread) {
+        CloseHandle(hThread);
+    } else {
+        app.isUpdating = false;
+    }
 }
 
 void registerTrayIcon(AppState& app) {
@@ -1032,12 +1118,12 @@ void tickAndRender(AppState& app) {
                 (float)(cur.x - wr.left) / (float)w * CatPhysics::CanvasWidth,
                 (float)(cur.y - wr.top)  / (float)h * CatPhysics::CanvasHeight
             };
-            CatHitZone zone = CatRenderer::hitTest(cp, app.physics);
-            if (zone == CatHitZone::Head || zone == CatHitZone::Body) {
+            CatHitZone zone = CatRenderer::hitTest(cp, app.physics, app.settings.coatTheme);
+            if (zone == CatHitZone::Head) {
                 if (app.hasLastHover) {
                     float d = std::hypot(cp.x - app.lastHoverCanvas.x, cp.y - app.lastHoverCanvas.y);
                     if (d > 1.2f && d < 80.0f) {
-                        app.physics.registerPetStroke(cp, d, zone == CatHitZone::Head, app.settings);
+                        app.physics.registerPetStroke(cp, d, true, app.settings);
                     }
                 }
                 app.lastHoverCanvas = cp;
@@ -1351,8 +1437,8 @@ bool shutDownRunningInstance(HWND owner, DWORD timeoutMs) {
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
-    // Enable crisp Per-Monitor V2 DPI awareness on Windows 10/11
-    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    // Enable best available DPI awareness (Per-Monitor V2 on Win10/11, Per-Monitor on Win8.1, System DPI on Win7)
+    enableBestDpiAwareness();
 
     const int myVersion = versionToNumber(APP_VERSION);
     const bool forceTakeover = commandLineHasFlag(L"--takeover");   // admin relaunch

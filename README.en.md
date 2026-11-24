@@ -54,7 +54,7 @@ The 6-state previews are natively rendered by the app: Idle, Top-Left Look, Bott
 
 Download pre-built binaries from **[Releases](../../releases)** (built automatically via GitHub Actions):
 
-### 🍎 macOS (Universal: Apple Silicon & Intel · macOS 13+)
+### 🍎 macOS (Universal: Apple Silicon & Intel · macOS 11+)
 1. Download `KuroCat-macOS-universal.zip`, unzip it, and drag `KuroCat.app` into **Applications** (lives in the top menu bar, no Dock icon).
 2. On first launch, click the bottom prompt pill to open **System Settings → Privacy & Security → Input Monitoring**, enable `KuroCat`, then click **Restart KuroCat** from the menu bar to enable global typing & gaming capture.
 3. Supports one-click **Launch at Login**. When **Full Click-Through** is enabled, use the menu bar icon or **hold `⌥ Option` and right-click / drag the cat**.
@@ -66,7 +66,7 @@ chmod +x build.sh
 open KuroCat.app
 ```
 
-### 🪟 Windows (Windows 10 / 11 x64)
+### 🪟 Windows (Windows 7 SP1 / 8 / 10 / 11 x64)
 1. Download the single-file `KuroCat-Windows-x64.exe` (~220 KB, **zero external runtime dependencies**). Double-click to run; lives in the system tray.
 2. Right-click the cat or click the tray icon to switch skins, keyboard themes, scale, **Launch at Login**, or **Full Click-Through**.
 3. **4 ways to exit or open the menu while Full Click-Through is active**:

@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var isHandingOverToNewerCopy = false
 
     private var currentAppVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.3"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.4"
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -116,7 +116,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let bundleID = Bundle.main.bundleIdentifier else { return nil }
         let myURL = Bundle.main.bundleURL.standardizedFileURL
         var best: (url: URL, version: String)?
-        for url in NSWorkspace.shared.urlsForApplications(withBundleIdentifier: bundleID) {
+        let appURLs: [URL]
+        if #available(macOS 12.0, *) {
+            appURLs = NSWorkspace.shared.urlsForApplications(withBundleIdentifier: bundleID)
+        } else {
+            appURLs = (LSCopyApplicationURLsForBundleIdentifier(bundleID as CFString, nil)?.takeRetainedValue() as? [URL]) ?? []
+        }
+        for url in appURLs {
             let std = url.standardizedFileURL
             guard std != myURL, !std.path.contains("/.Trash/"),
                   let v = Self.shortVersion(ofAppAt: std),
@@ -183,8 +189,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let physics = overlayWindow.catView.physics
 
         // Status header
-        let statusPrefix = engine.status == .needsPermission ? "⚠️" : "🟢"
-        let statusItem = NSMenuItem(title: "\(statusPrefix) \(engine.status.rawValue)", action: engine.status == .needsPermission ? #selector(openInputMonitoringSettings) : nil, keyEquivalent: "")
+        let statusPrefix = engine.status.needsAttention ? "⚠️" : "🟢"
+        let statusItem = NSMenuItem(title: "\(statusPrefix) \(engine.status.rawValue)", action: engine.status.needsAttention ? #selector(openInputMonitoringSettings) : nil, keyEquivalent: "")
         statusItem.target = self
         menu.addItem(statusItem)
 
@@ -349,6 +355,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Actions
 
     @objc private func openInputMonitoringSettings() {
+        if InputEngine.shared.status == .needsRestart {
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.messageText = "已授权，键盘监听启动失败"
+            alert.informativeText = "请重启 KuroCat，让系统重新建立键盘监听。\n当前程序位置：\(Bundle.main.bundlePath)"
+            alert.addButton(withTitle: "重启 KuroCat")
+            alert.addButton(withTitle: "打开输入监控")
+            alert.addButton(withTitle: "取消")
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                relaunchApp()
+                return
+            }
+            if response != .alertSecondButtonReturn { return }
+        }
         InputEngine.shared.requestPermissionsAndOpenSettings()
     }
 

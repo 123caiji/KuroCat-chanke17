@@ -9,9 +9,10 @@ add_executable(KuroCat WIN32
     app.manifest
 )
 
-target_compile_definitions(KuroCat PRIVATE UNICODE _UNICODE NOMINMAX)
+target_compile_definitions(KuroCat PRIVATE UNICODE _UNICODE NOMINMAX _WIN32_WINNT=0x0601 WINVER=0x0601)
 if(MSVC)
     target_compile_options(KuroCat PRIVATE /O2 /utf-8 /EHsc /W3 /MT)
+    target_link_options(KuroCat PRIVATE /SUBSYSTEM:WINDOWS,6.01)
 else()
     target_compile_options(KuroCat PRIVATE -O2 -municode)
 endif()

@@ -331,12 +331,12 @@ public:
 
         // 2b. Fast Mouse Movement -> Hunting Mode (big round boba pupils + low crouch!)
         float mouseSpeed = std::hypot(engine.mouseVelocity.x, engine.mouseVelocity.y);
-        if (mouseSpeed > 460.0f && petHeadIntensity < 0.25f && petBodyIntensity < 0.25f) {
-            float boost = std::min(1.0f, (mouseSpeed - 460.0f) / 1100.0f);
-            huntIntensity.target = std::min(1.0f, huntIntensity.target + (0.45f + boost * 1.15f) * dt);
+        if (mouseSpeed > 1500.0f && petHeadIntensity < 0.25f && petBodyIntensity < 0.25f) {
+            float boost = std::min(1.0f, (mouseSpeed - 1500.0f) / 1800.0f);
+            huntIntensity.target = std::min(1.0f, huntIntensity.target + (0.40f + boost * 1.25f) * dt);
             sleepiness = 0.0f;
         } else {
-            huntIntensity.target = std::max(0.0f, huntIntensity.target - dt * 0.65f);
+            huntIntensity.target = std::max(0.0f, huntIntensity.target - dt * 1.15f);
         }
         huntIntensity.step(dt, 85.0f, 16.0f);
         float hunt = std::clamp(huntIntensity.value, 0.0f, 1.0f);

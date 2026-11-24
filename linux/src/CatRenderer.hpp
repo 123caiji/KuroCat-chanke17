@@ -18,14 +18,15 @@ struct RGBA {
 
 class CatRenderer {
 public:
-    static CatHitZone hitTest(Pt p, const CatPhysics& physics) {
+    static CatHitZone hitTest(Pt p, const CatPhysics& physics, CatCoatTheme coat = CatCoatTheme::ClassicBlack) {
         float cx = CatPhysics::SeatAnchor.x + physics.bodyShiftX.value;
         float breath = std::sin(physics.time * 2.1f) * 1.6f;
+        float siameseLift = (coat == CatCoatTheme::Siamese) ? -7.0f : 0.0f;
         Pt headCenter = { cx + physics.bodyTilt.value * 36.0f + physics.headYaw.value * 7.5f,
-                          126.0f + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f };
+                          126.0f + siameseLift + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f };
 
-        float hdx = (p.x - headCenter.x) / 48.0f;
-        float hdy = (p.y - headCenter.y) / 42.0f;
+        float hdx = (p.x - headCenter.x) / 44.0f;
+        float hdy = (p.y - headCenter.y) / 38.0f;
         if (hdx * hdx + hdy * hdy <= 1.0f) return CatHitZone::Head;
 
         float bdx = (p.x - cx) / 58.0f;
@@ -43,9 +44,10 @@ public:
         float seatX = CatPhysics::SeatAnchor.x + physics.bodyShiftX.value;
         float seatY = CatPhysics::SeatAnchor.y;
 
+        float siameseLift = (settings.coatTheme == CatCoatTheme::Siamese) ? -7.0f : 0.0f;
         Pt headCenter = {
             seatX + physics.bodyTilt.value * 36.0f + physics.headYaw.value * 7.5f,
-            126.0f + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f
+            126.0f + siameseLift + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f
         };
 
         drawMouse(cr, physics, settings.keyboardTheme);
@@ -120,7 +122,7 @@ private:
     static RGBA eyePrimary(EyeColorTheme t) {
         switch (t) {
             case EyeColorTheme::NeonChartreuse: return { 0.79, 0.95, 0.25, 1.0 };
-            case EyeColorTheme::SiameseBlue:    return { 0.37, 0.78, 0.98, 1.0 };
+            case EyeColorTheme::SiameseBlue:    return { 0.64, 0.83, 0.93, 1.0 };
             case EyeColorTheme::WarmAmber:      return { 0.98, 0.76, 0.22, 1.0 };
             case EyeColorTheme::IceCyan:        return { 0.45, 0.92, 0.96, 1.0 };
             case EyeColorTheme::ReferenceHazel: return {218.0/255,178.0/255,87.0/255,1};
@@ -460,15 +462,18 @@ private:
 
     static void drawEar3D(cairo_t* cr, bool isLeft, float yawRad, float pitchRad, float fold, float twitch, CatCoatTheme coat) {
         float sign = isLeft ? -1.0f : 1.0f;
-        float foldAngle = sign * (0.06f + fold * 0.34f) + twitch;
-        float tipDx = std::sin(foldAngle) * 32.0f;
-        float tipDy = -std::cos(foldAngle) * 32.0f;
+        bool isSiamese = (coat == CatCoatTheme::Siamese);
+        float foldAngle = sign * ((isSiamese ? 0.16f : 0.06f) + fold * 0.34f) + twitch;
+        float earLen = isSiamese ? 43.0f : 32.0f;
+        float tipDx = std::sin(foldAngle) * earLen;
+        float tipDy = -std::cos(foldAngle) * earLen;
 
-        Pt inB  = projectHead3D(sign * 9.0f, -16.0f, 0.0f, yawRad, pitchRad);
-        Pt outB = projectHead3D(sign * 35.0f, -5.0f, -2.0f, yawRad, pitchRad);
-        Pt tip  = projectHead3D(sign * 24.5f + tipDx, -20.0f + tipDy, -3.0f, yawRad, pitchRad);
-        Pt tipL = { tip.x - sign * 3.8f, tip.y + 2.8f };
-        Pt tipR = { tip.x + sign * 3.8f, tip.y + 3.2f };
+        Pt inB  = projectHead3D(sign * (isSiamese ? 7.0f : 9.0f), isSiamese ? -17.0f : -16.0f, 0.0f, yawRad, pitchRad);
+        Pt outB = projectHead3D(sign * (isSiamese ? 34.5f : 35.0f), isSiamese ? -1.5f : -5.0f, -2.0f, yawRad, pitchRad);
+        Pt tip  = projectHead3D(sign * (isSiamese ? 25.5f : 24.5f) + tipDx, (isSiamese ? -21.0f : -20.0f) + tipDy, -3.0f, yawRad, pitchRad);
+        float tipSpread = isSiamese ? 3.4f : 3.8f;
+        Pt tipL = { tip.x - sign * tipSpread, tip.y + 2.8f };
+        Pt tipR = { tip.x + sign * tipSpread, tip.y + 3.2f };
 
         cairo_new_path(cr);
         cairo_move_to(cr, inB.x, inB.y);
@@ -502,35 +507,44 @@ private:
             return { seatX + rx * cB - ry * sB, seatY + rx * sB + ry * cB };
         };
 
+        bool isSiamese = (coat == CatCoatTheme::Siamese);
         float cheekShift = yaw * 3.0f;
         float crownDrop = pitch * 2.0f;
-        float lCX = -42.5f + cheekShift * 0.4f;
-        float rCX =  42.5f + cheekShift * 0.4f;
+        float cheekHalfW = isSiamese ? 37.5f : 42.5f;
+        float crownCtrlW = isSiamese ? 23.0f : 26.0f;
+        float crownBaseY = isSiamese ? -31.5f : -30.0f;
+        float hipHalfW = isSiamese ? 42.5f : 49.0f;
+        float waistCtrlW = isSiamese ? 43.5f : 51.5f;
+        float botOuterW = isSiamese ? 40.5f : 47.0f;
+        float botInnerW = isSiamese ? 31.0f : 36.0f;
+        float botHalfW = isSiamese ? 21.0f : 24.0f;
+        float lCX = -cheekHalfW + cheekShift * 0.4f;
+        float rCX =  cheekHalfW + cheekShift * 0.4f;
 
-        Pt crown  = H(cheekShift * 0.2f, -30.0f + crownDrop);
+        Pt crown  = H(cheekShift * 0.2f, crownBaseY + crownDrop);
         Pt rCheek = H(rCX, 5.0f);
-        Pt rHip   = B(49.0f, -14.0f);
-        Pt rBot   = B(24.0f, 12.0f);
-        Pt lBot   = B(-24.0f, 12.0f);
-        Pt lHip   = B(-49.0f, -14.0f);
+        Pt rHip   = B(hipHalfW, -14.0f);
+        Pt rBot   = B(botHalfW, 12.0f);
+        Pt lBot   = B(-botHalfW, 12.0f);
+        Pt lHip   = B(-hipHalfW, -14.0f);
         Pt lCheek = H(lCX, 5.0f);
 
         auto buildPath = [&]() {
             Pt c1, c2;
             cairo_new_path(cr);
             cairo_move_to(cr, crown.x, crown.y);
-            c1 = H(26.0f + cheekShift * 0.3f, -30.0f + crownDrop); c2 = H(rCX + 1.5f, -14.0f);
+            c1 = H(crownCtrlW + cheekShift * 0.3f, crownBaseY + crownDrop); c2 = H(rCX + 1.5f, -14.0f);
             cairo_curve_to(cr, c1.x, c1.y, c2.x, c2.y, rCheek.x, rCheek.y);
-            c1 = H(rCX - 2.5f, 24.0f); c2 = B(51.5f, -48.0f + breath * 0.5f);
+            c1 = H(rCX - 2.5f, 24.0f); c2 = B(waistCtrlW, -48.0f + breath * 0.5f);
             cairo_curve_to(cr, c1.x, c1.y, c2.x, c2.y, rHip.x, rHip.y);
-            c1 = B(47.0f, 5.0f); c2 = B(36.0f, 12.0f);
+            c1 = B(botOuterW, 5.0f); c2 = B(botInnerW, 12.0f);
             cairo_curve_to(cr, c1.x, c1.y, c2.x, c2.y, rBot.x, rBot.y);
             cairo_line_to(cr, lBot.x, lBot.y);
-            c1 = B(-36.0f, 12.0f); c2 = B(-47.0f, 5.0f);
+            c1 = B(-botInnerW, 12.0f); c2 = B(-botOuterW, 5.0f);
             cairo_curve_to(cr, c1.x, c1.y, c2.x, c2.y, lHip.x, lHip.y);
-            c1 = B(-51.5f, -48.0f + breath * 0.5f); c2 = H(lCX + 2.5f, 24.0f);
+            c1 = B(-waistCtrlW, -48.0f + breath * 0.5f); c2 = H(lCX + 2.5f, 24.0f);
             cairo_curve_to(cr, c1.x, c1.y, c2.x, c2.y, lCheek.x, lCheek.y);
-            c1 = H(lCX - 1.5f, -14.0f); c2 = H(-26.0f + cheekShift * 0.3f, -30.0f + crownDrop);
+            c1 = H(lCX - 1.5f, -14.0f); c2 = H(-crownCtrlW + cheekShift * 0.3f, crownBaseY + crownDrop);
             cairo_curve_to(cr, c1.x, c1.y, c2.x, c2.y, crown.x, crown.y);
             cairo_close_path(cr);
         };
@@ -559,8 +573,8 @@ private:
             float yawRad = yaw * 0.50f;
             float pitchRad = pitch * 0.36f;
             Pt maskC = projectHead3D(0.0f, 2.5f, 27.0f, yawRad, pitchRad);
-            double maskSX = std::max(0.76, std::cos((double)yawRad * 0.7)) * 1.18;
-            double maskSY = std::max(0.82, std::cos((double)pitchRad * 0.7)) * 0.88;
+            double maskSX = std::max(0.76, std::cos((double)yawRad * 0.7)) * 1.10;
+            double maskSY = std::max(0.82, std::cos((double)pitchRad * 0.7)) * 0.85;
 
             cairo_save(cr);
             cairo_translate(cr, headCenter.x, headCenter.y);
@@ -568,13 +582,13 @@ private:
             cairo_translate(cr, maskC.x, maskC.y);
             cairo_scale(cr, maskSX, maskSY);
 
-            cairo_pattern_t* mp = cairo_pattern_create_radial(0, 0, 2.0, 0, 0, 31.0);
+            cairo_pattern_t* mp = cairo_pattern_create_radial(0, 0, 2.0, 0, 0, 28.5);
             cairo_pattern_add_color_stop_rgba(mp, 0.0,  siamesePoint.r, siamesePoint.g, siamesePoint.b, 1.0);
             cairo_pattern_add_color_stop_rgba(mp, 0.44, siamesePoint.r, siamesePoint.g, siamesePoint.b, 0.96);
             cairo_pattern_add_color_stop_rgba(mp, 0.74, siameseMocha.r, siameseMocha.g, siameseMocha.b, 0.70);
             cairo_pattern_add_color_stop_rgba(mp, 1.0,  siameseMocha.r, siameseMocha.g, siameseMocha.b, 0.0);
             cairo_set_source(cr, mp);
-            cairo_arc(cr, 0, 0, 31.0, 0, PI * 2.0);
+            cairo_arc(cr, 0, 0, 28.5, 0, PI * 2.0);
             cairo_fill(cr);
             cairo_pattern_destroy(mp);
 
@@ -593,13 +607,21 @@ private:
         cairo_rotate(cr, bTilt);
         cairo_scale(cr, sx, sy);
 
+        double leftHindCX = isSiamese ? -23.25 : -26.5;
+        double rightHindCX = isSiamese ? 23.25 : 26.5;
+        double hindRX = isSiamese ? 7.75 : 8.5;
+        double leftHindCY = isSiamese ? 9.5 : 8.5;
+        double leftHindRY = isSiamese ? 6.0 : 5.5;
+        double rightHindCY = (coat == CatCoatTheme::ClassicBlack || isSiamese) ? 10.75 : 8.5;
+        double rightHindRY = (coat == CatCoatTheme::ClassicBlack || isSiamese) ? 6.25 : 5.5;
+
         setCol(cr, pawColor(coat));
         cairo_new_path(cr);
-        fillEllipse(cr, -26.5, 8.5, 8.5, 5.5);
+        fillEllipse(cr, leftHindCX, leftHindCY, hindRX, leftHindRY);
         cairo_fill(cr);
         if (physics.hindFootActive.value < 0.35f) {
             cairo_new_path(cr);
-            fillEllipse(cr, 26.5, 8.5, 8.5, 5.5);
+            fillEllipse(cr, rightHindCX, rightHindCY, hindRX, rightHindRY);
             cairo_fill(cr);
         }
 
@@ -607,11 +629,11 @@ private:
         cairo_set_line_width(cr, 1.3);
         cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
         cairo_new_path(cr);
-        cairo_arc(cr, -26.5, 8.5, 7.5, 0.25, PI - 0.25);
+        cairo_arc(cr, leftHindCX, leftHindCY, 7.5, 0.25, PI - 0.25);
         cairo_stroke(cr);
         if (physics.hindFootActive.value < 0.35f) {
             cairo_new_path(cr);
-            cairo_arc(cr, 26.5, 8.5, 7.5, 0.25, PI - 0.25);
+            cairo_arc(cr, rightHindCX, rightHindCY, 7.5, 0.25, PI - 0.25);
             cairo_stroke(cr);
         }
         cairo_restore(cr);
@@ -700,6 +722,23 @@ private:
         setCol(cr, eyeCol);
         cairo_rectangle(cr, -rx - 1, -ry - 1, rx * 2 + 2, ry * 2 + 2);
         cairo_fill(cr);
+        if (eyeTheme == EyeColorTheme::SiameseBlue) {
+            double rMax = std::max(rx, ry) * 1.05;
+            cairo_pattern_t* ig = cairo_pattern_create_radial(-rx * 0.14, -ry * 0.18, 1.0, 0.0, 0.0, rMax);
+            cairo_pattern_add_color_stop_rgba(ig, 0.00, 0.87, 0.95, 0.99, 1.0);
+            cairo_pattern_add_color_stop_rgba(ig, 0.56, 0.65, 0.84, 0.935, 1.0);
+            cairo_pattern_add_color_stop_rgba(ig, 0.86, 0.49, 0.72, 0.85, 1.0);
+            cairo_pattern_add_color_stop_rgba(ig, 1.00, 0.38, 0.61, 0.76, 1.0);
+            cairo_set_source(cr, ig);
+            cairo_rectangle(cr, -rx - 1, -ry - 1, rx * 2 + 2, ry * 2 + 2);
+            cairo_fill(cr);
+            cairo_pattern_destroy(ig);
+
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.38);
+            cairo_new_path(cr);
+            fillEllipse(cr, -rx * 0.27, -ry * 0.44, rx * 0.29, ry * 0.18);
+            cairo_fill(cr);
+        }
 
         Pt gaze = physics.eyeGaze.point();
         double px = gaze.x * (4.2 - hunt * 1.2);
@@ -768,26 +807,35 @@ private:
         float lDist = std::hypot(lPos.x - CatPhysics::LeftPawRest.x, lPos.y - CatPhysics::LeftPawRest.y);
         float rDist = std::hypot(rPos.x - CatPhysics::RightPawRest.x, rPos.y - CatPhysics::RightPawRest.y);
 
+        bool isSiamese = (coat == CatCoatTheme::Siamese);
+        float siameseLift = isSiamese ? -7.0f : 0.0f;
+        float idleTopY = isSiamese ? (seatY - 34.0f) : (seatY - 30.0f);
+        float idleTopX = isSiamese ? 15.5f : 18.0f;
+        float idleBotX = isSiamese ? 14.0f : 16.0f;
+        float shX = isSiamese ? 17.5f : 20.0f;
+        float limbStartW = isSiamese ? 17.0f : 19.0f;
+        float limbEndW = isSiamese ? 12.5f : 13.5f;
+
         auto shoulder = [&](float x) -> Pt {
             float sy=physics.bodySquash.value, sx=1+(1-sy)*0.55f;
             float c=std::cos(physics.bodyTilt.value), s=std::sin(physics.bodyTilt.value);
-            float floor=126+physics.headOffsetY.value+physics.headPitch.value*4.8f+breath*1.1f+52;
+            float floor=126+siameseLift+physics.headOffsetY.value+physics.headPitch.value*4.8f+breath*1.1f+52;
             return {seatX+x*sx*c+43*sy*s, std::max(seatY+x*sx*s-43*sy*c,floor)};
         };
-        Pt lSh=shoulder(-20), rSh=shoulder(20);
+        Pt lSh=shoulder(-shX), rSh=shoulder(shX);
 
         if (lDist < 6.0f && !physics.leftPawOnMouse && !physics.leftPawTyping) {
-            drawIdleFrontLeg(cr, { seatX - 18.0f, seatY - 30.0f }, { seatX - 16.0f, seatY + 12.0f }, true, coat);
+            drawIdleFrontLeg(cr, { seatX - idleTopX, idleTopY }, { seatX - idleBotX, seatY + 12.0f }, true, coat);
         } else {
             Pt mid = { (lSh.x + lPos.x) * 0.5f - (physics.leftPawOnMouse ? 8.0f : 4.0f), (lSh.y + lPos.y) * 0.5f - 6.0f };
-            drawLimb(cr, lSh, mid, lPos, 19.0f, 13.5f, false, 0.78f, coat);
+            drawLimb(cr, lSh, mid, lPos, limbStartW, limbEndW, false, 0.78f, coat);
         }
 
         if (rDist < 6.0f && !physics.rightPawTyping) {
-            drawIdleFrontLeg(cr, { seatX + 18.0f, seatY - 30.0f }, { seatX + 16.0f, seatY + 12.0f }, false, coat);
+            drawIdleFrontLeg(cr, { seatX + idleTopX, idleTopY }, { seatX + idleBotX, seatY + 12.0f }, false, coat);
         } else {
             Pt mid = { (rSh.x + rPos.x) * 0.5f + 4.0f, (rSh.y + rPos.y) * 0.5f - 6.0f };
-            drawLimb(cr, rSh, mid, rPos, 19.0f, 13.5f, true, 0.78f, coat);
+            drawLimb(cr, rSh, mid, rPos, limbStartW, limbEndW, true, 0.78f, coat);
         }
     }
 
@@ -795,18 +843,18 @@ private:
         float sign = isLeft ? -1.0f : 1.0f;
         if (coat == CatCoatTheme::Siamese) {
             cairo_save(cr);
-            roundedRect(cr, bottom.x - 7.5, top.y, 15.0, bottom.y - top.y + 1.0, 6.5);
-            cairo_pattern_t* grad = cairo_pattern_create_linear(top.x, top.y, bottom.x, bottom.y + 2.0);
+            roundedRect(cr, bottom.x - 7.5, top.y, 15.0, bottom.y - top.y + 5.0, 6.5);
+            cairo_pattern_t* grad = cairo_pattern_create_linear(top.x, top.y, bottom.x, bottom.y + 5.0);
             cairo_pattern_add_color_stop_rgba(grad, 0.05, siameseCream.r, siameseCream.g, siameseCream.b, 0.0);
-            cairo_pattern_add_color_stop_rgba(grad, 0.52, siameseMocha.r, siameseMocha.g, siameseMocha.b, 0.75);
-            cairo_pattern_add_color_stop_rgba(grad, 0.85, siamesePoint.r, siamesePoint.g, siamesePoint.b, 1.0);
+            cairo_pattern_add_color_stop_rgba(grad, 0.50, siameseMocha.r, siameseMocha.g, siameseMocha.b, 0.75);
+            cairo_pattern_add_color_stop_rgba(grad, 0.82, siamesePoint.r, siamesePoint.g, siamesePoint.b, 1.0);
             cairo_set_source(cr, grad);
             cairo_fill(cr);
             cairo_pattern_destroy(grad);
             cairo_restore(cr);
         }
 
-        if (patterned(coat)) {
+        if (patterned(coat) || coat == CatCoatTheme::ClassicBlack) {
             setCol(cr,pawColor(coat));
             roundedRect(cr,bottom.x-7.5,bottom.y-13,15,18,6.5);cairo_fill(cr);
         }
