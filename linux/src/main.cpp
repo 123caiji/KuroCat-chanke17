@@ -1,5 +1,10 @@
 #include <gtk/gtk.h>
 #include <gdk/gdk.h>
+#include <gdk/gdkx.h>
+#include <X11/Xatom.h>
+#ifdef None
+#undef None
+#endif
 #include <cairo.h>
 #include <cmath>
 #include <cstdio>
@@ -15,6 +20,7 @@
 #include "InputEngine.hpp"
 #include "CatPhysics.hpp"
 #include "CatRenderer.hpp"
+#include "SkinLibrary.hpp"
 
 #include <sys/stat.h>
 #include <sys/file.h>
@@ -50,8 +56,17 @@ struct LinuxApp {
     CatSettings settings;
     InputEngine input;
     CatPhysics physics;
+    SkinLibrary skins;
+    GtkWidget* dressingRoom = nullptr;   // 「换装间」 import window (nullptr when closed)
+    GtkWidget* dressingStatus = nullptr;
+    GtkWidget* dressingSubtitle = nullptr;
+    GtkWidget* dressingPreview = nullptr;
+    GtkWidget* dressingDrop = nullptr;
+    bool dropHover = false;
 
     bool isVisible = true;
+    bool hiddenForFullscreen = false;
+    double lastFullscreenCheck = 0.0;
     bool isDragging = false;
     bool clickThroughTemporarilyUnlocked = false;
     double dragStartRootX = 0.0, dragStartRootY = 0.0;
@@ -668,6 +683,333 @@ static GdkPixbuf* createCatTrayPixbuf() {
     return pb;
 }
 
+// MARK: - Skins (built-in coats + imported .kurocat files)
+
+static const SkinSpec& activeSkin(const LinuxApp& app) {
+    if (!app.settings.customSkin.empty())
+        if (const SkinSpec* s = app.skins.find(app.settings.customSkin)) return *s;
+    return builtInSkin(app.settings.coatTheme);
+}
+
+static void showMessage(GtkMessageType type, const char* title, const std::string& detail) {
+    GtkWindow* parent = g_app && g_app->dressingRoom ? GTK_WINDOW(g_app->dressingRoom) : nullptr;
+    GtkWidget* dlg = gtk_message_dialog_new(parent, GTK_DIALOG_MODAL, type, GTK_BUTTONS_NONE, "%s", title);
+    if (!detail.empty()) gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dlg), "%s", detail.c_str());
+    gtk_dialog_add_button(GTK_DIALOG(dlg), "知道了", GTK_RESPONSE_OK);
+    gtk_window_set_title(GTK_WINDOW(dlg), "KuroCat 换装间");
+    gtk_window_set_keep_above(GTK_WINDOW(dlg), TRUE);
+    gtk_dialog_run(GTK_DIALOG(dlg));
+    gtk_widget_destroy(dlg);
+}
+
+static void refreshDressingRoom(LinuxApp& app);
+static void selectCustomSkin(LinuxApp& app, const std::string& id) {
+    app.settings.customSkin = id;
+    app.settings.save();
+    if (app.window) gtk_widget_queue_draw(app.drawArea);
+    refreshDressingRoom(app);
+}
+
+// 「换装间」 status line: kind 0 = neutral, 1 = success, 2 = error (colours come from the window CSS).
+static void setDressingStatus(LinuxApp& app, const std::string& text, int kind) {
+    if (!app.dressingStatus) return;
+    gtk_label_set_text(GTK_LABEL(app.dressingStatus), text.c_str());
+    GtkStyleContext* sc = gtk_widget_get_style_context(app.dressingStatus);
+    gtk_style_context_remove_class(sc, "ok");
+    gtk_style_context_remove_class(sc, "err");
+    if (kind == 1) gtk_style_context_add_class(sc, "ok");
+    if (kind == 2) gtk_style_context_add_class(sc, "err");
+}
+
+static void refreshDressingRoom(LinuxApp& app) {
+    if (app.dressingSubtitle) {
+        const SkinSpec& skin = activeSkin(app);
+        gchar* name = g_markup_escape_text(skin.name.c_str(), -1);
+        std::string markup = std::string("<span size='small' foreground='#A8998D'>正在穿</span>\n"
+                                         "<span size='large' weight='bold' foreground='#5A4A40'>") + name + "</span>";
+        g_free(name);
+        if (!skin.author.empty()) {
+            gchar* author = g_markup_escape_text(skin.author.c_str(), -1);
+            markup += std::string("\n<span size='small' foreground='#A8998D'>作者 ") + author + "</span>";
+            g_free(author);
+        }
+        gtk_label_set_markup(GTK_LABEL(app.dressingSubtitle), markup.c_str());
+    }
+    if (app.dressingPreview) gtk_widget_queue_draw(app.dressingPreview);
+}
+
+// Imports one file; returns true on success (and switches to it). Errors are shown in Chinese.
+static bool importSkinFile(LinuxApp& app, const std::string& path) {
+    std::string id, error;
+    if (!app.skins.importFile(path, id, error)) {
+        std::string base = path.substr(path.find_last_of('/') + 1);
+        // With 换装间 open the red status line explains it in place; a dialog is only for drops onto the cat.
+        if (app.dressingRoom) setDressingStatus(app, "没能导入「" + base + "」：" + error, 2);
+        else showMessage(GTK_MESSAGE_ERROR, "无法导入这个皮肤", "「" + base + "」：" + error);
+        return false;
+    }
+    selectCustomSkin(app, id);
+    const SkinSpec* s = app.skins.find(id);
+    std::string msg = "✓ 已换上「" + (s ? s->name : std::string("新皮肤")) + "」";
+    if (s && !s->author.empty()) msg += "（作者：" + s->author + "）";
+    setDressingStatus(app, msg, 1);
+    refreshDressingRoom(app);
+    return true;
+}
+
+// GTK finishes the drop itself (GTK_DEST_DEFAULT_ALL); the import (which may show a modal error
+// dialog) runs from an idle callback so the drag source is never left waiting.
+static void enableSkinDrop(GtkWidget* widget, bool gtkHighlight = true) {
+    gtk_drag_dest_set(widget, gtkHighlight ? GTK_DEST_DEFAULT_ALL : (GtkDestDefaults)(GTK_DEST_DEFAULT_MOTION | GTK_DEST_DEFAULT_DROP),
+                      nullptr, 0, GDK_ACTION_COPY);
+    gtk_drag_dest_add_uri_targets(widget);
+    g_signal_connect(widget, "drag-data-received", G_CALLBACK(+[](GtkWidget*, GdkDragContext*, gint, gint,
+        GtkSelectionData* data, guint, guint, gpointer) {
+        gchar** uris = gtk_selection_data_get_uris(data);
+        if (!uris) return;
+        g_idle_add(+[](gpointer p) -> gboolean {
+            gchar** list = (gchar**)p;
+            for (int i = 0; list[i] && g_app; ++i) {
+                gchar* file = g_filename_from_uri(list[i], nullptr, nullptr);
+                if (file) { importSkinFile(*g_app, file); g_free(file); }
+            }
+            g_strfreev(list);
+            return G_SOURCE_REMOVE;
+        }, uris);
+    }), nullptr);
+}
+
+static void chooseSkinFile() {
+    GtkWidget* chooser = gtk_file_chooser_dialog_new("选择 .kurocat 皮肤文件",
+        g_app->dressingRoom ? GTK_WINDOW(g_app->dressingRoom) : nullptr, GTK_FILE_CHOOSER_ACTION_OPEN,
+        "取消", GTK_RESPONSE_CANCEL, "导入", GTK_RESPONSE_ACCEPT, nullptr);
+    GtkFileFilter* filter = gtk_file_filter_new();
+    gtk_file_filter_set_name(filter, "KuroCat 皮肤 (*.kurocat)");
+    gtk_file_filter_add_pattern(filter, "*.kurocat");
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(chooser), filter);
+    if (gtk_dialog_run(GTK_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
+        gchar* file = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
+        gtk_widget_destroy(chooser);
+        if (file) { importSkinFile(*g_app, file); g_free(file); }
+        return;
+    }
+    gtk_widget_destroy(chooser);
+}
+
+// MARK: 「换装间」 window (warm cream card UI: live preview of the worn skin, dashed drop zone, pill button)
+
+static void roundedRectPath(cairo_t* cr, double x, double y, double w, double h, double r) {
+    cairo_new_sub_path(cr);
+    cairo_arc(cr, x + w - r, y + r, r, -M_PI / 2, 0);
+    cairo_arc(cr, x + w - r, y + h - r, r, 0, M_PI / 2);
+    cairo_arc(cr, x + r, y + h - r, r, M_PI / 2, M_PI);
+    cairo_arc(cr, x + r, y + r, r, M_PI, 1.5 * M_PI);
+    cairo_close_path(cr);
+}
+
+static void drawPaw(cairo_t* cr, double cx, double cy, double k) {
+    cairo_save(cr);
+    cairo_translate(cr, cx, cy);
+    cairo_scale(cr, k, k);
+    cairo_new_path(cr);
+    cairo_save(cr); cairo_translate(cr, 0, 6); cairo_scale(cr, 9.5, 7.8); cairo_arc(cr, 0, 0, 1, 0, 2 * M_PI); cairo_restore(cr);
+    cairo_fill(cr);
+    const double toes[4][2] = {{-10.5, -5.5}, {-3.8, -11.5}, {3.8, -11.5}, {10.5, -5.5}};
+    for (const auto& t : toes) {
+        cairo_save(cr); cairo_translate(cr, t[0], t[1]); cairo_scale(cr, 3.7, 4.4); cairo_arc(cr, 0, 0, 1, 0, 2 * M_PI); cairo_restore(cr);
+        cairo_fill(cr);
+    }
+    cairo_restore(cr);
+}
+
+static void drawCenteredText(cairo_t* cr, GtkWidget* w, const char* text, const char* font, double cx, double y, double r, double g, double b) {
+    PangoLayout* layout = gtk_widget_create_pango_layout(w, text);
+    PangoFontDescription* fd = pango_font_description_from_string(font);
+    pango_layout_set_font_description(layout, fd);
+    int tw = 0, th = 0;
+    pango_layout_get_pixel_size(layout, &tw, &th);
+    cairo_move_to(cr, cx - tw / 2.0, y);
+    cairo_set_source_rgb(cr, r, g, b);
+    pango_cairo_show_layout(cr, layout);
+    pango_font_description_free(fd);
+    g_object_unref(layout);
+}
+
+static void showDressingRoom() {
+    if (g_app->dressingRoom) { refreshDressingRoom(*g_app); gtk_window_present(GTK_WINDOW(g_app->dressingRoom)); return; }
+
+    static GtkCssProvider* css = nullptr;
+    if (!css) {
+        css = gtk_css_provider_new();
+        gtk_css_provider_load_from_data(css,
+            "window.kc-dressing { background-color: #FBF7F0; }"
+            ".kc-title { font-size: 21px; font-weight: 800; color: #3B2F2A; }"
+            ".kc-subtitle { font-size: 13px; color: #7E6E62; }"
+            ".kc-hint { font-size: 11.5px; color: #A8998D; }"
+            "button.kc-primary { background-image: none; background-color: #E8964E; border: none; border-radius: 20px;"
+            "  padding: 9px 30px; box-shadow: 0 2px 8px rgba(232,150,78,0.35); }"
+            "button.kc-primary:hover { background-color: #F0A562; }"
+            "button.kc-primary:active { background-color: #D7843E; box-shadow: none; }"
+            "button.kc-primary label { color: #FFFFFF; font-weight: 700; font-size: 14px; }"
+            ".kc-status { font-size: 12.5px; color: #8A7B70; }"
+            ".kc-status.ok { color: #3E8E5A; font-weight: 600; }"
+            ".kc-status.err { color: #C2493B; font-weight: 600; }"
+            ".kc-footer { font-size: 10.5px; color: #B3A69B; }",
+            -1, nullptr);
+        // Screen-wide so child labels (e.g. the button's) are styled too; every rule is scoped to kc-* classes.
+        gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(css),
+                                                  GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    }
+
+    GtkWidget* win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    g_app->dressingRoom = win;
+    gtk_window_set_title(GTK_WINDOW(win), "换装间");
+    gtk_window_set_resizable(GTK_WINDOW(win), FALSE);
+    gtk_window_set_keep_above(GTK_WINDOW(win), TRUE);
+    gtk_window_set_position(GTK_WINDOW(win), GTK_WIN_POS_CENTER);
+    gtk_container_set_border_width(GTK_CONTAINER(win), 22);
+    auto style = [](GtkWidget* w, const char* cls) { gtk_style_context_add_class(gtk_widget_get_style_context(w), cls); };
+    style(win, "kc-dressing");
+
+    GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
+    gtk_container_add(GTK_CONTAINER(win), box);
+
+    // Header: live preview of the worn skin + title
+    GtkWidget* header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 18);
+    gtk_box_pack_start(GTK_BOX(box), header, FALSE, FALSE, 0);
+    GtkWidget* preview = gtk_drawing_area_new();
+    gtk_widget_set_size_request(preview, 150, 134);
+    g_app->dressingPreview = preview;
+    g_signal_connect(preview, "draw", G_CALLBACK((+[](GtkWidget* w, cairo_t* cr, gpointer) -> gboolean {
+        double W = gtk_widget_get_allocated_width(w), H = gtk_widget_get_allocated_height(w);
+        roundedRectPath(cr, 0.5, 0.5, W - 1, H - 1, 18);
+        cairo_set_source_rgb(cr, 0.953, 0.914, 0.863);
+        cairo_fill_preserve(cr);
+        cairo_clip(cr);
+        static CatPhysics pose;   // a calm sitting pose
+        pose.time = 0.7f;
+        CatSettings settings = g_app->settings;
+        settings.showKeyLegends = false;
+        cairo_save(cr);
+        cairo_scale(cr, W / 290.0, H / 260.0);
+        cairo_translate(cr, -40, -36);
+        CatRenderer::draw(cr, pose, settings, activeSkin(*g_app));
+        cairo_restore(cr);
+        return FALSE;
+    })), nullptr);
+    gtk_box_pack_start(GTK_BOX(header), preview, FALSE, FALSE, 0);
+
+    GtkWidget* titles = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_widget_set_valign(titles, GTK_ALIGN_CENTER);
+    GtkWidget* title = gtk_label_new("换装间");
+    style(title, "kc-title");
+    gtk_widget_set_halign(title, GTK_ALIGN_START);
+    GtkWidget* subtitle = gtk_label_new("");
+    style(subtitle, "kc-subtitle");
+    gtk_widget_set_halign(subtitle, GTK_ALIGN_START);
+    gtk_label_set_ellipsize(GTK_LABEL(subtitle), PANGO_ELLIPSIZE_END);
+    gtk_label_set_max_width_chars(GTK_LABEL(subtitle), 20);
+    g_app->dressingSubtitle = subtitle;
+    GtkWidget* hint = gtk_label_new("导入皮肤工坊做好的 .kurocat 文件，\n小猫会立刻换上新毛色。");
+    style(hint, "kc-hint");
+    gtk_widget_set_halign(hint, GTK_ALIGN_START);
+    gtk_box_pack_start(GTK_BOX(titles), title, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(titles), subtitle, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(titles), hint, FALSE, FALSE, 2);
+    gtk_box_pack_start(GTK_BOX(header), titles, TRUE, TRUE, 0);
+
+    // Drop zone: dashed rounded card with a paw; highlights while a file hovers; click = pick a file
+    GtkWidget* drop = gtk_drawing_area_new();
+    gtk_widget_set_size_request(drop, 400, 150);
+    gtk_widget_add_events(drop, GDK_BUTTON_PRESS_MASK);
+    g_app->dressingDrop = drop;
+    g_signal_connect(drop, "draw", G_CALLBACK((+[](GtkWidget* w, cairo_t* cr, gpointer) -> gboolean {
+        double W = gtk_widget_get_allocated_width(w), H = gtk_widget_get_allocated_height(w);
+        bool hover = g_app->dropHover;
+        roundedRectPath(cr, 1.5, 1.5, W - 3, H - 3, 16);
+        if (hover) cairo_set_source_rgb(cr, 1.0, 0.945, 0.886); else cairo_set_source_rgb(cr, 1.0, 0.992, 0.976);
+        cairo_fill_preserve(cr);
+        double dash[2] = {7, 5};
+        cairo_set_dash(cr, dash, hover ? 0 : 2, 0);
+        cairo_set_line_width(cr, hover ? 2.4 : 2.0);
+        if (hover) cairo_set_source_rgb(cr, 0.910, 0.588, 0.306); else cairo_set_source_rgb(cr, 0.890, 0.765, 0.627);
+        cairo_stroke(cr);
+        cairo_set_dash(cr, nullptr, 0, 0);
+        cairo_set_source_rgba(cr, 0.910, 0.588, 0.306, hover ? 1.0 : 0.85);
+        drawPaw(cr, W / 2, H / 2 - 26, hover ? 1.15 : 1.0);
+        drawCenteredText(cr, w, hover ? "松手就换上啦" : "把 .kurocat 皮肤拖到这里", "Sans Bold 12", W / 2, H / 2 + 2, 0.353, 0.290, 0.251);
+        drawCenteredText(cr, w, "也可以直接拖到桌面上的小猫身上 · 点这里选择文件", "Sans 9", W / 2, H / 2 + 26, 0.627, 0.561, 0.510);
+        return FALSE;
+    })), nullptr);
+    g_signal_connect(drop, "button-press-event", G_CALLBACK(+[](GtkWidget*, GdkEventButton* e, gpointer) -> gboolean {
+        if (e->button == 1) g_idle_add(+[](gpointer) -> gboolean { chooseSkinFile(); return G_SOURCE_REMOVE; }, nullptr);
+        return TRUE;
+    }), nullptr);
+    enableSkinDrop(drop, false);
+    g_signal_connect(drop, "drag-motion", G_CALLBACK(+[](GtkWidget* w, GdkDragContext*, gint, gint, guint, gpointer) -> gboolean {
+        if (!g_app->dropHover) { g_app->dropHover = true; gtk_widget_queue_draw(w); }
+        return FALSE;
+    }), nullptr);
+    g_signal_connect(drop, "drag-leave", G_CALLBACK(+[](GtkWidget* w, GdkDragContext*, guint, gpointer) {
+        g_app->dropHover = false;
+        gtk_widget_queue_draw(w);
+    }), nullptr);
+    gtk_box_pack_start(GTK_BOX(box), drop, FALSE, FALSE, 0);
+
+    GtkWidget* button = gtk_button_new_with_label("选择文件…");
+    style(button, "kc-primary");
+    gtk_widget_set_halign(button, GTK_ALIGN_CENTER);
+    g_signal_connect(button, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) { chooseSkinFile(); }), nullptr);
+    gtk_box_pack_start(GTK_BOX(box), button, FALSE, FALSE, 0);
+
+    g_app->dressingStatus = gtk_label_new("");
+    style(g_app->dressingStatus, "kc-status");
+    gtk_label_set_line_wrap(GTK_LABEL(g_app->dressingStatus), TRUE);
+    gtk_label_set_line_wrap_mode(GTK_LABEL(g_app->dressingStatus), PANGO_WRAP_WORD_CHAR);
+    gtk_label_set_max_width_chars(GTK_LABEL(g_app->dressingStatus), 44);
+    gtk_label_set_justify(GTK_LABEL(g_app->dressingStatus), GTK_JUSTIFY_CENTER);
+    gtk_box_pack_start(GTK_BOX(box), g_app->dressingStatus, FALSE, FALSE, 0);
+
+    std::string where = SkinLibrary::dir();
+    if (const char* home = std::getenv("HOME"); home && home[0] && where.rfind(home, 0) == 0) where = "~" + where.substr(std::strlen(home));
+    GtkWidget* footer = gtk_label_new(("皮肤独立保存在 " + where + "（软件更新会自动保留）  ·  右键小猫 → 猫咪皮肤 可切换或备份").c_str());
+    style(footer, "kc-footer");
+    gtk_label_set_line_wrap(GTK_LABEL(footer), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(footer), 56);
+    gtk_label_set_justify(GTK_LABEL(footer), GTK_JUSTIFY_CENTER);
+    gtk_label_set_selectable(GTK_LABEL(footer), TRUE);
+    gtk_box_pack_start(GTK_BOX(box), footer, FALSE, FALSE, 0);
+
+    setDressingStatus(*g_app, "支持拖入多个文件；坏掉的文件会告诉你哪里不对。", 0);
+    refreshDressingRoom(*g_app);
+    g_signal_connect(win, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        g_app->dressingRoom = nullptr;
+        g_app->dressingStatus = nullptr;
+        g_app->dressingSubtitle = nullptr;
+        g_app->dressingPreview = nullptr;
+        g_app->dressingDrop = nullptr;
+        g_app->dropHover = false;
+    }), nullptr);
+    gtk_widget_show_all(win);
+}
+
+static void confirmDeleteSkin(const std::string& id) {
+    const SkinSpec* s = g_app->skins.find(id);
+    if (!s) return;
+    GtkWidget* dlg = gtk_message_dialog_new(nullptr, GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION, GTK_BUTTONS_NONE,
+        "删除皮肤「%s」？", s->name.c_str());
+    gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dlg), "会从皮肤文件夹里删除这个文件，删除后需要重新导入。");
+    gtk_dialog_add_buttons(GTK_DIALOG(dlg), "取消", GTK_RESPONSE_CANCEL, "删除", GTK_RESPONSE_ACCEPT, nullptr);
+    gtk_window_set_title(GTK_WINDOW(dlg), "KuroCat");
+    gtk_window_set_keep_above(GTK_WINDOW(dlg), TRUE);
+    int response = gtk_dialog_run(GTK_DIALOG(dlg));
+    gtk_widget_destroy(dlg);
+    if (response != GTK_RESPONSE_ACCEPT) return;
+    if (!g_app->skins.remove(id)) { showMessage(GTK_MESSAGE_ERROR, "删除失败", "无法删除 " + SkinLibrary::dir() + "/" + id + ".kurocat"); return; }
+    if (g_app->settings.customSkin == id) selectCustomSkin(*g_app, "");
+    refreshDressingRoom(*g_app);
+}
+
 static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
     GtkWidget* menu = gtk_menu_new();
 
@@ -699,6 +1041,7 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
 
     addAction(app.isVisible ? "隐藏小猫" : "显示小猫", G_CALLBACK(+[](GtkMenuItem*, gpointer) {
         g_app->isVisible = !g_app->isVisible;
+        g_app->hiddenForFullscreen = false;
         if (g_app->isVisible) gtk_widget_show(g_app->window);
         else gtk_widget_hide(g_app->window);
     }));
@@ -712,6 +1055,16 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
     addCheck("窗口置顶显示", app.settings.alwaysOnTop, G_CALLBACK(+[](GtkCheckMenuItem* item, gpointer) {
         g_app->settings.alwaysOnTop = gtk_check_menu_item_get_active(item);
         applyWindowScaleAndPos(*g_app, false);
+    }));
+
+    addCheck("全屏应用时自动隐藏（PPT / 视频 / 游戏）", app.settings.hideInFullscreen, G_CALLBACK(+[](GtkCheckMenuItem* item, gpointer) {
+        g_app->settings.hideInFullscreen = gtk_check_menu_item_get_active(item);
+        if (!g_app->settings.hideInFullscreen && g_app->hiddenForFullscreen) {
+            g_app->hiddenForFullscreen = false;
+            if (g_app->isVisible) gtk_widget_show(g_app->window);
+        }
+        g_app->lastFullscreenCheck = 0.0;
+        g_app->settings.save();
     }));
 
     addCheck("开机自动启动", isAutoStartEnabled(), G_CALLBACK(+[](GtkCheckMenuItem* item, gpointer) {
@@ -751,15 +1104,18 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
     // Coat Skin submenu
     {
         GtkWidget* sub = gtk_menu_new();
+        bool customActive = app.skins.find(app.settings.customSkin) != nullptr;
         auto addCoat = [&](const char* lbl, CatCoatTheme c) {
             GtkWidget* it = gtk_check_menu_item_new_with_label(lbl);
-            gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(it), app.settings.coatTheme == c);
+            gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(it), !customActive && app.settings.coatTheme == c);
             g_signal_connect(it, "activate", G_CALLBACK(+[](GtkMenuItem*, gpointer p) {
                 auto coat = (CatCoatTheme)(intptr_t)p;
                 g_app->settings.coatTheme = coat;
+                g_app->settings.customSkin.clear();
                 g_app->settings.eyeTheme = coat == CatCoatTheme::Siamese ? EyeColorTheme::SiameseBlue :
                     (coat == CatCoatTheme::ClassicBlack ? EyeColorTheme::NeonChartreuse : EyeColorTheme::SoftAmber);
                 g_app->settings.save();
+                refreshDressingRoom(*g_app);
             }), (gpointer)(intptr_t)c);
             gtk_menu_shell_append(GTK_MENU_SHELL(sub), it);
         };
@@ -767,6 +1123,59 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
         addCoat("挖煤暹罗猫", CatCoatTheme::Siamese);
         addCoat("美短（银虎斑加白）", CatCoatTheme::Shorthair);
         addCoat("橘白猫", CatCoatTheme::OrangeWhite);
+        // Imported skins (ids are 16 hex chars; the menu item keeps its own copy as object data).
+        if (!app.skins.skins.empty()) gtk_menu_shell_append(GTK_MENU_SHELL(sub), gtk_separator_menu_item_new());
+        for (const SkinSpec& s : app.skins.skins) {
+            GtkWidget* it = gtk_check_menu_item_new_with_label(s.name.c_str());
+            gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(it), app.settings.customSkin == s.id);
+            g_object_set_data_full(G_OBJECT(it), "skin-id", g_strdup(s.id.c_str()), g_free);
+            g_signal_connect(it, "activate", G_CALLBACK(+[](GtkMenuItem* item, gpointer) {
+                selectCustomSkin(*g_app, (const char*)g_object_get_data(G_OBJECT(item), "skin-id"));
+            }), nullptr);
+            gtk_menu_shell_append(GTK_MENU_SHELL(sub), it);
+        }
+        gtk_menu_shell_append(GTK_MENU_SHELL(sub), gtk_separator_menu_item_new());
+        GtkWidget* importItem = gtk_menu_item_new_with_label("导入皮肤…");
+        g_signal_connect(importItem, "activate", G_CALLBACK(+[](GtkMenuItem*, gpointer) { showDressingRoom(); }), nullptr);
+        gtk_menu_shell_append(GTK_MENU_SHELL(sub), importItem);
+        GtkWidget* workshopItem = gtk_menu_item_new_with_label("打开皮肤工坊（制作皮肤）…");
+        g_signal_connect(workshopItem, "activate", G_CALLBACK(+[](GtkMenuItem*, gpointer) {
+            if (fork() == 0) {
+                execlp("xdg-open", "xdg-open", "https://chanke17.github.io/KuroCat-Workshop/", (char*)nullptr);
+                _exit(127);
+            }
+        }), nullptr);
+        gtk_menu_shell_append(GTK_MENU_SHELL(sub), workshopItem);
+        GtkWidget* openDirItem = gtk_menu_item_new_with_label("打开皮肤文件夹（备份）");
+        g_signal_connect(openDirItem, "activate", G_CALLBACK(+[](GtkMenuItem*, gpointer) {
+            SkinLibrary::ensureDir();
+            std::string dir = SkinLibrary::dir();
+            if (fork() == 0) {
+                execlp("xdg-open", "xdg-open", dir.c_str(), (char*)nullptr);
+                _exit(127);
+            }
+        }), nullptr);
+        gtk_menu_shell_append(GTK_MENU_SHELL(sub), openDirItem);
+        if (!app.skins.skins.empty()) {
+            GtkWidget* delSub = gtk_menu_new();
+            for (const SkinSpec& s : app.skins.skins) {
+                GtkWidget* it = gtk_menu_item_new_with_label(s.name.c_str());
+                g_object_set_data_full(G_OBJECT(it), "skin-id", g_strdup(s.id.c_str()), g_free);
+                g_signal_connect(it, "activate", G_CALLBACK(+[](GtkMenuItem* item, gpointer) {
+                    std::string id = (const char*)g_object_get_data(G_OBJECT(item), "skin-id");
+                    g_idle_add(+[](gpointer p) -> gboolean {
+                        std::string* idp = (std::string*)p;
+                        confirmDeleteSkin(*idp);
+                        delete idp;
+                        return G_SOURCE_REMOVE;
+                    }, new std::string(id));
+                }), nullptr);
+                gtk_menu_shell_append(GTK_MENU_SHELL(delSub), it);
+            }
+            GtkWidget* delItem = gtk_menu_item_new_with_label("删除皮肤");
+            gtk_menu_item_set_submenu(GTK_MENU_ITEM(delItem), delSub);
+            gtk_menu_shell_append(GTK_MENU_SHELL(sub), delItem);
+        }
         GtkWidget* parent = gtk_menu_item_new_with_label("猫咪皮肤 🐱");
         gtk_menu_item_set_submenu(GTK_MENU_ITEM(parent), sub);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), parent);
@@ -892,7 +1301,7 @@ static gboolean onDraw(GtkWidget* widget, cairo_t* cr, gpointer) {
 
     cairo_save(cr);
     cairo_scale(cr, (double)w / CatPhysics::CanvasWidth, (double)h / CatPhysics::CanvasHeight);
-    CatRenderer::draw(cr, g_app->physics, g_app->settings);
+    CatRenderer::draw(cr, g_app->physics, g_app->settings, activeSkin(*g_app));
     cairo_restore(cr);
     return FALSE;
 }
@@ -964,15 +1373,72 @@ static void scheduleFrames(guint intervalMs) {
     g_timeout_add(intervalMs, onFrameTick, nullptr);
 }
 
+static bool isActiveWindowFullscreenX11(GtkWidget* selfWidget) {
+    GdkDisplay* gdkDpy = gdk_display_get_default();
+    if (!gdkDpy || !GDK_IS_X11_DISPLAY(gdkDpy)) return false;
+    Display* dpy = gdk_x11_display_get_xdisplay(gdkDpy);
+    if (!dpy) return false;
+    Window root = DefaultRootWindow(dpy);
+    Atom netActive = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", True);
+    Atom netState = XInternAtom(dpy, "_NET_WM_STATE", True);
+    Atom netFullscreen = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", True);
+    if (!netActive || !netState || !netFullscreen) return false;
+
+    Atom actualType = 0;
+    int actualFormat = 0;
+    unsigned long nItems = 0, bytesAfter = 0;
+    unsigned char* data = nullptr;
+    if (XGetWindowProperty(dpy, root, netActive, 0, 1, False, XA_WINDOW,
+                           &actualType, &actualFormat, &nItems, &bytesAfter, &data) != Success || !data || nItems == 0) {
+        if (data) XFree(data);
+        return false;
+    }
+    Window activeWin = *(Window*)data;
+    XFree(data);
+    if (!activeWin) return false;
+    if (selfWidget) {
+        if (GdkWindow* gw = gtk_widget_get_window(selfWidget)) {
+            if (GDK_IS_X11_WINDOW(gw) && activeWin == gdk_x11_window_get_xid(gw)) return false;
+        }
+    }
+
+    data = nullptr;
+    nItems = 0;
+    bool isFs = false;
+    if (XGetWindowProperty(dpy, activeWin, netState, 0, 32, False, XA_ATOM,
+                           &actualType, &actualFormat, &nItems, &bytesAfter, &data) == Success && data) {
+        Atom* atoms = (Atom*)data;
+        for (unsigned long i = 0; i < nItems; ++i) {
+            if (atoms[i] == netFullscreen) { isFs = true; break; }
+        }
+        XFree(data);
+    }
+    return isFs;
+}
+
 static gboolean onFrameTick(gpointer) {
     if (!g_app) return G_SOURCE_REMOVE;
-    if (!g_app->isVisible) {
+    double now = nowSeconds();
+    if (g_app->isVisible && g_app->settings.hideInFullscreen && (now - g_app->lastFullscreenCheck) >= 0.6) {
+        g_app->lastFullscreenCheck = now;
+        bool fs = isActiveWindowFullscreenX11(g_app->window);
+        if (fs && !g_app->hiddenForFullscreen) {
+            g_app->hiddenForFullscreen = true;
+            gtk_widget_hide(g_app->window);
+        } else if (!fs && g_app->hiddenForFullscreen) {
+            g_app->hiddenForFullscreen = false;
+            gtk_widget_show(g_app->window);
+            if (g_app->settings.alwaysOnTop) gtk_window_set_keep_above(GTK_WINDOW(g_app->window), TRUE);
+            g_app->lastTickTime = now;
+        }
+    }
+
+    if (!g_app->isVisible || g_app->hiddenForFullscreen) {
         guint want = desiredFrameIntervalMs(*g_app);
         if (want != g_frameIntervalMs) { scheduleFrames(want); return G_SOURCE_REMOVE; }
         return G_SOURCE_CONTINUE;
     }
 
-    double now = nowSeconds();
     float dt = (float)(now - g_app->lastTickTime);
     g_app->lastTickTime = now;
     if (dt <= 0.0f || dt > 0.5f) dt = 1.0f / 30.0f;
@@ -1038,7 +1504,7 @@ static gboolean onFrameTick(gpointer) {
                 (cur.x - (float)winX) / (float)winW * CatPhysics::CanvasWidth,
                 (cur.y - (float)winY) / (float)winH * CatPhysics::CanvasHeight
             };
-            CatHitZone zone = CatRenderer::hitTest(cp, g_app->physics, g_app->settings.coatTheme);
+            CatHitZone zone = CatRenderer::hitTest(cp, g_app->physics, activeSkin(*g_app));
             if (zone == CatHitZone::Head) {
                 if (g_app->hasLastHover) {
                     float d = std::hypot(cp.x - g_app->lastHoverCanvas.x, cp.y - g_app->lastHoverCanvas.y);
@@ -1123,6 +1589,7 @@ int main(int argc, char** argv) {
     }
 
     app.settings.load();
+    app.skins.reload();
     if (isAutoStartEnabled()) {
         // Keep Exec path updated if user moved portable kurocat binary
         setAutoStartEnabled(true);
@@ -1160,6 +1627,7 @@ int main(int argc, char** argv) {
         return FALSE;
     }), nullptr);
     g_signal_connect(app.window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
+    enableSkinDrop(app.window); // a .kurocat dropped onto the cat is imported and worn right away
     g_signal_connect(app.window, "realize", G_CALLBACK(+[](GtkWidget* w, gpointer) {
         updateInputShape(*g_app);
         if (GdkWindow* gw = gtk_widget_get_window(w)) {

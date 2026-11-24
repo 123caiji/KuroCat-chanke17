@@ -26,6 +26,7 @@
 #include "InputEngine.hpp"
 #include "CatPhysics.hpp"
 #include "CatRenderer.hpp"
+#include "SkinLibrary.hpp"
 
 #ifndef WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY
 #define WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY 4
@@ -67,6 +68,7 @@ enum MenuCmd : UINT {
     CMD_TOGGLE_VISIBLE = 1001,
     CMD_TOGGLE_CLICKTHROUGH,
     CMD_TOGGLE_TOPMOST,
+    CMD_TOGGLE_HIDE_FULLSCREEN,
     CMD_TOGGLE_AUTOSTART,
     CMD_TOGGLE_BADGES,
     CMD_TOGGLE_MOUSE_BADGES,
@@ -97,8 +99,16 @@ enum MenuCmd : UINT {
     CMD_OPEN_UPDATE,
     CMD_RELAUNCH_ADMIN,
     CMD_TOGGLE_RUN_AS_ADMIN,
-    CMD_QUIT
+    CMD_QUIT,
+    CMD_IMPORT_SKIN,
+    CMD_OPEN_WORKSHOP,
+    CMD_OPEN_SKINS_DIR,
+    CMD_SKIN_SELECT_BASE = 4000,  // + index into AppState::skins.skins
+    CMD_SKIN_DELETE_BASE = 5000,
+    CMD_SKIN_RANGE = 900
 };
+constexpr const wchar_t* DRESSING_ROOM_CLASS = L"KuroCatDressingRoomClass";
+constexpr int IDC_DRESSING_CHOOSE = 11;
 
 struct AppState {
     HWND hwnd = nullptr;
@@ -109,8 +119,14 @@ struct AppState {
     CatSettings settings;
     InputEngine input;
     CatPhysics physics;
+    SkinLibrary skins;
+    HWND dressingRoom = nullptr;    // 「换装间」 import window (nullptr when closed)
+    std::wstring dressingStatusText;  // status line of 换装间; kind 0 neutral, 1 success, 2 error
+    int dressingStatusKind = 0;
+    float dressingScale = 1.0f;       // DPI scale of the 换装间 layout (design units are 96-dpi pixels)
 
     bool isVisible = true;
+    bool hiddenForFullscreen = false;
     bool isDragging = false;
     POINT dragStartCursor = {};
     POINT dragStartWinOrigin = {};
@@ -143,6 +159,7 @@ struct AppState {
     bool isElevated = false;
     bool foregroundBlocksKeys = false;   // foreground app runs as admin -> Windows (UIPI) hides its keys from us
     double lastBlockedForegroundTime = 0.0;
+    double blockedForegroundSince = 0.0;
     bool warnedElevatedForeground = false;
     HWINEVENTHOOK foregroundHook = nullptr;
     bool sessionNotifyRegistered = false;
@@ -293,20 +310,37 @@ bool relaunchSelfElevated(const wchar_t* params) {
     return ShellExecuteExW(&sei) != FALSE;
 }
 
-/// True when the foreground window covers its whole monitor (borderless / fullscreen games).
-bool isForegroundFullscreen() {
+/// True when the foreground window covers its whole monitor (WPS PPT slideshow, fullscreen video, games).
+bool isForegroundFullscreen(HWND selfHwnd) {
     HWND fg = GetForegroundWindow();
-    if (!fg || fg == GetDesktopWindow() || fg == GetShellWindow()) return false;
+    if (!fg || fg == selfHwnd || fg == GetDesktopWindow() || fg == GetShellWindow()) return false;
     wchar_t cls[64] = {};
     GetClassNameW(fg, cls, 63);
-    if (wcscmp(cls, L"WorkerW") == 0 || wcscmp(cls, L"Progman") == 0) return false;
+    if (wcscmp(cls, L"WorkerW") == 0 || wcscmp(cls, L"Progman") == 0 ||
+        wcscmp(cls, L"Shell_TrayWnd") == 0 || wcscmp(cls, L"Shell_SecondaryTrayWnd") == 0) return false;
     RECT wr = {};
     if (!GetWindowRect(fg, &wr)) return false;
     MONITORINFO mi = {};
     mi.cbSize = sizeof(mi);
     if (!GetMonitorInfoW(MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST), &mi)) return false;
-    return wr.left <= mi.rcMonitor.left && wr.top <= mi.rcMonitor.top &&
-           wr.right >= mi.rcMonitor.right && wr.bottom >= mi.rcMonitor.bottom;
+    return wr.left <= mi.rcMonitor.left + 2 && wr.top <= mi.rcMonitor.top + 2 &&
+           wr.right >= mi.rcMonitor.right - 2 && wr.bottom >= mi.rcMonitor.bottom - 2;
+}
+
+bool hasVisibleWindowAbove(HWND hwnd) {
+    if (!hwnd) return false;
+    HWND prev = GetWindow(hwnd, GW_HWNDPREV);
+    int steps = 0;
+    while (prev && steps++ < 16) {
+        if (IsWindowVisible(prev)) {
+            RECT r = {};
+            if (GetWindowRect(prev, &r) && (r.right - r.left) > 4 && (r.bottom - r.top) > 4) {
+                return true;
+            }
+        }
+        prev = GetWindow(prev, GW_HWNDPREV);
+    }
+    return false;
 }
 
 // MARK: - Auto Update Checker (GitHub Releases via WinHTTP)
@@ -772,7 +806,8 @@ void applyWindowScaleAndPosition(AppState& app, bool anchorBottomCenter, bool pe
 /// Puts the cat back on top of other topmost windows (borderless/fullscreen games that make
 /// themselves topmost after launching used to bury the cat, which looked like it "vanished").
 void assertTopmost(AppState& app) {
-    if (!app.hwnd || !app.isVisible || !app.settings.alwaysOnTop) return;
+    if (!app.hwnd || !app.isVisible || app.hiddenForFullscreen || !app.settings.alwaysOnTop) return;
+    if (app.dressingRoom && IsWindowVisible(app.dressingRoom)) return;
     SetWindowPos(app.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSENDCHANGING);
 }
@@ -795,34 +830,63 @@ void recoverAfterSystemEvent(AppState& app) {
     app.lastRenderTime = now;
     KillTimer(app.hwnd, TIMER_RENDER);
     SetTimer(app.hwnd, TIMER_RENDER, 16, nullptr);
-    if (app.isVisible) ShowWindow(app.hwnd, SW_SHOWNOACTIVATE);
+    if (app.isVisible && !app.hiddenForFullscreen) ShowWindow(app.hwnd, SW_SHOWNOACTIVATE);
     applyWindowScaleAndPosition(app, false, false);
     app.pendingTopmostTime = now + 1.5; // some games re-assert topmost shortly after a mode switch
 }
 
-/// Once per second: watchdog + game helpers.
+/// Twice per second: watchdog, fullscreen auto-hide, topmost re-assert, and UIPI detection.
 void housekeeping(AppState& app) {
     double now = nowSeconds();
     if (now < app.nextHousekeepingTime) return;
-    app.nextHousekeepingTime = now + 1.0;
+    app.nextHousekeepingTime = now + 0.5;
     if (!app.hwnd) return;
 
+    bool fullscreenFg = isForegroundFullscreen(app.hwnd);
+
+    // Fullscreen auto-hide (PPT slideshow, fullscreen video, games)
+    if (app.isVisible && app.settings.hideInFullscreen) {
+        if (fullscreenFg) {
+            if (!app.hiddenForFullscreen) {
+                app.hiddenForFullscreen = true;
+                ShowWindow(app.hwnd, SW_HIDE);
+            }
+        } else if (app.hiddenForFullscreen) {
+            app.hiddenForFullscreen = false;
+            ShowWindow(app.hwnd, SW_SHOWNOACTIVATE);
+            app.lastTickTime = now;
+            app.lastRenderTime = now;
+            assertTopmost(app);
+        }
+    } else if (app.hiddenForFullscreen) {
+        app.hiddenForFullscreen = false;
+        if (app.isVisible) {
+            ShowWindow(app.hwnd, SW_SHOWNOACTIVATE);
+            app.lastTickTime = now;
+            app.lastRenderTime = now;
+            assertTopmost(app);
+        }
+    }
+
+    const bool effectivelyVisible = app.isVisible && !app.hiddenForFullscreen;
+
     // Rendering stalled for >2s while visible (e.g. the layered window lost its surface): self-heal.
-    if (app.isVisible && app.lastRenderTime > 0.0 && now - app.lastRenderTime > 2.0) {
+    if (effectivelyVisible && app.lastRenderTime > 0.0 && now - app.lastRenderTime > 2.0) {
         recoverAfterSystemEvent(app);
         return;
     }
-    if (app.isVisible && !IsWindowVisible(app.hwnd)) ShowWindow(app.hwnd, SW_SHOWNOACTIVATE);
+    if (effectivelyVisible && !IsWindowVisible(app.hwnd)) ShowWindow(app.hwnd, SW_SHOWNOACTIVATE);
 
-    bool fullscreenFg = isForegroundFullscreen();
-    if (app.pendingTopmostTime > 0.0 && now >= app.pendingTopmostTime) {
-        app.pendingTopmostTime = 0.0;
-        assertTopmost(app);
-    } else if (fullscreenFg) {
-        assertTopmost(app);
+    if (effectivelyVisible && app.settings.alwaysOnTop) {
+        if (app.pendingTopmostTime > 0.0 && now >= app.pendingTopmostTime) {
+            app.pendingTopmostTime = 0.0;
+            assertTopmost(app);
+        } else if (fullscreenFg || hasVisibleWindowAbove(app.hwnd)) {
+            assertTopmost(app);
+        }
     }
 
-    // Detect admin-level games whose keystrokes Windows withholds from us.
+    // Detect admin-level apps (WPS Office/PPT, games, admin terminals) whose keystrokes Windows withholds (UIPI).
     app.foregroundBlocksKeys = false;
     if (!app.isElevated) {
         HWND fg = GetForegroundWindow();
@@ -831,12 +895,15 @@ void housekeeping(AppState& app) {
         if (pid && pid != GetCurrentProcessId() && isProcessElevatedOrProtected(pid)) {
             app.foregroundBlocksKeys = true;
             app.lastBlockedForegroundTime = now;
-            if (fullscreenFg && !app.warnedElevatedForeground) {
+            if (app.blockedForegroundSince <= 0.0) app.blockedForegroundSince = now;
+            if (!app.warnedElevatedForeground && (fullscreenFg || (now - app.blockedForegroundSince >= 1.0))) {
                 app.warnedElevatedForeground = true;
                 showTrayBalloon(app,
-                    L"KuroCat 听不到这个游戏的键盘",
-                    L"该游戏以管理员权限运行，Windows 会拦截它的键盘输入。右键小猫/托盘图标 →「以管理员身份重新启动」即可恢复。");
+                    L"KuroCat 听不到当前窗口的键盘",
+                    L"当前软件（如 WPS / 游戏）以管理员权限运行，Windows 会拦截它的键盘输入。右键小猫或托盘图标 →「以管理员身份重新启动」即可恢复。");
             }
+        } else {
+            app.blockedForegroundSince = 0.0;
         }
     }
 }
@@ -857,6 +924,328 @@ void setClickThrough(HWND hwnd, bool transparent) {
     }
 }
 
+// MARK: - Skins (built-in coats + imported .kurocat files)
+
+const SkinSpec& activeSkin(const AppState& app) {
+    if (!app.settings.customSkin.empty())
+        if (const SkinSpec* s = app.skins.find(app.settings.customSkin)) return *s;
+    return builtInSkin(app.settings.coatTheme);
+}
+
+void allowDropsWhenElevated(HWND hwnd) {
+    // An elevated KuroCat would otherwise never see files dragged from the (non-elevated) Explorer.
+    ChangeWindowMessageFilterEx(hwnd, WM_DROPFILES, MSGFLT_ALLOW, nullptr);
+    ChangeWindowMessageFilterEx(hwnd, WM_COPYDATA, MSGFLT_ALLOW, nullptr);
+    ChangeWindowMessageFilterEx(hwnd, 0x0049 /* WM_COPYGLOBALDATA */, MSGFLT_ALLOW, nullptr);
+}
+
+void setDressingStatus(AppState& app, const std::wstring& text, int kind) {
+    app.dressingStatusText = text;
+    app.dressingStatusKind = kind;
+    if (app.dressingRoom) InvalidateRect(app.dressingRoom, nullptr, FALSE);
+}
+
+void refreshDressingRoom(AppState& app) {
+    if (app.dressingRoom) InvalidateRect(app.dressingRoom, nullptr, FALSE);
+}
+
+// Imports one file; on success switches to it. Errors are shown in Chinese.
+bool importSkinFile(AppState& app, const std::wstring& path) {
+    std::string id, error;
+    std::wstring base = path.substr(path.find_last_of(L"\\/") == std::wstring::npos ? 0 : path.find_last_of(L"\\/") + 1);
+    if (!app.skins.importFile(path, id, error)) {
+        // With 换装间 open the red status line explains it in place; a dialog is only for drops onto the cat.
+        if (app.dressingRoom) {
+            setDressingStatus(app, L"没能导入「" + base + L"」：" + utf8ToWide(error), 2);
+        } else {
+            std::wstring msg = L"「" + base + L"」：" + utf8ToWide(error);
+            MessageBoxW(app.menuOwnerHwnd, msg.c_str(), L"无法导入这个皮肤", MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND);
+        }
+        return false;
+    }
+    app.settings.customSkin = id;
+    app.settings.saveToRegistry();
+    const SkinSpec* s = app.skins.find(id);
+    std::wstring msg = L"✓ 已换上「" + (s ? utf8ToWide(s->name) : std::wstring(L"新皮肤")) + L"」";
+    if (s && !s->author.empty()) msg += L"（作者：" + utf8ToWide(s->author) + L"）";
+    setDressingStatus(app, msg, 1);
+    if (!app.dressingRoom) showTrayBalloon(app, L"KuroCat 换装间", msg.c_str());
+    return true;
+}
+
+void importDroppedFiles(AppState& app, HDROP drop) {
+    UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+    std::vector<std::wstring> files;
+    for (UINT i = 0; i < count && i < 16; ++i) {
+        UINT len = DragQueryFileW(drop, i, nullptr, 0);
+        std::wstring f(len + 1, L'\0');
+        DragQueryFileW(drop, i, &f[0], len + 1);
+        f.resize(len);
+        files.push_back(f);
+    }
+    DragFinish(drop);
+    for (const auto& f : files) importSkinFile(app, f);
+}
+
+void chooseSkinFile(AppState& app) {
+    // comdlg32 is loaded on demand so the build keeps its existing link libraries.
+    typedef BOOL (WINAPI *GetOpenFileNameFn)(LPOPENFILENAMEW);
+    HMODULE dlg = LoadLibraryW(L"comdlg32.dll");
+    auto getOpen = dlg ? (GetOpenFileNameFn)(void*)GetProcAddress(dlg, "GetOpenFileNameW") : nullptr;
+    if (!getOpen) {
+        if (dlg) FreeLibrary(dlg);
+        MessageBoxW(app.dressingRoom, L"无法打开文件选择框，请直接把 .kurocat 文件拖进来。", L"KuroCat 换装间", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    wchar_t file[MAX_PATH * 4] = {0};
+    OPENFILENAMEW ofn = {};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = app.dressingRoom;
+    ofn.lpstrFilter = L"KuroCat 皮肤 (*.kurocat)\0*.kurocat\0所有文件 (*.*)\0*.*\0";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = (DWORD)(sizeof(file) / sizeof(file[0]));
+    ofn.lpstrTitle = L"选择 .kurocat 皮肤文件";
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_EXPLORER;
+    BOOL ok = getOpen(&ofn);
+    FreeLibrary(dlg);
+    if (ok) importSkinFile(app, file);
+}
+
+// MARK: 「换装间」 window — GDI+ painted: live preview of the worn skin, dashed drop zone, pill button.
+// Layout in 96-dpi design units, scaled by AppState::dressingScale.
+namespace dressing {
+constexpr float W = 444, H = 472;
+const Gdiplus::RectF previewRect(22, 22, 150, 134);
+const Gdiplus::RectF dropRect(22, 172, 400, 150);
+const Gdiplus::RectF buttonRect(147, 338, 150, 40);
+
+Gdiplus::FontFamily* family() {
+    static Gdiplus::FontFamily* fam = nullptr;
+    if (!fam) {
+        for (const wchar_t* name : {L"Microsoft YaHei UI", L"Microsoft YaHei", L"Segoe UI"}) {
+            auto* f = new Gdiplus::FontFamily(name);
+            if (f->GetLastStatus() == Gdiplus::Ok) { fam = f; break; }
+            delete f;
+        }
+        if (!fam) fam = Gdiplus::FontFamily::GenericSansSerif()->Clone();
+    }
+    return fam;
+}
+void roundRect(Gdiplus::GraphicsPath& p, const Gdiplus::RectF& r, float rad) {
+    float d = rad * 2;
+    p.AddArc(r.X, r.Y, d, d, 180, 90);
+    p.AddArc(r.X + r.Width - d, r.Y, d, d, 270, 90);
+    p.AddArc(r.X + r.Width - d, r.Y + r.Height - d, d, d, 0, 90);
+    p.AddArc(r.X, r.Y + r.Height - d, d, d, 90, 90);
+    p.CloseFigure();
+}
+void text(Gdiplus::Graphics& g, const std::wstring& s, float size, int style, Gdiplus::Color c, const Gdiplus::RectF& box,
+          Gdiplus::StringAlignment align = Gdiplus::StringAlignmentNear, bool ellipsis = false) {
+    Gdiplus::Font font(family(), size, style, Gdiplus::UnitPixel);
+    Gdiplus::SolidBrush brush(c);
+    Gdiplus::StringFormat fmt;
+    fmt.SetAlignment(align);
+    if (ellipsis) { fmt.SetTrimming(Gdiplus::StringTrimmingEllipsisCharacter); fmt.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap); }
+    g.DrawString(s.c_str(), (INT)s.size(), &font, box, &fmt, &brush);
+}
+void paw(Gdiplus::Graphics& g, float cx, float cy, Gdiplus::Color c) {
+    Gdiplus::SolidBrush b(c);
+    g.FillEllipse(&b, cx - 9.5f, cy + 6 - 7.8f, 19.0f, 15.6f);
+    const float toes[4][2] = {{-10.5f, -5.5f}, {-3.8f, -11.5f}, {3.8f, -11.5f}, {10.5f, -5.5f}};
+    for (const auto& t : toes) g.FillEllipse(&b, cx + t[0] - 3.7f, cy + t[1] - 4.4f, 7.4f, 8.8f);
+}
+
+void paint(AppState& app, HWND hwnd, HDC hdc) {
+    using namespace Gdiplus;
+    RECT rc; GetClientRect(hwnd, &rc);
+    int cw = std::max(1, (int)rc.right), ch = std::max(1, (int)rc.bottom);
+    Bitmap back(cw, ch, PixelFormat32bppPARGB);
+    Graphics g(&back);
+    g.SetSmoothingMode(SmoothingModeAntiAlias);
+    g.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
+    g.Clear(Color(255, 251, 247, 240));
+    g.ScaleTransform(app.dressingScale, app.dressingScale);
+
+    // Live preview of the skin being worn
+    GraphicsPath card; roundRect(card, previewRect, 18);
+    SolidBrush cardBrush(Color(255, 243, 233, 220));
+    g.FillPath(&cardBrush, &card);
+    {
+        GraphicsState st = g.Save();
+        g.SetClip(&card, CombineModeIntersect);
+        g.TranslateTransform(previewRect.X, previewRect.Y);
+        g.ScaleTransform(previewRect.Width / 290.0f, previewRect.Height / 260.0f);
+        g.TranslateTransform(-40.0f, -36.0f);
+        static CatPhysics pose;   // a calm sitting pose
+        pose.time = 0.7f;
+        CatSettings settings = app.settings;
+        settings.showKeyLegends = false;
+        CatRenderer::draw(g, pose, settings, activeSkin(app));
+        g.Restore(st);
+        g.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
+    }
+
+    const SkinSpec& skin = activeSkin(app);
+    const Color ink(255, 59, 47, 42), brown(255, 90, 74, 64), muted(255, 168, 153, 141), orange(255, 232, 150, 78);
+    text(g, L"换装间", 21, FontStyleBold, ink, RectF(190, 22, 240, 30));
+    text(g, L"正在穿", 11.5f, FontStyleRegular, muted, RectF(191, 58, 230, 18));
+    text(g, utf8ToWide(skin.name), 15, FontStyleBold, brown, RectF(190, 74, 236, 22), StringAlignmentNear, true);
+    if (!skin.author.empty()) text(g, L"作者 " + utf8ToWide(skin.author), 11.5f, FontStyleRegular, muted, RectF(191, 97, 232, 18), StringAlignmentNear, true);
+    text(g, L"导入皮肤工坊做好的 .kurocat 文件，\n小猫会立刻换上新毛色。", 11.5f, FontStyleRegular, muted, RectF(191, 120, 236, 40));
+
+    // Drop zone
+    GraphicsPath zone; roundRect(zone, dropRect, 16);
+    SolidBrush zoneBrush(Color(255, 255, 253, 249));
+    g.FillPath(&zoneBrush, &zone);
+    Pen dash(Color(255, 227, 195, 160), 2.0f);
+    REAL pattern[2] = {3.5f, 2.5f};
+    dash.SetDashPattern(pattern, 2);
+    g.DrawPath(&dash, &zone);
+    float cx = dropRect.X + dropRect.Width / 2, cy = dropRect.Y + dropRect.Height / 2;
+    paw(g, cx, cy - 26, Color(230, 232, 150, 78));
+    text(g, L"把 .kurocat 皮肤拖到这里", 15, FontStyleBold, brown, RectF(dropRect.X, cy + 2, dropRect.Width, 24), StringAlignmentCenter);
+    text(g, L"也可以直接拖到桌面上的小猫身上 · 点这里选择文件", 11.5f, FontStyleRegular, Color(255, 160, 143, 130),
+         RectF(dropRect.X, cy + 28, dropRect.Width, 20), StringAlignmentCenter);
+
+    // Status + footer
+    Color statusColor = app.dressingStatusKind == 1 ? Color(255, 62, 142, 90)
+                      : app.dressingStatusKind == 2 ? Color(255, 194, 73, 59) : Color(255, 138, 123, 112);
+    text(g, app.dressingStatusText, 12.5f, app.dressingStatusKind ? FontStyleBold : FontStyleRegular, statusColor,
+         RectF(22, 390, 400, 42), StringAlignmentCenter);
+    text(g, L"皮肤独立保存在 %APPDATA%\\KuroCat\\skins（软件更新会自动保留）  ·  右键小猫 → 猫咪皮肤 可切换或备份", 10.0f, FontStyleRegular,
+         Color(255, 179, 166, 155), RectF(18, 434, 408, 34), StringAlignmentCenter);
+    (void)orange;
+
+    Graphics screen(hdc);
+    screen.DrawImage(&back, 0, 0, cw, ch);
+}
+
+void paintButton(AppState& app, const DRAWITEMSTRUCT* di) {
+    using namespace Gdiplus;
+    int w = di->rcItem.right - di->rcItem.left, h = di->rcItem.bottom - di->rcItem.top;
+    Bitmap back(std::max(1, w), std::max(1, h), PixelFormat32bppPARGB);
+    Graphics g(&back);
+    g.SetSmoothingMode(SmoothingModeAntiAlias);
+    g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
+    g.Clear(Color(255, 251, 247, 240));
+    float k = app.dressingScale;
+    bool pressed = (di->itemState & ODS_SELECTED) != 0;
+    GraphicsPath pill; roundRect(pill, RectF(1, 1, w - 2.0f, h - 2.0f), (h - 2.0f) / 2);
+    SolidBrush fill(pressed ? Color(255, 215, 132, 62) : Color(255, 232, 150, 78));
+    g.FillPath(&fill, &pill);
+    Font font(family(), 14.5f * k, FontStyleBold, UnitPixel);
+    SolidBrush white(Color(255, 255, 255, 255));
+    StringFormat fmt; fmt.SetAlignment(StringAlignmentCenter); fmt.SetLineAlignment(StringAlignmentCenter);
+    g.DrawString(L"选择文件…", -1, &font, RectF(0, 0, (REAL)w, (REAL)h), &fmt, &white);
+    if (di->itemState & ODS_FOCUS) {
+        Pen ring(Color(120, 232, 150, 78), 2.0f);
+        g.DrawPath(&ring, &pill);
+    }
+    Graphics screen(di->hDC);
+    screen.DrawImage(&back, di->rcItem.left, di->rcItem.top, w, h);
+}
+
+bool inDrop(AppState& app, LPARAM lParam) {
+    float x = (short)LOWORD(lParam) / app.dressingScale, y = (short)HIWORD(lParam) / app.dressingScale;
+    return x >= dropRect.X && x <= dropRect.X + dropRect.Width && y >= dropRect.Y && y <= dropRect.Y + dropRect.Height;
+}
+} // namespace dressing
+
+LRESULT CALLBACK dressingRoomProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    AppState* app = g_app;
+    switch (msg) {
+        case WM_DROPFILES:
+            if (app) importDroppedFiles(*app, (HDROP)wParam);
+            else DragFinish((HDROP)wParam);
+            return 0;
+        case WM_COMMAND:
+            if (LOWORD(wParam) == IDC_DRESSING_CHOOSE && app) chooseSkinFile(*app);
+            return 0;
+        case WM_DRAWITEM:
+            if (app && wParam == IDC_DRESSING_CHOOSE) { dressing::paintButton(*app, (const DRAWITEMSTRUCT*)lParam); return TRUE; }
+            break;
+        case WM_ERASEBKGND:
+            return 1;
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwnd, &ps);
+            if (app) dressing::paint(*app, hwnd, hdc);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        case WM_SETCURSOR:
+            if (app && LOWORD(lParam) == HTCLIENT) {
+                POINT pt; GetCursorPos(&pt); ScreenToClient(hwnd, &pt);
+                if (dressing::inDrop(*app, MAKELPARAM(pt.x, pt.y))) { SetCursor(LoadCursorW(nullptr, IDC_HAND)); return TRUE; }
+            }
+            break;
+        case WM_LBUTTONUP:
+            if (app && dressing::inDrop(*app, lParam)) chooseSkinFile(*app);
+            return 0;
+        case WM_CLOSE:
+            DestroyWindow(hwnd);
+            return 0;
+        case WM_DESTROY:
+            if (app && app->dressingRoom == hwnd) app->dressingRoom = nullptr;
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+void showDressingRoom(AppState& app) {
+    if (app.dressingRoom) { refreshDressingRoom(app); ShowWindow(app.dressingRoom, SW_SHOWNORMAL); SetForegroundWindow(app.dressingRoom); return; }
+    HINSTANCE inst = GetModuleHandleW(nullptr);
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc = {};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = dressingRoomProc;
+        wc.hInstance = inst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hbrBackground = nullptr;   // fully painted in WM_PAINT
+        wc.lpszClassName = DRESSING_ROOM_CLASS;
+        registered = RegisterClassExW(&wc) != 0;
+    }
+    HDC screen = GetDC(nullptr);
+    app.dressingScale = GetDeviceCaps(screen, LOGPIXELSY) / 96.0f;
+    ReleaseDC(nullptr, screen);
+    float k = app.dressingScale;
+    auto px = [&](float v) { return (int)std::lround(v * k); };
+    const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, exStyle = WS_EX_TOPMOST | WS_EX_ACCEPTFILES;
+    RECT rc = {0, 0, px(dressing::W), px(dressing::H)};
+    AdjustWindowRectEx(&rc, style, FALSE, exStyle);
+    int w = rc.right - rc.left, h = rc.bottom - rc.top;
+    RECT work = {};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+    HWND win = CreateWindowExW(exStyle, DRESSING_ROOM_CLASS, L"换装间", style,
+        (work.left + work.right - w) / 2, (work.top + work.bottom - h) / 2, w, h, nullptr, nullptr, inst, nullptr);
+    if (!win) return;
+    app.dressingRoom = win;
+    allowDropsWhenElevated(win);
+    DragAcceptFiles(win, TRUE);
+    const Gdiplus::RectF& b = dressing::buttonRect;
+    CreateWindowExW(0, L"BUTTON", L"选择文件…", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+                    px(b.X), px(b.Y), px(b.Width), px(b.Height), win, (HMENU)(INT_PTR)IDC_DRESSING_CHOOSE, inst, nullptr);
+    setDressingStatus(app, L"支持拖入多个文件；坏掉的文件会告诉你哪里不对。", 0);
+    ShowWindow(win, SW_SHOWNORMAL);
+    SetForegroundWindow(win);
+}
+
+void confirmDeleteSkin(AppState& app, const std::string& id) {
+    const SkinSpec* s = app.skins.find(id);
+    if (!s) return;
+    std::wstring q = L"删除皮肤「" + utf8ToWide(s->name) + L"」？\n\n会从皮肤文件夹里删除这个文件，删除后需要重新导入。";
+    if (MessageBoxW(app.menuOwnerHwnd, q.c_str(), L"KuroCat", MB_YESNO | MB_ICONQUESTION | MB_TOPMOST | MB_SETFOREGROUND | MB_DEFBUTTON2) != IDYES) return;
+    std::string removing = id;
+    if (!app.skins.remove(removing)) {
+        MessageBoxW(app.menuOwnerHwnd, (L"无法删除 " + SkinLibrary::dir() + L"\\" + utf8ToWide(removing) + L".kurocat").c_str(),
+                    L"删除失败", MB_OK | MB_ICONWARNING | MB_TOPMOST);
+        return;
+    }
+    if (app.settings.customSkin == removing) { app.settings.customSkin.clear(); app.settings.saveToRegistry(); }
+    refreshDressingRoom(app);
+}
+
 void showContextMenu(AppState& app, POINT screenPt) {
     HMENU menu = CreatePopupMenu();
 
@@ -866,7 +1255,7 @@ void showContextMenu(AppState& app, POINT screenPt) {
         : L"\u26A0 Raw Input \u672A\u542F\u52A8";
     AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, statusStr.c_str());
     if (!app.isElevated && app.lastBlockedForegroundTime > 0.0 && nowSeconds() - app.lastBlockedForegroundTime < 600.0) {
-        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"⚠ 刚才的游戏以管理员权限运行，键盘被 Windows 拦截了");
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"⚠ 刚才的应用（如 WPS / 游戏）以管理员权限运行，键盘被 Windows 拦截了");
     }
 
     std::wstring stats = L"\u4ECA\u65E5\u51FB\u952E " + std::to_wstring(app.input.totalKeystrokesToday)
@@ -878,11 +1267,12 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(menu, MF_STRING, CMD_TOGGLE_VISIBLE, app.isVisible ? L"\u9690\u85CF\u5C0F\u732B" : L"\u663E\u793A\u5C0F\u732B");
     AppendMenuW(menu, MF_STRING | (app.settings.fullClickThrough ? MF_CHECKED : 0), CMD_TOGGLE_CLICKTHROUGH, L"\u5B8C\u5168\u9F20\u6807\u7A7F\u900F (Ctrl+Alt+Shift+P / \u6309\u4F4FAlt\u53EF\u53F3\u952E)");
     AppendMenuW(menu, MF_STRING | (app.settings.alwaysOnTop ? MF_CHECKED : 0), CMD_TOGGLE_TOPMOST, L"\u7A97\u53E3\u7F6E\u9876\u663E\u793A");
+    AppendMenuW(menu, MF_STRING | (app.settings.hideInFullscreen ? MF_CHECKED : 0), CMD_TOGGLE_HIDE_FULLSCREEN, L"全屏应用时自动隐藏（PPT / 视频 / 游戏）");
     AppendMenuW(menu, MF_STRING | (isAutoStartEnabled() ? MF_CHECKED : 0), CMD_TOGGLE_AUTOSTART, L"\u5F00\u673A\u81EA\u52A8\u542F\u52A8");
     if (app.isElevated) {
-        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"\u2713 \u5DF2\u4EE5\u7BA1\u7406\u5458\u8EAB\u4EFD\u8FD0\u884C\uFF08\u7BA1\u7406\u5458\u6743\u9650\u6E38\u620F\u7684\u952E\u76D8\u4E5F\u80FD\u76D1\u542C\uFF09");
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"✓ 已以管理员身份运行（WPS / 管理员权限游戏的键盘都能监听）");
     } else {
-        AppendMenuW(menu, MF_STRING, CMD_RELAUNCH_ADMIN, L"\u4EE5\u7BA1\u7406\u5458\u8EAB\u4EFD\u91CD\u65B0\u542F\u52A8\uFF08\u6E38\u620F\u91CC\u952E\u76D8\u6CA1\u53CD\u5E94\u65F6\u70B9\u8FD9\u91CC\uFF09");
+        AppendMenuW(menu, MF_STRING, CMD_RELAUNCH_ADMIN, L"以管理员身份重新启动（WPS / 游戏里键盘没反应时点这里）");
     }
     AppendMenuW(menu, MF_STRING | (app.settings.runAsAdmin ? MF_CHECKED : 0), CMD_TOGGLE_RUN_AS_ADMIN, L"\u6BCF\u6B21\u542F\u52A8\u90FD\u4EE5\u7BA1\u7406\u5458\u8EAB\u4EFD\u8FD0\u884C");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -896,10 +1286,27 @@ void showContextMenu(AppState& app, POINT screenPt) {
 
     // Cat Coat Skin submenu
     HMENU coatMenu = CreatePopupMenu();
-    AppendMenuW(coatMenu, MF_STRING | (app.settings.coatTheme == CatCoatTheme::ClassicBlack ? MF_CHECKED : 0), CMD_COAT_BLACK, L"\u7ECF\u5178\u5C0F\u9ED1\u732B (\u539F\u7248)");
-    AppendMenuW(coatMenu, MF_STRING | (app.settings.coatTheme == CatCoatTheme::Siamese ? MF_CHECKED : 0), CMD_COAT_SIAMESE, L"\u6316\u7164\u66B9\u7F57\u732B");
-    AppendMenuW(coatMenu, MF_STRING | (app.settings.coatTheme == CatCoatTheme::Shorthair ? MF_CHECKED : 0), CMD_COAT_SHORTHAIR, L"美短（银虎斑加白）");
-    AppendMenuW(coatMenu, MF_STRING | (app.settings.coatTheme == CatCoatTheme::OrangeWhite ? MF_CHECKED : 0), CMD_COAT_ORANGE_WHITE, L"橘白猫");
+    bool customActive = app.skins.find(app.settings.customSkin) != nullptr;
+    auto coatCheck = [&](CatCoatTheme c) -> UINT { return !customActive && app.settings.coatTheme == c ? MF_CHECKED : 0; };
+    AppendMenuW(coatMenu, MF_STRING | coatCheck(CatCoatTheme::ClassicBlack), CMD_COAT_BLACK, L"\u7ECF\u5178\u5C0F\u9ED1\u732B (\u539F\u7248)");
+    AppendMenuW(coatMenu, MF_STRING | coatCheck(CatCoatTheme::Siamese), CMD_COAT_SIAMESE, L"\u6316\u7164\u66B9\u7F57\u732B");
+    AppendMenuW(coatMenu, MF_STRING | coatCheck(CatCoatTheme::Shorthair), CMD_COAT_SHORTHAIR, L"美短（银虎斑加白）");
+    AppendMenuW(coatMenu, MF_STRING | coatCheck(CatCoatTheme::OrangeWhite), CMD_COAT_ORANGE_WHITE, L"橘白猫");
+    size_t listed = std::min<size_t>(app.skins.skins.size(), CMD_SKIN_RANGE);
+    if (listed) AppendMenuW(coatMenu, MF_SEPARATOR, 0, nullptr);
+    for (size_t i = 0; i < listed; ++i) {
+        const SkinSpec& s = app.skins.skins[i];
+        AppendMenuW(coatMenu, MF_STRING | (app.settings.customSkin == s.id ? MF_CHECKED : 0), CMD_SKIN_SELECT_BASE + (UINT)i, utf8ToWide(s.name).c_str());
+    }
+    AppendMenuW(coatMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(coatMenu, MF_STRING, CMD_IMPORT_SKIN, L"导入皮肤…");
+    AppendMenuW(coatMenu, MF_STRING, CMD_OPEN_WORKSHOP, L"打开皮肤工坊（制作皮肤）…");
+    AppendMenuW(coatMenu, MF_STRING, CMD_OPEN_SKINS_DIR, L"打开皮肤文件夹（备份）");
+    if (listed) {
+        HMENU deleteMenu = CreatePopupMenu();
+        for (size_t i = 0; i < listed; ++i) AppendMenuW(deleteMenu, MF_STRING, CMD_SKIN_DELETE_BASE + (UINT)i, utf8ToWide(app.skins.skins[i].name).c_str());
+        AppendMenuW(coatMenu, MF_POPUP, (UINT_PTR)deleteMenu, L"删除皮肤");
+    }
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)coatMenu, L"\u732B\u54AA\u76AE\u80A4");
 
     // Keyboard Theme submenu
@@ -953,6 +1360,7 @@ void showContextMenu(AppState& app, POINT screenPt) {
     switch (cmd) {
         case CMD_TOGGLE_VISIBLE:
             app.isVisible = !app.isVisible;
+            app.hiddenForFullscreen = false;
             ShowWindow(app.hwnd, app.isVisible ? SW_SHOWNOACTIVATE : SW_HIDE);
             break;
         case CMD_TOGGLE_CLICKTHROUGH:
@@ -967,6 +1375,18 @@ void showContextMenu(AppState& app, POINT screenPt) {
         case CMD_TOGGLE_TOPMOST:
             app.settings.alwaysOnTop = !app.settings.alwaysOnTop;
             applyWindowScaleAndPosition(app, false);
+            break;
+        case CMD_TOGGLE_HIDE_FULLSCREEN:
+            app.settings.hideInFullscreen = !app.settings.hideInFullscreen;
+            app.settings.saveToRegistry();
+            if (!app.settings.hideInFullscreen && app.hiddenForFullscreen) {
+                app.hiddenForFullscreen = false;
+                if (app.isVisible) {
+                    ShowWindow(app.hwnd, SW_SHOWNOACTIVATE);
+                    assertTopmost(app);
+                }
+            }
+            app.nextHousekeepingTime = 0.0;
             break;
         case CMD_TOGGLE_AUTOSTART:
             setAutoStartEnabled(!isAutoStartEnabled());
@@ -991,18 +1411,31 @@ void showContextMenu(AppState& app, POINT screenPt) {
             app.settings.petInteraction = !app.settings.petInteraction;
             app.settings.saveToRegistry();
             break;
+        case CMD_IMPORT_SKIN:
+            showDressingRoom(app);
+            break;
+        case CMD_OPEN_WORKSHOP:
+            ShellExecuteW(nullptr, L"open", L"https://chanke17.github.io/KuroCat-Workshop/", nullptr, nullptr, SW_SHOWNORMAL);
+            break;
+        case CMD_OPEN_SKINS_DIR:
+            SkinLibrary::ensureDir();
+            ShellExecuteW(nullptr, L"open", SkinLibrary::dir().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            break;
         case CMD_COAT_BLACK:
+            app.settings.customSkin.clear();
             app.settings.coatTheme = CatCoatTheme::ClassicBlack;
             app.settings.eyeTheme = EyeColorTheme::NeonChartreuse;
             app.settings.saveToRegistry();
             break;
         case CMD_COAT_SIAMESE:
+            app.settings.customSkin.clear();
             app.settings.coatTheme = CatCoatTheme::Siamese;
             app.settings.eyeTheme = EyeColorTheme::SiameseBlue;
             app.settings.saveToRegistry();
             break;
         case CMD_COAT_SHORTHAIR:
         case CMD_COAT_ORANGE_WHITE:
+            app.settings.customSkin.clear();
             app.settings.coatTheme = cmd == CMD_COAT_SHORTHAIR ? CatCoatTheme::Shorthair : CatCoatTheme::OrangeWhite;
             app.settings.eyeTheme = EyeColorTheme::SoftAmber;
             app.settings.saveToRegistry();
@@ -1053,8 +1486,15 @@ void showContextMenu(AppState& app, POINT screenPt) {
             quitApp(app);
             break;
         default:
+            if (cmd >= CMD_SKIN_SELECT_BASE && cmd < CMD_SKIN_SELECT_BASE + CMD_SKIN_RANGE && cmd - CMD_SKIN_SELECT_BASE < app.skins.skins.size()) {
+                app.settings.customSkin = app.skins.skins[cmd - CMD_SKIN_SELECT_BASE].id;
+                app.settings.saveToRegistry();
+            } else if (cmd >= CMD_SKIN_DELETE_BASE && cmd < CMD_SKIN_DELETE_BASE + CMD_SKIN_RANGE && cmd - CMD_SKIN_DELETE_BASE < app.skins.skins.size()) {
+                confirmDeleteSkin(app, app.skins.skins[cmd - CMD_SKIN_DELETE_BASE].id);
+            }
             break;
     }
+    refreshDressingRoom(app);   // keep the 换装间 preview in sync with menu skin switches
 }
 
 bool physicsLooksSane(const CatPhysics& p) {
@@ -1072,7 +1512,7 @@ bool physicsLooksSane(const CatPhysics& p) {
 }
 
 void tickAndRender(AppState& app) {
-    if (!app.isVisible || !app.hwnd) return;
+    if (!app.isVisible || app.hiddenForFullscreen || !app.hwnd) return;
 
     double now = nowSeconds();
     app.lastRenderTime = now;
@@ -1118,7 +1558,7 @@ void tickAndRender(AppState& app) {
                 (float)(cur.x - wr.left) / (float)w * CatPhysics::CanvasWidth,
                 (float)(cur.y - wr.top)  / (float)h * CatPhysics::CanvasHeight
             };
-            CatHitZone zone = CatRenderer::hitTest(cp, app.physics, app.settings.coatTheme);
+            CatHitZone zone = CatRenderer::hitTest(cp, app.physics, activeSkin(app));
             if (zone == CatHitZone::Head) {
                 if (app.hasLastHover) {
                     float d = std::hypot(cp.x - app.lastHoverCanvas.x, cp.y - app.lastHoverCanvas.y);
@@ -1149,7 +1589,7 @@ void tickAndRender(AppState& app) {
     Gdiplus::Graphics g(&bmp);
     g.Clear(Gdiplus::Color(0, 0, 0, 0));
     g.ScaleTransform((float)w / CatPhysics::CanvasWidth, (float)h / CatPhysics::CanvasHeight);
-    CatRenderer::draw(g, app.physics, app.settings);
+    CatRenderer::draw(g, app.physics, app.settings, activeSkin(app));
 
     POINT ptDst = { wr.left, wr.top };
     SIZE szWnd = { w, h };
@@ -1374,6 +1814,12 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
 
+        case WM_DROPFILES:
+            // A .kurocat dropped onto the cat is imported and worn right away.
+            if (app) importDroppedFiles(*app, (HDROP)wParam);
+            else DragFinish((HDROP)wParam);
+            return 0;
+
         case WM_DESTROY:
             if (hwnd == (app ? app->hwnd : nullptr)) {
                 KillTimer(hwnd, TIMER_RENDER);
@@ -1394,6 +1840,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     }
                     Shell_NotifyIconW(NIM_DELETE, &app->nid);
                     if (app->trayIcon) DestroyIcon(app->trayIcon);
+                    if (app->dressingRoom) DestroyWindow(app->dressingRoom);
                     app->destroyBuffer();
                 }
                 PostQuitMessage(0);
@@ -1477,6 +1924,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     AppState app;
     g_app = &app;
     app.settings.loadFromRegistry();
+    app.skins.reload();
     app.isElevated = isCurrentProcessElevated();
 
     // "Always run as administrator": hand over to an elevated copy (one UAC prompt). If the user
@@ -1565,6 +2013,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     }
 
     applyWindowScaleAndPosition(app, false);
+    DragAcceptFiles(app.hwnd, TRUE);   // drop a .kurocat onto the cat to wear it
+    allowDropsWhenElevated(app.hwnd);
     app.input.registerRawInput(app.hwnd);
     registerTrayIcon(app);
 
@@ -1595,7 +2045,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     bool running = true;
     while (running) {
         double now = nowSeconds();
-        double waitSec = app.isVisible ? (app.nextFrameTime - now) : 0.25;
+        double waitSec = (app.isVisible && !app.hiddenForFullscreen) ? (app.nextFrameTime - now) : 0.25;
         if (waitSec > 0.0) {
             MsgWaitForMultipleObjectsEx(0, nullptr, (DWORD)(waitSec * 1000.0), QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         }

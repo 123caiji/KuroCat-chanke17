@@ -5,13 +5,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var overlayWindow: OverlayWindow!
     private var renderTimer: Timer?
+    private var windowWatchdogTimer: Timer?
     private var lastFrameTime: CFTimeInterval = CACurrentMediaTime()
     private var isPetVisible = true
+    private var hiddenForFullscreen = false
     private var availableUpdateVersion: String?
     private var availableUpdateURL: URL?
     private var availableAssetURL: URL?
     private var isUpdating = false
     private var isHandingOverToNewerCopy = false
+    private var dressingRoom: DressingRoomWindowController?
 
     private var currentAppVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.5"
@@ -32,6 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return }
             let menu = self.buildMenu()
             NSMenu.popUpContextMenu(menu, with: event, for: self.overlayWindow.catView)
+        }
+        catView.onDropSkinFiles = { [weak self] urls in
+            for url in urls { self?.importSkin(from: url) }
         }
 
         // Wire dual-layer InputEngine -> CatPhysics
@@ -54,6 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             _ = setAutoStartEnabled(true)
         }
         startRenderLoop()
+        startWindowWatchdog()
 
         // Auto-check GitHub Releases for updates shortly after launch
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
@@ -65,6 +72,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Quitting during launch because a newer copy is running: leave its stats alone.
         if isHandingOverToNewerCopy { return }
         renderTimer?.invalidate()
+        windowWatchdogTimer?.invalidate()
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
         InputEngine.shared.flushStats()
         InputEngine.shared.stop()
     }
@@ -147,7 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func startRenderLoop() {
         lastFrameTime = CACurrentMediaTime()
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            guard let self, self.isPetVisible else { return }
+            guard let self, self.isPetVisible, !self.hiddenForFullscreen else { return }
             let now = CACurrentMediaTime()
             let dt = CGFloat(now - self.lastFrameTime)
             self.lastFrameTime = now
@@ -223,6 +232,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fullscreenItem.state = settings.fullScreenOverlay ? .on : .off
         menu.addItem(fullscreenItem)
 
+        let hideFullscreenItem = NSMenuItem(title: "全屏应用时自动隐藏（PPT / 视频 / 游戏）", action: #selector(toggleHideInFullscreen), keyEquivalent: "")
+        hideFullscreenItem.target = self
+        hideFullscreenItem.state = settings.hideInFullscreen ? .on : .off
+        menu.addItem(hideFullscreenItem)
+
         let autoStartItem = NSMenuItem(title: "开机自动启动", action: #selector(toggleAutoStart), keyEquivalent: "")
         autoStartItem.target = self
         autoStartItem.state = isAutoStartEnabled() ? .on : .off
@@ -280,12 +294,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Cat coat submenu: original skins plus approved shorthair and orange-white.
         let coatMenu = NSMenu()
+        let library = SkinLibrary.shared
+        let customActive = library.skin(id: settings.customSkin) != nil
         for coat in CatCoatTheme.allCases {
             let item = NSMenuItem(title: coat.rawValue, action: #selector(selectCoatTheme(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = coat.rawValue
-            item.state = settings.coatTheme == coat ? .on : .off
+            item.state = !customActive && settings.coatTheme == coat ? .on : .off
             coatMenu.addItem(item)
+        }
+        // Imported .kurocat skins (docs/skin-format.md)
+        if !library.skins.isEmpty {
+            coatMenu.addItem(.separator())
+            for skin in library.skins {
+                let item = NSMenuItem(title: skin.name, action: #selector(selectCustomSkin(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = skin.id
+                item.state = settings.customSkin == skin.id ? .on : .off
+                if !skin.author.isEmpty { item.toolTip = "作者：\(skin.author)" }
+                coatMenu.addItem(item)
+            }
+        }
+        coatMenu.addItem(.separator())
+        let importItem = NSMenuItem(title: "导入皮肤…", action: #selector(showDressingRoom), keyEquivalent: "")
+        importItem.target = self
+        coatMenu.addItem(importItem)
+        let workshopItem = NSMenuItem(title: "打开皮肤工坊（制作皮肤）…", action: #selector(openSkinWorkshop), keyEquivalent: "")
+        workshopItem.target = self
+        coatMenu.addItem(workshopItem)
+        let openDirItem = NSMenuItem(title: "打开皮肤文件夹（备份）", action: #selector(openSkinsFolder), keyEquivalent: "")
+        openDirItem.target = self
+        coatMenu.addItem(openDirItem)
+        if !library.skins.isEmpty {
+            let deleteMenu = NSMenu()
+            for skin in library.skins {
+                let item = NSMenuItem(title: skin.name, action: #selector(deleteCustomSkin(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = skin.id
+                deleteMenu.addItem(item)
+            }
+            let deleteParent = NSMenuItem(title: "删除皮肤", action: nil, keyEquivalent: "")
+            deleteParent.submenu = deleteMenu
+            coatMenu.addItem(deleteParent)
         }
         let coatParent = NSMenuItem(title: "猫咪皮肤 🐱", action: nil, keyEquivalent: "")
         coatParent.submenu = coatMenu
@@ -376,8 +426,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleVisibility() {
         isPetVisible.toggle()
         if isPetVisible {
-            overlayWindow.orderFrontRegardless()
+            hiddenForFullscreen = false
+            syncWindowVisibilityAndTopmost()
+            if !hiddenForFullscreen {
+                overlayWindow.orderFrontRegardless()
+            }
         } else {
+            hiddenForFullscreen = false
             overlayWindow.orderOut(nil)
         }
     }
@@ -389,6 +444,93 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleFullScreenOverlay() {
         CatSettings.shared.fullScreenOverlay.toggle()
         overlayWindow.applyWindowLevelAndBehavior()
+        syncWindowVisibilityAndTopmost()
+    }
+
+    @objc private func toggleHideInFullscreen() {
+        CatSettings.shared.hideInFullscreen.toggle()
+        syncWindowVisibilityAndTopmost()
+    }
+
+    // MARK: - Topmost Watchdog & Fullscreen Auto-Hide
+
+    private func startWindowWatchdog() {
+        let nc = NSWorkspace.shared.notificationCenter
+        nc.addObserver(self, selector: #selector(handleWorkspaceStateChanged),
+                       name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+        nc.addObserver(self, selector: #selector(handleWorkspaceStateChanged),
+                       name: NSWorkspace.didActivateApplicationNotification, object: nil)
+
+        windowWatchdogTimer?.invalidate()
+        let timer = Timer(timeInterval: 0.6, repeats: true) { [weak self] _ in
+            self?.syncWindowVisibilityAndTopmost()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        windowWatchdogTimer = timer
+    }
+
+    @objc private func handleWorkspaceStateChanged() {
+        syncWindowVisibilityAndTopmost()
+    }
+
+    /// True when the frontmost app owns an on-screen window covering >= 98% of any display
+    /// (covers both native macOS Fullscreen Spaces and borderless fullscreen like WPS PPT / games).
+    private func isFrontmostAppFullscreen() -> Bool {
+        guard let front = NSWorkspace.shared.frontmostApplication else { return false }
+        let frontPID = front.processIdentifier
+        if frontPID == ProcessInfo.processInfo.processIdentifier { return false }
+        if let bid = front.bundleIdentifier, bid == "com.apple.finder" || bid == "com.apple.dock" {
+            return false
+        }
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            return false
+        }
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return false }
+
+        for info in list {
+            guard let pid = info[kCGWindowOwnerPID as String] as? pid_t, pid == frontPID else { continue }
+            let layer = info[kCGWindowLayer as String] as? Int ?? 0
+            if layer < 0 { continue }
+            guard let boundsDict = info[kCGWindowBounds as String] as? [String: Any],
+                  let w = boundsDict["Width"] as? CGFloat,
+                  let h = boundsDict["Height"] as? CGFloat else { continue }
+            for screen in screens {
+                if w >= screen.frame.width * 0.98 && h >= screen.frame.height * 0.98 {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private func syncWindowVisibilityAndTopmost() {
+        guard let overlayWindow else { return }
+        if !isPetVisible {
+            hiddenForFullscreen = false
+            return
+        }
+
+        let shouldHide = CatSettings.shared.hideInFullscreen && isFrontmostAppFullscreen()
+        if shouldHide {
+            if !hiddenForFullscreen {
+                hiddenForFullscreen = true
+                overlayWindow.orderOut(nil)
+            }
+            return
+        }
+
+        if hiddenForFullscreen {
+            hiddenForFullscreen = false
+            overlayWindow.applyWindowLevelAndBehavior()
+            overlayWindow.orderFrontRegardless()
+            lastFrameTime = CACurrentMediaTime()
+            return
+        }
+
+        if CatSettings.shared.fullScreenOverlay {
+            overlayWindow.orderFrontRegardless()
+        }
     }
 
     // MARK: - Launch at Login (macOS LaunchAgent — works reliably for signed & ad-hoc builds)
@@ -467,6 +609,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func selectCoatTheme(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
               let coat = CatCoatTheme(rawValue: raw) else { return }
+        CatSettings.shared.customSkin = ""
         CatSettings.shared.coatTheme = coat
         // Auto-pair signature eye color (still freely overridable via 瞳色切换!)
         switch coat {
@@ -477,6 +620,91 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .shorthair, .orangeWhite:
             CatSettings.shared.eyeTheme = .softAmber
         }
+        dressingRoom?.refresh()
+    }
+
+    // MARK: - Imported skins (换装间)
+
+    private static let skinWorkshopURLString = "https://chanke17.github.io/KuroCat-Workshop/"
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.pathExtension.lowercased() == "kurocat" {
+            importSkin(from: url)
+        }
+    }
+
+    @objc private func openSkinWorkshop() {
+        if let url = URL(string: Self.skinWorkshopURLString) {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc private func openSkinsFolder() {
+        let dir = SkinLibrary.directory
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(dir)
+    }
+
+    @objc private func showDressingRoom() {
+        if dressingRoom == nil {
+            let controller = DressingRoomWindowController()
+            controller.onImport = { [weak self] url in self?.importSkin(from: url) }
+            dressingRoom = controller
+        }
+        dressingRoom?.present()
+    }
+
+    /// Validates and stores a `.kurocat`, then wears it. Invalid files get a Chinese explanation.
+    private func importSkin(from url: URL) {
+        do {
+            let id = try SkinLibrary.shared.importFile(url)
+            CatSettings.shared.customSkin = id
+            let skin = SkinLibrary.shared.skin(id: id)
+            var message = "已换上「\(skin?.name ?? "新皮肤")」"
+            if let author = skin?.author, !author.isEmpty { message += "（作者：\(author)）" }
+            dressingRoom?.setStatus("✓ " + message, kind: 1)
+            dressingRoom?.refresh()
+        } catch {
+            let reason = error.localizedDescription
+            // With 换装间 open the red status line explains it in place; an alert is only for drops onto the cat.
+            if let room = dressingRoom, room.isVisible {
+                room.setStatus("没能导入「\(url.lastPathComponent)」：\(reason)", kind: 2)
+                return
+            }
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "无法导入这个皮肤"
+            alert.informativeText = "「\(url.lastPathComponent)」：\(reason)"
+            alert.addButton(withTitle: "知道了")
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+        }
+    }
+
+    @objc private func selectCustomSkin(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        CatSettings.shared.customSkin = id
+        dressingRoom?.refresh()
+    }
+
+    @objc private func deleteCustomSkin(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String, let skin = SkinLibrary.shared.skin(id: id) else { return }
+        let alert = NSAlert()
+        alert.messageText = "删除皮肤「\(skin.name)」？"
+        alert.informativeText = "会从皮肤文件夹里删除这个文件，删除后需要重新导入。"
+        alert.addButton(withTitle: "删除")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        if !SkinLibrary.shared.remove(id: id) {
+            let failed = NSAlert()
+            failed.messageText = "删除失败"
+            failed.informativeText = "无法删除 \(SkinLibrary.directory.appendingPathComponent("\(id).kurocat").path)"
+            failed.runModal()
+            return
+        }
+        if CatSettings.shared.customSkin == id { CatSettings.shared.customSkin = "" }
+        dressingRoom?.refresh()
     }
 
     @objc private func selectKeyboardTheme(_ sender: NSMenuItem) {

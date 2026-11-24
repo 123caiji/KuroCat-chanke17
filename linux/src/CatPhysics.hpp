@@ -41,6 +41,7 @@ struct CatSettings {
     bool petInteraction = true;
     bool fullClickThrough = false;
     bool alwaysOnTop = true;
+    bool hideInFullscreen = false;
     // 60fps redraws of a translucent window overload software compositors (统信 UOS / 麒麟 on
     // integrated or 国产 GPUs, VMs) and made the whole desktop lag. Default is adaptive 30/20/10fps.
     bool highFrameRate = false;
@@ -48,6 +49,8 @@ struct CatSettings {
     CatCoatTheme coatTheme = CatCoatTheme::ClassicBlack;
     KeyboardTheme keyboardTheme = KeyboardTheme::ClassicMilk;
     EyeColorTheme eyeTheme = EyeColorTheme::NeonChartreuse;
+    // Content id of the imported .kurocat skin in use; empty = the built-in coatTheme.
+    std::string customSkin;
     int posX = -99999;
     int posY = -99999;
 
@@ -79,11 +82,13 @@ struct CatSettings {
                 else if (k == "petInteraction") petInteraction = (std::stoi(v) != 0);
                 else if (k == "fullClickThrough") fullClickThrough = (std::stoi(v) != 0);
                 else if (k == "alwaysOnTop") alwaysOnTop = (std::stoi(v) != 0);
+                else if (k == "hideInFullscreen") hideInFullscreen = (std::stoi(v) != 0);
                 else if (k == "highFrameRate") highFrameRate = (std::stoi(v) != 0);
                 else if (k == "scale") scale = std::clamp(std::stof(v), 0.5f, 2.0f);
                 else if (k == "coatTheme") coatTheme = (CatCoatTheme)std::clamp(std::stoi(v), 0, 3);
                 else if (k == "keyboardTheme") keyboardTheme = (KeyboardTheme)std::clamp(std::stoi(v), 0, 2);
                 else if (k == "eyeTheme") eyeTheme = (EyeColorTheme)std::clamp(std::stoi(v), 0, 5);
+                else if (k == "customSkin") customSkin = v.size() == 16 && v.find_first_not_of("0123456789abcdef") == std::string::npos ? v : "";
                 else if (k == "posX") posX = std::stoi(v);
                 else if (k == "posY") posY = std::stoi(v);
             } catch (...) {}
@@ -104,11 +109,13 @@ struct CatSettings {
           << "petInteraction=" << (petInteraction ? 1 : 0) << "\n"
           << "fullClickThrough=" << (fullClickThrough ? 1 : 0) << "\n"
           << "alwaysOnTop=" << (alwaysOnTop ? 1 : 0) << "\n"
+          << "hideInFullscreen=" << (hideInFullscreen ? 1 : 0) << "\n"
           << "highFrameRate=" << (highFrameRate ? 1 : 0) << "\n"
           << "scale=" << scale << "\n"
           << "coatTheme=" << (int)coatTheme << "\n"
           << "keyboardTheme=" << (int)keyboardTheme << "\n"
-          << "eyeTheme=" << (int)eyeTheme << "\n";
+          << "eyeTheme=" << (int)eyeTheme << "\n"
+          << "customSkin=" << customSkin << "\n";
         if (posX != -99999 && posY != -99999) {
             f << "posX=" << posX << "\nposY=" << posY << "\n";
         }
