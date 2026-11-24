@@ -1004,7 +1004,7 @@ void showContextMenu(AppState& app, POINT screenPt) {
         case CMD_COAT_SHORTHAIR:
         case CMD_COAT_ORANGE_WHITE:
             app.settings.coatTheme = cmd == CMD_COAT_SHORTHAIR ? CatCoatTheme::Shorthair : CatCoatTheme::OrangeWhite;
-            app.settings.eyeTheme = EyeColorTheme::SoftAmber;
+            app.settings.eyeTheme = cmd == CMD_COAT_SHORTHAIR ? EyeColorTheme::ReferenceHazel : EyeColorTheme::WarmAmber;
             app.settings.saveToRegistry();
             break;
         case CMD_EYE_SOFT_AMBER: app.settings.eyeTheme = EyeColorTheme::SoftAmber; app.settings.saveToRegistry(); break;

@@ -518,6 +518,16 @@ enum CatRenderer {
             ctx.setFillColor(bodyColor(coat).cgColor)
             ctx.addPath(path)
             ctx.fillPath()
+            if coat == .orangeWhite {
+                // Overlap the matching fur colors at the ear/crown join so the
+                // white torso underpaint cannot leave an antialiased seam.
+                let join = CGMutablePath()
+                join.move(to: lCheek)
+                join.addCurve(to: crown, control1: H(leftCheekX - 1.5, -14), control2: H(-26 + cheekShift * 0.3, -30 + crownDrop))
+                join.addCurve(to: rCheek, control1: H(26 + cheekShift * 0.3, -30 + crownDrop), control2: H(rightCheekX + 1.5, -14))
+                ctx.setStrokeColor(earTailColor(coat).cgColor); ctx.setLineWidth(1.0); ctx.setLineCap(.round)
+                ctx.addPath(join); ctx.strokePath()
+            }
             if patterned(coat) {
                 ctx.saveGState(); ctx.addPath(path); ctx.clip()
                 drawCoatMarks(in: ctx, seatX: seatX, seatY: seatY, head: headCenter, physics: physics, coat: coat)
@@ -639,10 +649,13 @@ enum CatRenderer {
     }
 
     private static func coatMarkPoint(_ p: CGPoint, headSurface: Bool, skull: Bool, coat: CatCoatTheme, seatX: CGFloat, seatY: CGFloat,
-                                      head: CGPoint, physics: CatPhysics) -> CGPoint {
+                                      head: CGPoint, physics: CatPhysics, whiteSurface: Bool = false) -> CGPoint {
         if headSurface {
-            let depth: CGFloat = coat == .orangeWhite
-                ? 29.6 * sqrt(max(0, 1 - pow(p.x / 46, 2) - pow(p.y / 40, 2))) : 27.5
+            let radius = max(0, 1 - pow(p.x / 46, 2) - pow(p.y / 40, 2))
+            // A zero-slope depth at the cheek rim keeps the white contour from
+            // folding into a tip as it turns. Other coat patterns stay unchanged.
+            let surface = whiteSurface ? radius * radius * (3 - 2 * radius) : sqrt(radius)
+            let depth: CGFloat = coat == .orangeWhite ? 29.6 * surface : 27.5
             let projected = skull ? p : projectHead3D(x: p.x, y: p.y, z: depth,
                                           yawRad: physics.headYaw.value * 0.50,
                                           pitchRad: physics.headPitch.value * 0.36).pt
@@ -658,17 +671,29 @@ enum CatRenderer {
     private static func drawCoatMarks(in ctx: CGContext, seatX: CGFloat, seatY: CGFloat,
                                       head: CGPoint, physics: CatPhysics, coat: CatCoatTheme) {
         let marks = CoatPatterns.marks(for: coat)
+        let overlap = min(1, abs(physics.headYaw.value) * max(0, physics.headPitch.value))
+        let coverage = overlap * overlap * (3 - 2 * overlap)
         func markPath(_ mark: CoatMark) -> CGMutablePath {
             let path = CGMutablePath()
             for (i, point) in mark.points.enumerated() {
-                let p = coatMarkPoint(point, headSurface: mark.head, skull: mark.skull, coat: coat, seatX: seatX, seatY: seatY, head: head, physics: physics)
+                var local = point
+                if mark.clipToBib {
+                    let lowerRim = min(1, max(0, (point.y - 20) / 6))
+                    local.x *= 1 - 0.5 * lowerRim * (1 - coverage)
+                    if point.y > 20 { local.y = 20 + (point.y - 20) * (0.75 + 0.25 * coverage) }
+                }
+                let p = coatMarkPoint(local, headSurface: mark.head, skull: mark.skull, coat: coat, seatX: seatX, seatY: seatY, head: head, physics: physics, whiteSurface: mark.rgb == 0xF2EEE4)
                 if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
             }
             if mark.width == 0 { path.closeSubpath() }
             return path
         }
+        let bib = marks.first { $0.head && !$0.skull && $0.rgb == 0xF2EEE4 && $0.points.contains { abs($0.x) > 46 } }
         for mark in marks {
+            // No extra white coverage in the front view or while looking up.
+            if mark.clipToBib && coverage == 0 { continue }
             ctx.saveGState()
+            if mark.clipToBib, let bib = bib { ctx.addPath(markPath(bib)); ctx.clip() }
             let path = markPath(mark)
             let color = rgb(mark.rgb, mark.alpha)
             if mark.width == 0 {
@@ -679,6 +704,7 @@ enum CatRenderer {
             }
             ctx.restoreGState()
         }
+
     }
 
     // MARK: - 3rd Key Hind Foot Easter Egg
@@ -800,9 +826,33 @@ enum CatRenderer {
             ctx.restoreGState()
         }
 
+        if patterned(coat) { drawPatternedMuzzle(in: ctx, yawRad: yawRad, pitchRad: pitchRad) }
+
         // 2. 3D-Projected Whiskers (outer-side whiskers poke out past silhouette when turning!)
         drawWhiskers3D(in: ctx, yawRad: yawRad, pitchRad: pitchRad, physics: physics, coat: coat)
 
+        ctx.restoreGState()
+    }
+
+    // Small opaque nose and soft mouth on the existing white muzzle, below whiskers.
+    // All control points share the head's yaw/pitch projection; the caller applies roll.
+    private static func drawPatternedMuzzle(in ctx: CGContext, yawRad: CGFloat, pitchRad: CGFloat) {
+        let local: [CGPoint] = [CGPoint(x: -2.9, y: 8.5), CGPoint(x: -1.8, y: 8.1), CGPoint(x: 1.8, y: 8.1), CGPoint(x: 2.9, y: 8.5), CGPoint(x: 3.2, y: 8.9), CGPoint(x: 0.8, y: 12.1), CGPoint(x: 0, y: 12.3), CGPoint(x: -0.8, y: 12.1), CGPoint(x: -3.2, y: 8.9), CGPoint(x: -2.9, y: 8.5), CGPoint(x: -5.9, y: 14.4), CGPoint(x: -4.7, y: 18), CGPoint(x: -1.4, y: 18), CGPoint(x: 0, y: 14.3), CGPoint(x: 1.4, y: 18), CGPoint(x: 4.7, y: 18), CGPoint(x: 5.9, y: 14.4), CGPoint(x: 0, y: 12.0)]
+        let p = local.map { projectHead3D(x: $0.x, y: $0.y, z: 30, yawRad: yawRad, pitchRad: pitchRad).pt }
+        ctx.saveGState()
+        let nose = CGMutablePath()
+        nose.move(to: p[0])
+        nose.addCurve(to: p[3], control1: p[1], control2: p[2])
+        nose.addCurve(to: p[6], control1: p[4], control2: p[5])
+        nose.addCurve(to: p[9], control1: p[7], control2: p[8])
+        nose.closeSubpath()
+        ctx.setFillColor(rgb(0xD98F9B).cgColor)
+        ctx.addPath(nose); ctx.fillPath()
+        ctx.setStrokeColor(rgb(0x8B8C86, 0.78).cgColor)
+        ctx.setLineWidth(1.15); ctx.setLineCap(.round); ctx.setLineJoin(.round)
+        ctx.move(to: p[17]); ctx.addLine(to: p[13])
+        ctx.move(to: p[10]); ctx.addCurve(to: p[13], control1: p[11], control2: p[12])
+        ctx.addCurve(to: p[16], control1: p[14], control2: p[15]); ctx.strokePath()
         ctx.restoreGState()
     }
 
@@ -1235,17 +1285,9 @@ enum CatRenderer {
 
         ctx.saveGState()
         if coat != .siamese {
-            ctx.setFillColor(limbColor(coat).cgColor)
+            ctx.setFillColor((patterned(coat) ? pawColor(coat) : limbColor(coat)).cgColor)
             ctx.addPath(limbPath)
-            if patterned(coat) {
-                ctx.saveGState(); ctx.clip()
-                let colors = [pawColor(coat).cgColor, limbColor(coat).cgColor] as CFArray
-                if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 0.30]) {
-                    ctx.drawLinearGradient(gradient, start: start, end: end,
-                                           options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
-                }
-                ctx.restoreGState()
-            } else { ctx.fillPath() }
+            ctx.fillPath()
             if !patterned(coat) { ctx.fillEllipse(in: pawRect) }
             if patterned(coat) {
                 let cuff = CGMutablePath()
