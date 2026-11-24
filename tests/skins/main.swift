@@ -61,7 +61,7 @@ func pixels(_ c:CGContext)->[UInt8] {Array(UnsafeBufferPointer(start:c.data!.ass
 func save(_ c:CGContext,_ name:String){let rep=NSBitmapImageRep(cgImage:c.makeImage()!);try! rep.representation(using:.png,properties:[:])!.write(to:output.appendingPathComponent(name))}
 var n=0
 let aboveKeyboard = 720 * 460 * 4
-for coat in [CatCoatTheme.classicBlack,.siamese] {
+for coat in [CatCoatTheme.siamese] {
  for eye in [EyeColorTheme.neonChartreuse,.siameseBlue,.warmAmber,.iceCyan] {
   for state in [0,1,2,4,5,6,7] {
    let current = pixels(frame(coat,eye,state))
