@@ -259,7 +259,7 @@ public:
             mouseVelocity.y *= 0.82f;
         }
 
-        double now = nowSeconds();
+        now = nowSeconds();
         pollAsyncFallback(now);
         while (!recentKeyTimes_.empty() && now - recentKeyTimes_.front() > 10.0) {
             recentKeyTimes_.pop_front();

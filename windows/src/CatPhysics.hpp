@@ -2,6 +2,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include <cmath>
+#include <string>
 #include <vector>
 #include <unordered_map>
 #include <random>
@@ -51,11 +52,13 @@ struct CatSettings {
     bool petInteraction = true;
     bool fullClickThrough = false;
     bool alwaysOnTop = true;
-    bool runAsAdmin = false; // relaunch elevated so keys typed into admin-level games are visible (UIPI)
+    bool runAsAdmin = false; // relaunch elevated so keys typed into admin-level apps/games are visible (UIPI)
     float scale = 1.0f;
     CatCoatTheme coatTheme = CatCoatTheme::ClassicBlack;
     KeyboardTheme keyboardTheme = KeyboardTheme::ClassicMilk;
     EyeColorTheme eyeTheme = EyeColorTheme::NeonChartreuse;
+    // Content id (16 hex chars) of the imported .kurocat skin in use; empty = the built-in coatTheme.
+    std::string customSkin;
     int posX = -99999;
     int posY = -99999;
 
@@ -87,6 +90,19 @@ struct CatSettings {
         coatTheme        = (CatCoatTheme)std::clamp((int)readDword(L"CoatTheme", 0), 0, static_cast<int>(CatCoatTheme::Tabby));
         keyboardTheme    = (KeyboardTheme)std::clamp((int)readDword(L"KeyboardTheme", 0), 0, 2);
         eyeTheme         = (EyeColorTheme)std::clamp((int)readDword(L"EyeTheme", 0), 0, (int)EyeColorTheme::OliveGold);
+        {
+            wchar_t buf[32] = {0};
+            DWORD type = 0, sz = sizeof(buf) - sizeof(wchar_t);
+            customSkin.clear();
+            if (RegQueryValueExW(hKey, L"CustomSkin", nullptr, &type, (LPBYTE)buf, &sz) == ERROR_SUCCESS && type == REG_SZ) {
+                for (int i = 0; buf[i] && i < 16; ++i) {
+                    wchar_t c = buf[i];
+                    if (!((c >= L'0' && c <= L'9') || (c >= L'a' && c <= L'f'))) { customSkin.clear(); break; }
+                    customSkin += (char)c;
+                }
+                if (customSkin.size() != 16) customSkin.clear();
+            }
+        }
         DWORD hasPos     = readDword(L"HasPos", 0);
         if (hasPos) {
             posX = (int)readDword(L"PosX", 0);
@@ -121,6 +137,10 @@ struct CatSettings {
         writeDword(L"CoatTheme", (DWORD)coatTheme);
         writeDword(L"KeyboardTheme", (DWORD)keyboardTheme);
         writeDword(L"EyeTheme", (DWORD)eyeTheme);
+        {
+            std::wstring id(customSkin.begin(), customSkin.end());
+            RegSetValueExW(hKey, L"CustomSkin", 0, REG_SZ, (const BYTE*)id.c_str(), (DWORD)((id.size() + 1) * sizeof(wchar_t)));
+        }
         if (posX != -99999 && posY != -99999) {
             writeDword(L"HasPos", 1);
             writeDword(L"PosX", (DWORD)posX);

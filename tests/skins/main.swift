@@ -6,6 +6,8 @@ final class RenderSettings {
  var eyeTheme = EyeColorTheme.neonChartreuse
  var keyboardTheme = KeyboardTheme.classicMilk
  var showKeyLegends = false
+ var overrideSkin: SkinSpec?
+ var activeSkin: SkinSpec { overrideSkin ?? SkinSpec.builtIn(coatTheme) }
  let showKeyBadges = false
  let keyboardMarquee = false
  let obsCaptureMode = 0
@@ -257,3 +259,46 @@ for (name,coat) in [("shorthair",CatCoatTheme.shorthair),("orangeWhite",.orangeW
  }
 }
 print("PASS: noses and both mouth lobes visible in all 18 extreme yaw/pitch renders")
+
+// MARK: - .kurocat skins (docs/skin-format.md)
+let repoRoot = ProcessInfo.processInfo.environment["KUROCAT_ROOT"].map { URL(fileURLWithPath: $0) }
+    ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+let templates: [(String, CatCoatTheme, EyeColorTheme)] = [("black", .classicBlack, .neonChartreuse), ("siamese", .siamese, .siameseBlue),
+                                                          ("shorthair", .shorthair, .softAmber), ("orangeWhite", .orangeWhite, .referenceHazel)]
+for (file, coat, eye) in templates {
+ let spec = try! SkinSpec.load(contentsOf: repoRoot.appendingPathComponent("skins/\(file).kurocat"))
+ precondition(spec.name == SkinSpec.builtIn(coat).name, "Template name mismatch: \(file)")
+ for state in [0, 2, 3, 7] {
+  RenderSettings.shared.overrideSkin = nil
+  let builtIn = pixels(frame(coat, eye, state))
+  RenderSettings.shared.overrideSkin = spec
+  let imported = pixels(frame(coat, eye, state))
+  var far = 0
+  for i in stride(from: 0, to: builtIn.count, by: 4) where (0..<4).contains(where: { abs(Int(builtIn[i + $0]) - Int(imported[i + $0])) > 6 }) { far += 1 }
+  precondition(far < 200, "Template \(file) drifts from the built-in coat in state \(state): \(far) px")
+ }
+}
+let demo = try! SkinSpec.load(contentsOf: repoRoot.appendingPathComponent("skins/samples/curve-regions-demo.kurocat"))
+precondition(demo.regions.count >= 3 && demo.shape.bodyWidth > 1.2, "Sample skin lost its curve regions / chubby shape")
+RenderSettings.shared.overrideSkin = demo
+for state in [0, 1, 2, 3, 8] {
+ let c = frame(.classicBlack, .softAmber, state, false, state == 8 ? 3 : 0)
+ precondition(pixels(c).filter { $0 != 0 }.count > 10000, "Empty sample-skin render")
+ save(c, "curve-regions-demo-\(state).png")
+}
+RenderSettings.shared.overrideSkin = nil
+func rejects(_ json: String, _ fragment: String) {
+ do { _ = try SkinSpec.parse(Data(json.utf8)); preconditionFailure("Accepted invalid skin: \(json)") }
+ catch { precondition(error.localizedDescription.contains(fragment), "Unexpected error for \(json): \(error.localizedDescription)") }
+}
+rejects("{", "JSON")
+rejects("[]", "JSON 对象")
+rejects(##"{"name":"x","palette":{"body":"#000000"}}"##, "formatVersion")
+rejects(##"{"formatVersion":2,"name":"x","palette":{"body":"#000000"}}"##, "升级")
+rejects(##"{"formatVersion":1,"name":"x","palette":{"body":"pink"}}"##, "palette.body")
+rejects(##"{"formatVersion":1,"name":"x","palette":{}}"##, "palette.body")
+rejects(##"{"formatVersion":1,"name":"x","palette":{"body":"#000000"},"regions":[{"space":"wing","fill":"#FFFFFF","anchors":[]}]}"##, "regions[0].space")
+rejects(##"{"formatVersion":1,"name":"x","palette":{"body":"#000000"},"shape":{"bodyWidth":"fat"}}"##, "shape.bodyWidth")
+let clamped = try! SkinSpec.parse(Data(##"{"formatVersion":1,"name":"  胖  ","palette":{"body":"#112233"},"shape":{"bodyWidth":9},"unknownField":true}"##.utf8))
+precondition(clamped.shape.bodyWidth == 1.35 && clamped.name == "胖", "Clamping / trimming / unknown-field rules broken")
+print("PASS: 4 .kurocat templates match their built-in coats, curve-regions sample renders, invalid files are rejected in Chinese")

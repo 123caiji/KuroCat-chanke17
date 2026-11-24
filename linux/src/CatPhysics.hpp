@@ -57,6 +57,8 @@ struct CatSettings {
     CatCoatTheme coatTheme = CatCoatTheme::ClassicBlack;
     KeyboardTheme keyboardTheme = KeyboardTheme::ClassicMilk;
     EyeColorTheme eyeTheme = EyeColorTheme::NeonChartreuse;
+    // Content id of the imported .kurocat skin in use; empty = the built-in coatTheme.
+    std::string customSkin;
     int posX = -99999;
     int posY = -99999;
 
@@ -101,6 +103,7 @@ struct CatSettings {
                 else if (k == "coatTheme") coatTheme = (CatCoatTheme)std::clamp(std::stoi(v), 0, 3);
                 else if (k == "keyboardTheme") keyboardTheme = (KeyboardTheme)std::clamp(std::stoi(v), 0, 2);
                 else if (k == "eyeTheme") eyeTheme = (EyeColorTheme)std::clamp(std::stoi(v), 0, 5);
+                else if (k == "customSkin") customSkin = v.size() == 16 && v.find_first_not_of("0123456789abcdef") == std::string::npos ? v : "";
                 else if (k == "posX") posX = std::stoi(v);
                 else if (k == "posY") posY = std::stoi(v);
             } catch (...) {}
@@ -133,7 +136,8 @@ struct CatSettings {
           << "scale=" << scale << "\n"
           << "coatTheme=" << (int)coatTheme << "\n"
           << "keyboardTheme=" << (int)keyboardTheme << "\n"
-          << "eyeTheme=" << (int)eyeTheme << "\n";
+          << "eyeTheme=" << (int)eyeTheme << "\n"
+          << "customSkin=" << customSkin << "\n";
         if (posX != -99999 && posY != -99999) {
             f << "posX=" << posX << "\nposY=" << posY << "\n";
         }
