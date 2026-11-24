@@ -86,6 +86,7 @@ enum MenuCmd : UINT {
     CMD_COAT_SIAMESE,
     CMD_COAT_SHORTHAIR,
     CMD_COAT_ORANGE_WHITE,
+    CMD_COAT_DAZED,
     CMD_KB_MILK,
     CMD_KB_HACKER,
     CMD_KB_RETRO,
@@ -938,6 +939,7 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(coatMenu, MF_STRING | (app.settings.coatTheme == CatCoatTheme::Siamese ? MF_CHECKED : 0), CMD_COAT_SIAMESE, L"\u6316\u7164\u66B9\u7F57\u732B");
     AppendMenuW(coatMenu, MF_STRING | (app.settings.coatTheme == CatCoatTheme::Shorthair ? MF_CHECKED : 0), CMD_COAT_SHORTHAIR, L"美短（银虎斑加白）");
     AppendMenuW(coatMenu, MF_STRING | (app.settings.coatTheme == CatCoatTheme::OrangeWhite ? MF_CHECKED : 0), CMD_COAT_ORANGE_WHITE, L"橘白猫");
+    AppendMenuW(coatMenu, MF_STRING | (app.settings.coatTheme == CatCoatTheme::Dazed ? MF_CHECKED : 0), CMD_COAT_DAZED, L"呆猫");
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)coatMenu, L"\u732B\u54AA\u76AE\u80A4");
 
     // Keyboard Theme submenu
@@ -1066,6 +1068,11 @@ void showContextMenu(AppState& app, POINT screenPt) {
         case CMD_COAT_ORANGE_WHITE:
             app.settings.coatTheme = cmd == CMD_COAT_SHORTHAIR ? CatCoatTheme::Shorthair : CatCoatTheme::OrangeWhite;
             app.settings.eyeTheme = cmd == CMD_COAT_SHORTHAIR ? EyeColorTheme::ReferenceHazel : EyeColorTheme::WarmAmber;
+            app.settings.saveToRegistry();
+            break;
+        case CMD_COAT_DAZED:
+            app.settings.coatTheme = CatCoatTheme::Dazed;
+            app.settings.eyeTheme = EyeColorTheme::SoftAmber;
             app.settings.saveToRegistry();
             break;
         case CMD_EYE_SOFT_AMBER: app.settings.eyeTheme = EyeColorTheme::SoftAmber; app.settings.saveToRegistry(); break;
