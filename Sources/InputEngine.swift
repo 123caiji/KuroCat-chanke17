@@ -79,24 +79,23 @@ final class InputEngine {
 
     private var lastModifierFlags: CGEventFlags = []
 
+    // The render and hit-test paths read status every frame. Refresh these
+    // permissions at startup and in the existing watchdog instead.
+    private var inputMonitoringAllowed = false
+    private var keyboardMonitoringAllowed = false
+
     var status: InputEngineStatus {
-        guard hasKeyboardGlobalPermission else { return .needsPermission }
+        guard keyboardMonitoringAllowed else { return .needsPermission }
         if isHIDActive && isTapActive { return .fullHardware }
         if isHIDActive { return .hidOnly }
         if isTapActive { return .eventTapOnly }
         return .needsRestart
     }
 
-    var hasInputMonitoringPermission: Bool {
-        CGPreflightListenEventAccess() || (IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted)
-    }
-
-    var hasAccessibilityPermission: Bool {
-        AXIsProcessTrusted()
-    }
-
-    var hasKeyboardGlobalPermission: Bool {
-        hasInputMonitoringPermission || hasAccessibilityPermission
+    private func refreshPermissions() {
+        inputMonitoringAllowed = CGPreflightListenEventAccess()
+            || IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
+        keyboardMonitoringAllowed = inputMonitoringAllowed || AXIsProcessTrusted()
     }
 
     var currentKPM: Int {
@@ -112,6 +111,7 @@ final class InputEngine {
 
     func start() {
         startLocalFallbackMonitor()
+        refreshPermissions()
         tryStartHID()
         tryStartEventTap()
         notifyStatus()
@@ -134,21 +134,20 @@ final class InputEngine {
         let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
             guard let self else { return }
             let prevStatus = self.status
-            let inputAllowed = self.hasInputMonitoringPermission
-            let keyboardAllowed = inputAllowed || self.hasAccessibilityPermission
-            if !inputAllowed && self.isHIDActive {
+            self.refreshPermissions()
+            if !self.inputMonitoringAllowed && self.isHIDActive {
                 self.stopHID()
             }
-            if !keyboardAllowed && self.isTapActive {
+            if !self.keyboardMonitoringAllowed && self.isTapActive {
                 self.stopEventTap()
             }
             if let tap = self.eventTap, !CFMachPortIsValid(tap) {
                 self.stopEventTap()
             }
-            if !self.isHIDActive && inputAllowed {
+            if !self.isHIDActive && self.inputMonitoringAllowed {
                 self.tryStartHID()
             }
-            if !self.isTapActive && keyboardAllowed {
+            if !self.isTapActive && self.keyboardMonitoringAllowed {
                 self.tryStartEventTap()
             } else if self.isTapActive, let tap = self.eventTap, !CGEvent.tapIsEnabled(tap: tap) {
                 CGEvent.tapEnable(tap: tap, enable: true)
@@ -294,7 +293,7 @@ final class InputEngine {
 
     private func tryStartHID() {
         guard !isHIDActive else { return }
-        guard hasInputMonitoringPermission else { return }
+        guard inputMonitoringAllowed else { return }
 
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
 
@@ -385,7 +384,7 @@ final class InputEngine {
         guard !isTapActive else { return }
         // Only activate keyboard EventTap when macOS actually granted Input Monitoring or Accessibility;
         // otherwise listenOnly tap silently drops keyboard events while returning non-nil!
-        guard hasKeyboardGlobalPermission else { return }
+        guard keyboardMonitoringAllowed else { return }
 
         var mask: CGEventMask = 0
         let types: [CGEventType] = [
