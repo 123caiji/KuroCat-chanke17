@@ -71,6 +71,7 @@ enum MenuCmd : UINT {
     CMD_TOGGLE_VISIBLE = 1001,
     CMD_TOGGLE_CLICKTHROUGH,
     CMD_TOGGLE_TOPMOST,
+    CMD_TOGGLE_AUTOHIDE_FS,
     CMD_TOGGLE_AUTOSTART,
     CMD_TOGGLE_BADGES,
     CMD_TOGGLE_MOUSE_BADGES,
@@ -82,6 +83,7 @@ enum MenuCmd : UINT {
     CMD_OBS_OFF,
     CMD_OBS_TRANSPARENT,
     CMD_OBS_GREENSCREEN,
+    CMD_TOGGLE_OBS_HIDE,
     CMD_TOGGLE_EDIT,
     CMD_LANG_ZH,
     CMD_LANG_EN,
@@ -123,6 +125,7 @@ struct AppState {
     CatPhysics physics;
 
     bool isVisible = true;
+    bool hiddenByFullscreen = false;
     bool isDragging = false;
     int activeResizeCorner = -1; // -1 = none, 0=TL, 1=TR, 2=BL, 3=BR
     POINT resizeAnchorScreenPt = {};
@@ -803,6 +806,10 @@ void recoverAfterSystemEvent(AppState& app) {
     double now = nowSeconds();
     app.input.resetAllState();
     app.input.registerRawInput(app.hwnd);
+    app.input.installKeyboardHook();
+    if (app.settings.obsCaptureMode > 0 && app.settings.obsHideDesktop) {
+        applyOBSMode(app);
+    }
     app.input.lastMouseMoveTime = now; // wake the cat up so it visibly greets the user again
     app.destroyBuffer();
     app.ulwFailures = 0;
@@ -829,14 +836,37 @@ void housekeeping(AppState& app) {
         recoverAfterSystemEvent(app);
         return;
     }
-    if (app.isVisible && !IsWindowVisible(app.hwnd)) ShowWindow(app.hwnd, SW_SHOWNOACTIVATE);
+    if (app.isVisible && !app.hiddenByFullscreen && !IsWindowVisible(app.hwnd)) ShowWindow(app.hwnd, SW_SHOWNOACTIVATE);
 
     bool fullscreenFg = isForegroundFullscreen();
-    if (app.pendingTopmostTime > 0.0 && now >= app.pendingTopmostTime) {
-        app.pendingTopmostTime = 0.0;
-        assertTopmost(app);
-    } else if (fullscreenFg) {
-        assertTopmost(app);
+    bool obsBg = (app.settings.obsCaptureMode > 0 && app.settings.obsHideDesktop);
+    if (app.settings.autoHideFullscreen && !obsBg) {
+        if (fullscreenFg && !app.hiddenByFullscreen) {
+            app.hiddenByFullscreen = true;
+            ShowWindow(app.hwnd, SW_HIDE);
+        } else if (!fullscreenFg && app.hiddenByFullscreen) {
+            app.hiddenByFullscreen = false;
+            if (app.isVisible) ShowWindow(app.hwnd, SW_SHOWNOACTIVATE);
+        }
+    } else if (app.hiddenByFullscreen) {
+        app.hiddenByFullscreen = false;
+        if (app.isVisible) ShowWindow(app.hwnd, SW_SHOWNOACTIVATE);
+    }
+
+    if (!obsBg && !app.hiddenByFullscreen) {
+        if (app.pendingTopmostTime > 0.0 && now >= app.pendingTopmostTime) {
+            app.pendingTopmostTime = 0.0;
+            assertTopmost(app);
+        } else if (fullscreenFg) {
+            assertTopmost(app);
+        }
+    }
+
+    // Some fullscreen/DirectInput games reset or starve Raw Input when taking focus;
+    // periodically re-register RIDEV_INPUTSINK while a fullscreen app is active and no raw keys arrive.
+    if (fullscreenFg && app.input.secondsSinceRawKeyboard(now) > 3.0) {
+        app.input.registerRawInput(app.hwnd);
+        if (!app.input.kbHook_) app.input.installKeyboardHook();
     }
 
     // Detect admin-level games whose keystrokes Windows withholds from us.
@@ -859,6 +889,7 @@ void housekeeping(AppState& app) {
 }
 
 void quitApp(AppState& app) {
+    app.input.uninstallKeyboardHook();
     // Destroying the overlay runs the normal WM_DESTROY cleanup (tray icon, hotkey...) and quits.
     if (app.hwnd && IsWindow(app.hwnd)) DestroyWindow(app.hwnd);
     else PostQuitMessage(0);
@@ -882,12 +913,20 @@ void applyOBSMode(AppState& app) {
     if (wantToolWindow != isToolWindow) {
         if (wantToolWindow) ex |= WS_EX_TOOLWINDOW;
         else ex &= ~WS_EX_TOOLWINDOW;
-        // Changing WS_EX_TOOLWINDOW requires hiding & re-showing so the shell & OBS Window Capture refresh cleanly.
-        bool wasVis = app.isVisible;
+        bool wasVis = app.isVisible && !app.hiddenByFullscreen;
         if (wasVis) ShowWindow(app.hwnd, SW_HIDE);
         SetWindowLongPtrW(app.hwnd, GWL_EXSTYLE, ex);
         SetWindowPos(app.hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
         if (wasVis) ShowWindow(app.hwnd, SW_SHOWNOACTIVATE);
+    }
+    bool hideDesk = (app.settings.obsCaptureMode > 0 && app.settings.obsHideDesktop);
+    if (hideDesk) {
+        // Move off-monitor & remove topmost so desktop stays clean while OBS WGC captures live frames!
+        int offX = GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN) + 120;
+        int offY = GetSystemMetrics(SM_YVIRTUALSCREEN) + 40;
+        SetWindowPos(app.hwnd, HWND_BOTTOM, offX, offY, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+    } else {
+        applyWindowScaleAndPosition(app, false);
     }
 }
 
@@ -922,6 +961,7 @@ void showContextMenu(AppState& app, POINT screenPt) {
         tr(L"\u5B8C\u5168\u9F20\u6807\u7A7F\u900F (Ctrl+Alt+Shift+P / \u6309\u4F4FAlt\u53EF\u53F3\u952E)",
            L"Full Click-Through (Ctrl+Alt+Shift+P / Hold Alt)"));
     AppendMenuW(menu, MF_STRING | (app.settings.alwaysOnTop ? MF_CHECKED : 0), CMD_TOGGLE_TOPMOST, tr(L"\u7A97\u53E3\u7F6E\u9876\u663E\u793A", L"Always On Top"));
+    AppendMenuW(menu, MF_STRING | (app.settings.autoHideFullscreen ? MF_CHECKED : 0), CMD_TOGGLE_AUTOHIDE_FS, tr(L"\u5168\u5C4F\u5E94\u7528\u65F6\u81EA\u52A8\u9690\u85CF", L"Auto-Hide in Fullscreen Apps"));
     AppendMenuW(menu, MF_STRING | (isAutoStartEnabled() ? MF_CHECKED : 0), CMD_TOGGLE_AUTOSTART, tr(L"\u5F00\u673A\u81EA\u52A8\u542F\u52A8", L"Launch at Startup"));
     if (app.isElevated) {
         AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, tr(L"\u2713 \u5DF2\u4EE5\u7BA1\u7406\u5458\u8EAB\u4EFD\u8FD0\u884C", L"\u2713 Running as Administrator"));
@@ -940,6 +980,9 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(obsMenu, MF_STRING | (app.settings.obsCaptureMode == 0 ? MF_CHECKED : 0), CMD_OBS_OFF, tr(L"\u5173\u95ED\uFF08\u6B63\u5E38\u684C\u9762\u60AC\u6D6E\uFF09", L"Off (Normal Overlay)"));
     AppendMenuW(obsMenu, MF_STRING | (app.settings.obsCaptureMode == 1 ? MF_CHECKED : 0), CMD_OBS_TRANSPARENT, tr(L"OBS \u900F\u660E\u7A97\u53E3\u6355\u83B7", L"OBS Transparent Window Capture"));
     AppendMenuW(obsMenu, MF_STRING | (app.settings.obsCaptureMode == 2 ? MF_CHECKED : 0), CMD_OBS_GREENSCREEN, tr(L"OBS \u7EFF\u5E55\u6A21\u5F0F (#00FF00)", L"OBS Green Screen (#00FF00)"));
+    AppendMenuW(obsMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(obsMenu, MF_STRING | (app.settings.obsHideDesktop ? MF_CHECKED : 0) | (app.settings.obsCaptureMode == 0 ? MF_GRAYED : 0),
+        CMD_TOGGLE_OBS_HIDE, tr(L"\u540E\u53F0\u6355\u83B7\uFF08\u9690\u85CF\u684C\u9762\u5C0F\u732B\uFF0COBS\u4ECD\u6B63\u5E38\u6355\u83B7\uFF09", L"Background Capture (Hide on Desktop)"));
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)obsMenu, tr(L"\U0001F4FA \u76F4\u64AD\u6355\u83B7\u6A21\u5F0F (OBS)", L"\U0001F4FA OBS Live Capture Mode"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
@@ -1017,6 +1060,14 @@ void showContextMenu(AppState& app, POINT screenPt) {
             app.settings.alwaysOnTop = !app.settings.alwaysOnTop;
             applyWindowScaleAndPosition(app, false);
             break;
+        case CMD_TOGGLE_AUTOHIDE_FS:
+            app.settings.autoHideFullscreen = !app.settings.autoHideFullscreen;
+            app.settings.saveToRegistry();
+            if (!app.settings.autoHideFullscreen && app.hiddenByFullscreen) {
+                app.hiddenByFullscreen = false;
+                if (app.isVisible) ShowWindow(app.hwnd, SW_SHOWNOACTIVATE);
+            }
+            break;
         case CMD_TOGGLE_AUTOSTART:
             setAutoStartEnabled(!isAutoStartEnabled());
             break;
@@ -1050,6 +1101,7 @@ void showContextMenu(AppState& app, POINT screenPt) {
             break;
         case CMD_OBS_OFF:
             app.settings.obsCaptureMode = 0;
+            app.settings.obsHideDesktop = false;
             app.settings.saveToRegistry();
             applyOBSMode(app);
             break;
@@ -1060,6 +1112,11 @@ void showContextMenu(AppState& app, POINT screenPt) {
             break;
         case CMD_OBS_GREENSCREEN:
             app.settings.obsCaptureMode = 2;
+            app.settings.saveToRegistry();
+            applyOBSMode(app);
+            break;
+        case CMD_TOGGLE_OBS_HIDE:
+            app.settings.obsHideDesktop = !app.settings.obsHideDesktop;
             app.settings.saveToRegistry();
             applyOBSMode(app);
             break;
@@ -1379,6 +1436,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 app->isDragging = true;
                 app->dragStartCursor = cur;
                 app->dragStartWinOrigin = { wr.left, wr.top };
+                app->physics.setDragging(true, 0.0f);
                 SetCapture(hwnd);
             }
             return 0;
@@ -1404,8 +1462,12 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (app && app->isDragging) {
                 POINT cur = {};
                 GetCursorPos(&cur);
+                RECT wr = {};
+                GetWindowRect(hwnd, &wr);
                 int nx = app->dragStartWinOrigin.x + (cur.x - app->dragStartCursor.x);
                 int ny = app->dragStartWinOrigin.y + (cur.y - app->dragStartCursor.y);
+                float stepDx = (float)(nx - wr.left);
+                app->physics.setDragging(true, app->settings.flipHorizontal ? -stepDx : stepDx);
                 SetWindowPos(hwnd, nullptr, nx, ny, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
             }
             return 0;
@@ -1423,6 +1485,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             if (app && app->isDragging) {
                 app->isDragging = false;
+                app->physics.setDragging(false);
                 ReleaseCapture();
                 RECT wr = {};
                 GetWindowRect(hwnd, &wr);
@@ -1752,6 +1815,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
 
     applyWindowScaleAndPosition(app, false);
     app.input.registerRawInput(app.hwnd);
+    app.input.installKeyboardHook();
+    if (app.settings.obsCaptureMode > 0 && app.settings.obsHideDesktop) {
+        applyOBSMode(app);
+    }
     registerTrayIcon(app);
 
     // Win+L / fast-user-switch notifications (see recoverAfterSystemEvent)

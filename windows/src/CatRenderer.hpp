@@ -65,12 +65,15 @@ public:
 
         float breath = std::sin(physics.time * 2.1f) * 1.6f;
         float seatX = CatPhysics::SeatAnchor.x + physics.bodyShiftX.value;
-        float seatY = CatPhysics::SeatAnchor.y;
+        float scruff = std::clamp(physics.scruffDrag.value, 0.0f, 1.0f);
+        float lie = std::clamp(physics.lieIntensity.value, 0.0f, 1.0f);
+        float dizzy = std::clamp(physics.dizzyIntensity.value, 0.0f, 1.0f);
+        float seatY = CatPhysics::SeatAnchor.y - scruff * 22.0f + lie * 16.0f + dizzy * 14.0f;
 
         float siameseLift = (settings.coatTheme == CatCoatTheme::Siamese) ? -3.0f : 0.0f;
         Pt headCenter = {
             seatX + physics.bodyTilt.value * 36.0f + physics.headYaw.value * 7.5f,
-            126.0f + siameseLift + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f
+            126.0f + siameseLift + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f - scruff * 22.0f
         };
 
         // 1. Mini White Mouse (facing cat)
@@ -915,6 +918,39 @@ private:
         if (patterned(coat)) drawPatternedMuzzle(g, yawRad, pitchRad);
         if (physics.yawnAmount > 0.03f) drawYawnMouth(g, yawRad, pitchRad, physics.yawnAmount, coat);
         drawWhiskers3D(g, yawRad, pitchRad, physics, coat);
+
+        float anger = std::clamp(physics.angerIntensity.value, 0.0f, 1.0f);
+        if (anger > 0.25f) {
+            float aAlpha = std::min(1.0f, (anger - 0.25f) / 0.35f);
+            float pulse = 1.0f + std::sin(physics.time * 14.0f) * 0.10f;
+            Pt pt = projectHead3D(28.0f, -22.0f, 24.0f, yawRad, pitchRad);
+            GraphicsState as = g.Save();
+            g.TranslateTransform(pt.x, pt.y);
+            g.ScaleTransform(pulse, pulse);
+            Pen ap(Color((BYTE)(242 * aAlpha), 245, 56, 72), 2.0f);
+            ap.SetStartCap(LineCapRound); ap.SetEndCap(LineCapRound);
+            float d = 2.4f, r = 6.2f;
+            float dirs[4][2] = { {-1,-1}, {1,-1}, {-1,1}, {1,1} };
+            for (auto& dir : dirs) {
+                GraphicsPath vp;
+                addQuadBezier(vp, { dir[0]*r, dir[1]*d }, { dir[0]*d, dir[1]*d }, { dir[0]*d, dir[1]*r });
+                g.DrawPath(&ap, &vp);
+            }
+            g.Restore(as);
+        }
+
+        float dizzy = std::clamp(physics.dizzyIntensity.value, 0.0f, 1.0f);
+        if (dizzy > 0.25f) {
+            float dAlpha = std::min(1.0f, (dizzy - 0.25f) / 0.35f);
+            SolidBrush sb(Color((BYTE)(235 * dAlpha), 255, 217, 56));
+            for (int i = 0; i < 3; ++i) {
+                float ang = physics.dizzyPhase * 0.65f + (float)i * (6.283185f / 3.0f);
+                float sx = std::cos(ang) * 32.0f;
+                float sy = -38.0f + std::sin(ang) * 7.5f;
+                float sr = 3.8f + std::sin(ang) * 1.0f;
+                g.FillEllipse(&sb, sx - sr, sy - sr, sr * 2.0f, sr * 2.0f);
+            }
+        }
         g.Restore(st);
     }
 
@@ -1015,6 +1051,26 @@ private:
         g.ScaleTransform(foreX, foreY);
 
         // Mode 1: Happy closed glowing curved line eyes (petting head!)
+        // Mode 0: Dizzy spinning spiral eyes (@ @) after 10s of rapid mouse shaking
+        float dizzy = std::clamp(physics.dizzyIntensity.value, 0.0f, 1.0f);
+        if (dizzy > 0.25f) {
+            SolidBrush bg(Color(242, 250, 250, 245));
+            g.FillEllipse(&bg, -11.5f, -11.0f, 23.0f, 22.0f);
+            Pen sp(Color(242, 36, 36, 46), 1.85f);
+            sp.SetStartCap(LineCapRound); sp.SetEndCap(LineCapRound);
+            PointF pts[43];
+            float spin = physics.dizzyPhase * (isLeft ? 1.0f : -1.0f);
+            for (int i = 0; i <= 42; ++i) {
+                float t = (float)i / 42.0f;
+                float theta = spin + t * 3.1415926f * 5.2f;
+                float rad = 1.0f + t * 8.6f;
+                pts[i] = PointF(std::cos(theta) * rad, std::sin(theta) * rad);
+            }
+            g.DrawLines(&sp, pts, 43);
+            g.Restore(st);
+            return;
+        }
+
         if (physics.isHappyClosedEyes()) {
             GraphicsPath hp;
             addQuadBezier(hp, {-11.5f, 1.0f}, {sign * 1.5f, 3.4f}, {11.5f, 1.0f});
@@ -1107,6 +1163,22 @@ private:
         }
 
         g.Restore(cs);
+
+        // Angry furrowed V-brow slant over eyes when typing super fast
+        float anger = std::clamp(physics.angerIntensity.value, 0.0f, 1.0f);
+        if (anger > 0.08f) {
+            float drop = anger * 8.2f;
+            PointF browPts[4] = {
+                PointF(-rx - 2.0f, -ry - 2.0f),
+                PointF( rx + 2.0f, -ry - 2.0f),
+                PointF( rx + 2.0f, -ry + (isLeft ? drop : 1.0f)),
+                PointF(-rx - 2.0f, -ry + (isLeft ? 1.0f : drop))
+            };
+            Color browCol = (coat == CatCoatTheme::Siamese) ? siamesePoint(255) : furColor(coat);
+            SolidBrush browBrush(browCol);
+            g.FillPolygon(&browBrush, browPts, 4);
+        }
+
         g.Restore(st);
     }
 

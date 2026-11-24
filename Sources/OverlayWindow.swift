@@ -190,6 +190,7 @@ final class CatCanvasView: NSView {
         isDragging = true
         dragStartScreenPt = screenPt
         dragStartWindowOrigin = win.frame.origin
+        physics.setDragging(true, dragDx: 0)
         NSCursor.closedHand.set()
     }
 
@@ -215,10 +216,13 @@ final class CatCanvasView: NSView {
             return
         }
         guard isDragging else { return }
+        let prevX = win.frame.origin.x
         let newOrigin = CGPoint(
             x: dragStartWindowOrigin.x + (currentScreenPt.x - dragStartScreenPt.x),
             y: dragStartWindowOrigin.y + (currentScreenPt.y - dragStartScreenPt.y)
         )
+        let stepDx = newOrigin.x - prevX
+        physics.setDragging(true, dragDx: CatSettings.shared.flipHorizontal ? -stepDx : stepDx)
         win.setFrameOrigin(newOrigin)
     }
 
@@ -232,6 +236,7 @@ final class CatCanvasView: NSView {
         }
         guard isDragging else { return }
         isDragging = false
+        physics.setDragging(false)
         NSCursor.openHand.set()
         // Save position
         UserDefaults.standard.set(Double(win.frame.origin.x), forKey: "KuroCat.PosX")
@@ -280,6 +285,7 @@ final class OverlayWindow: NSPanel {
 
     func applyOBSMode() {
         let mode = CatSettings.shared.obsCaptureMode
+        let hideDesktop = (mode > 0 && CatSettings.shared.obsHideDesktop)
         title = "KuroCat"
         sharingType = .readOnly
         if mode == 2 {
@@ -288,6 +294,14 @@ final class OverlayWindow: NSPanel {
         } else {
             isOpaque = false
             backgroundColor = .clear
+        }
+        if hideDesktop {
+            // Tuck behind desktop/all apps while staying rendered so OBS Window Capture stays live!
+            level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) - 1)
+            collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+            ignoresMouseEvents = true
+        } else {
+            applyWindowLevelAndBehavior()
         }
         catView.needsDisplay = true
     }

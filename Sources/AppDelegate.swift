@@ -6,6 +6,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var overlayWindow: OverlayWindow!
     private var renderTimer: Timer?
     private var lastFrameTime: CFTimeInterval = CACurrentMediaTime()
+    private var lastFullscreenCheckTime: CFTimeInterval = 0
+    private var hiddenByFullscreen = false
     private var isPetVisible = true
     private var availableUpdateVersion: String?
     private var availableUpdateURL: URL?
@@ -152,6 +154,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let dt = CGFloat(now - self.lastFrameTime)
             self.lastFrameTime = now
 
+            // Fullscreen auto-hide check (~2Hz)
+            if now - self.lastFullscreenCheckTime > 0.5 {
+                self.lastFullscreenCheckTime = now
+                let s = CatSettings.shared
+                let obsBg = (s.obsCaptureMode > 0 && s.obsHideDesktop)
+                if s.autoHideFullscreen && !obsBg {
+                    let fs = Self.isOtherAppFullscreen()
+                    if fs != self.hiddenByFullscreen {
+                        self.hiddenByFullscreen = fs
+                        self.overlayWindow.alphaValue = fs ? 0.0 : 1.0
+                        if fs { self.overlayWindow.ignoresMouseEvents = true }
+                    }
+                } else if self.hiddenByFullscreen {
+                    self.hiddenByFullscreen = false
+                    self.overlayWindow.alphaValue = 1.0
+                }
+            }
+
             let view = self.overlayWindow.catView
             view.physics.step(dt: dt, windowFrameInScreen: self.overlayWindow.frame)
             view.updateHoverAndClickThrough()
@@ -240,6 +260,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fullscreenItem.state = settings.fullScreenOverlay ? .on : .off
         menu.addItem(fullscreenItem)
 
+        let autoHideFsItem = NSMenuItem(title: tr("全屏应用时自动隐藏", "Auto-Hide in Fullscreen Apps"), action: #selector(toggleAutoHideFullscreen), keyEquivalent: "")
+        autoHideFsItem.target = self
+        autoHideFsItem.state = settings.autoHideFullscreen ? .on : .off
+        menu.addItem(autoHideFsItem)
+
         let autoStartItem = NSMenuItem(title: tr("开机自动启动", "Launch at Login"), action: #selector(toggleAutoStart), keyEquivalent: "")
         autoStartItem.target = self
         autoStartItem.state = isAutoStartEnabled() ? .on : .off
@@ -277,6 +302,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.state = (settings.obsCaptureMode == mode) ? .on : .off
             obsMenu.addItem(item)
         }
+        obsMenu.addItem(.separator())
+        let obsHideItem = NSMenuItem(
+            title: tr("后台捕获（隐藏桌面小猫，OBS仍正常捕获）", "Background Capture (Hide on Desktop)"),
+            action: #selector(toggleOBSHideDesktop),
+            keyEquivalent: ""
+        )
+        obsHideItem.target = self
+        obsHideItem.state = settings.obsHideDesktop ? .on : .off
+        obsHideItem.isEnabled = (settings.obsCaptureMode > 0)
+        obsMenu.addItem(obsHideItem)
         let obsParent = NSMenuItem(title: tr("📺 直播捕获模式 (OBS)", "📺 OBS Live Capture Mode"), action: nil, keyEquivalent: "")
         obsParent.submenu = obsMenu
         menu.addItem(obsParent)
@@ -532,7 +567,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func selectOBSCaptureMode(_ sender: NSMenuItem) {
         guard let num = sender.representedObject as? NSNumber else { return }
         CatSettings.shared.obsCaptureMode = num.intValue
+        if num.intValue == 0 {
+            CatSettings.shared.obsHideDesktop = false
+        }
         overlayWindow.applyOBSMode()
+    }
+
+    @objc private func toggleOBSHideDesktop() {
+        CatSettings.shared.obsHideDesktop.toggle()
+        overlayWindow.applyOBSMode()
+    }
+
+    @objc private func toggleAutoHideFullscreen() {
+        CatSettings.shared.autoHideFullscreen.toggle()
+        if !CatSettings.shared.autoHideFullscreen && hiddenByFullscreen {
+            hiddenByFullscreen = false
+            overlayWindow.alphaValue = 1.0
+        }
+    }
+
+    private static func isOtherAppFullscreen() -> Bool {
+        guard let front = NSWorkspace.shared.frontmostApplication,
+              front.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              front.bundleIdentifier != "com.apple.finder" else {
+            return false
+        }
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            return false
+        }
+        let pid = front.processIdentifier
+        for w in list {
+            guard let ownerPID = w[kCGWindowOwnerPID as String] as? pid_t, ownerPID == pid,
+                  let layer = w[kCGWindowLayer as String] as? Int, layer == 0,
+                  let boundsDict = w[kCGWindowBounds as String] as? [String: Any],
+                  let rect = CGRect(dictionaryRepresentation: boundsDict as CFDictionary) else { continue }
+            for screen in NSScreen.screens {
+                if rect.width >= screen.frame.width - 2 && rect.height >= screen.frame.height - 2 {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     @objc private func toggleEditMode() {

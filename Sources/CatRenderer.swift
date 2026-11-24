@@ -122,7 +122,10 @@ enum CatRenderer {
         let coat = settings.coatTheme
         let breath = sin(physics.time * 2.1) * 1.6
         let seatX = CatPhysics.seatAnchor.x + physics.bodyShiftX.value
-        let seatY = CatPhysics.seatAnchor.y
+        let scruff = max(0, min(1, physics.scruffDrag.value))
+        let lie = max(0, min(1, physics.lieIntensity.value))
+        let dizzy = max(0, min(1, physics.dizzyIntensity.value))
+        let seatY = CatPhysics.seatAnchor.y - scruff * 22.0 + lie * 16.0 + dizzy * 14.0
 
         // 1. Mini White Mouse (left of keyboard)
         drawMouse(in: ctx, physics: physics, theme: settings.keyboardTheme)
@@ -138,7 +141,7 @@ enum CatRenderer {
         let siameseLift: CGFloat = (coat == .siamese) ? -3.0 : 0.0
         let headCenter = CGPoint(
             x: seatX + physics.bodyTilt.value * 36 + physics.headYaw.value * 7.5,
-            y: 126 + siameseLift + physics.headOffsetY.value + physics.headPitch.value * 4.8 + breath * 1.1
+            y: 126 + siameseLift + physics.headOffsetY.value + physics.headPitch.value * 4.8 + breath * 1.1 - scruff * 22.0
         )
         drawEarsLayer(in: ctx, center: headCenter, physics: physics, coat: coat)
 
@@ -1032,6 +1035,51 @@ enum CatRenderer {
         // 2. 3D-Projected Whiskers (outer-side whiskers poke out past silhouette when turning!)
         drawWhiskers3D(in: ctx, yawRad: yawRad, pitchRad: pitchRad, physics: physics, coat: coat)
 
+        // 3. Expressive emotion badges: Anger vein (💢) & Dizzy orbiting stars (✦) & Scruff pinch!
+        let anger = max(0, min(1, physics.angerIntensity.value))
+        if anger > 0.25 {
+            let aAlpha = min(1.0, (anger - 0.25) / 0.35)
+            let pulse = 1.0 + sin(physics.time * 14.0) * 0.10
+            let pt = projectHead3D(x: 28.0, y: -22.0, z: 24.0, yawRad: yawRad, pitchRad: pitchRad).pt
+            ctx.saveGState()
+            ctx.translateBy(x: pt.x, y: pt.y)
+            ctx.scaleBy(x: pulse, y: pulse)
+            ctx.setStrokeColor(NSColor(calibratedRed: 0.96, green: 0.22, blue: 0.28, alpha: 0.95 * aAlpha).cgColor)
+            ctx.setLineWidth(2.0)
+            ctx.setLineCap(.round)
+            // Classic 4-corner anime anger vein mark
+            let d: CGFloat = 2.4, r: CGFloat = 6.2
+            for (sx, sy): (CGFloat, CGFloat) in [(-1,-1), (1,-1), (-1,1), (1,1)] {
+                ctx.move(to: CGPoint(x: sx * r, y: sy * d))
+                ctx.addQuadCurve(to: CGPoint(x: sx * d, y: sy * r), control: CGPoint(x: sx * d, y: sy * d))
+            }
+            ctx.strokePath()
+            ctx.restoreGState()
+        }
+
+        let dizzy = max(0, min(1, physics.dizzyIntensity.value))
+        if dizzy > 0.25 {
+            let dAlpha = min(1.0, (dizzy - 0.25) / 0.35)
+            ctx.saveGState()
+            for i in 0..<3 {
+                let ang = physics.dizzyPhase * 0.65 + CGFloat(i) * (.pi * 2.0 / 3.0)
+                let sx = cos(ang) * 32.0
+                let sy = -38.0 + sin(ang) * 7.5
+                let starR: CGFloat = 3.8 + sin(ang) * 1.0
+                ctx.setFillColor(NSColor(calibratedRed: 1.0, green: 0.85, blue: 0.22, alpha: 0.92 * dAlpha).cgColor)
+                let sp = CGMutablePath()
+                sp.move(to: CGPoint(x: sx, y: sy - starR))
+                sp.addQuadCurve(to: CGPoint(x: sx + starR, y: sy), control: CGPoint(x: sx + starR * 0.25, y: sy - starR * 0.25))
+                sp.addQuadCurve(to: CGPoint(x: sx, y: sy + starR), control: CGPoint(x: sx + starR * 0.25, y: sy + starR * 0.25))
+                sp.addQuadCurve(to: CGPoint(x: sx - starR, y: sy), control: CGPoint(x: sx - starR * 0.25, y: sy + starR * 0.25))
+                sp.addQuadCurve(to: CGPoint(x: sx, y: sy - starR), control: CGPoint(x: sx - starR * 0.25, y: sy - starR * 0.25))
+                sp.closeSubpath()
+                ctx.addPath(sp)
+                ctx.fillPath()
+            }
+            ctx.restoreGState()
+        }
+
         ctx.restoreGState()
     }
 
@@ -1233,6 +1281,31 @@ enum CatRenderer {
         ctx.translateBy(x: proj.pt.x, y: proj.pt.y)
         ctx.scaleBy(x: foreshortenX, y: foreshortenY)
 
+        // Mode 0: Dizzy spinning spiral eyes (@ @) after 10s of rapid mouse shaking!
+        let dizzy = max(0, min(1, physics.dizzyIntensity.value))
+        if dizzy > 0.25 {
+            ctx.setFillColor(NSColor(calibratedRed: 0.98, green: 0.98, blue: 0.96, alpha: 0.95).cgColor)
+            ctx.fillEllipse(in: CGRect(x: -11.5, y: -11.0, width: 23.0, height: 22.0))
+            ctx.setStrokeColor(NSColor(calibratedRed: 0.14, green: 0.14, blue: 0.18, alpha: 0.95).cgColor)
+            ctx.setLineWidth(1.85)
+            ctx.setLineCap(.round)
+            let spiral = CGMutablePath()
+            let spin = physics.dizzyPhase * (isLeft ? 1.0 : -1.0)
+            for step in 0...42 {
+                let t = CGFloat(step) / 42.0
+                let theta = spin + t * .pi * 5.2
+                let rad = 1.0 + t * 8.6
+                let px = cos(theta) * rad
+                let py = sin(theta) * rad
+                if step == 0 { spiral.move(to: CGPoint(x: px, y: py)) }
+                else { spiral.addLine(to: CGPoint(x: px, y: py)) }
+            }
+            ctx.addPath(spiral)
+            ctx.strokePath()
+            ctx.restoreGState()
+            return
+        }
+
         // Mode 1: Happy closed glowing lime-green curved line eyes (petting head!)
         if physics.isHappyClosedEyes {
             ctx.setStrokeColor(eyeColor.cgColor)
@@ -1359,6 +1432,25 @@ enum CatRenderer {
         }
 
         ctx.restoreGState()
+
+        // Angry furrowed V-brow slant over upper inner corner of each eye when typing super fast!
+        let anger = max(0, min(1, physics.angerIntensity.value))
+        if anger > 0.15 {
+            let lidColor: NSColor = (coat == .siamese) ? siamesePoint : bodyColor(coat)
+            ctx.saveGState()
+            let brow = CGMutablePath()
+            let drop = 7.5 * anger
+            brow.move(to: CGPoint(x: -sign * 13.5, y: -12.5))
+            brow.addLine(to: CGPoint(x: sign * 13.5, y: -12.5))
+            brow.addLine(to: CGPoint(x: sign * 13.5, y: -7.5))
+            brow.addLine(to: CGPoint(x: -sign * 13.5, y: -6.5 + drop))
+            brow.closeSubpath()
+            ctx.setFillColor(lidColor.cgColor)
+            ctx.addPath(brow)
+            ctx.fillPath()
+            ctx.restoreGState()
+        }
+
         ctx.restoreGState()
     }
 

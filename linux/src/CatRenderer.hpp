@@ -59,13 +59,16 @@ public:
         cairo_set_antialias(cr, CAIRO_ANTIALIAS_BEST);
 
         float breath = std::sin(physics.time * 2.1f) * 1.6f;
+        float scruff = std::clamp(physics.scruffDrag.value, 0.0f, 1.0f);
+        float lie = std::clamp(physics.lieIntensity.value, 0.0f, 1.0f);
+        float dizzy = std::clamp(physics.dizzyIntensity.value, 0.0f, 1.0f);
         float seatX = CatPhysics::SeatAnchor.x + physics.bodyShiftX.value;
-        float seatY = CatPhysics::SeatAnchor.y;
+        float seatY = CatPhysics::SeatAnchor.y - scruff * 26.0f + lie * 16.0f + dizzy * 14.0f;
 
         float siameseLift = (settings.coatTheme == CatCoatTheme::Siamese) ? -3.0f : 0.0f;
         Pt headCenter = {
             seatX + physics.bodyTilt.value * 36.0f + physics.headYaw.value * 7.5f,
-            126.0f + siameseLift + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f
+            126.0f + siameseLift - scruff * 18.0f + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f
         };
 
         drawMouse(cr, physics, settings.keyboardTheme);
@@ -935,6 +938,59 @@ private:
         if (patterned(coat)) drawPatternedMuzzle(cr, yawRad, pitchRad);
         if (physics.yawnAmount > 0.03f) drawYawnMouth(cr, yawRad, pitchRad, physics.yawnAmount, coat);
         drawWhiskers3D(cr, yawRad, pitchRad, physics, coat);
+
+        // Pulsing red anime anger vein (💢) when typing super fast
+        float anger = std::clamp(physics.angerIntensity.value, 0.0f, 1.0f);
+        if (anger > 0.12f) {
+            double pulse = 1.0 + std::sin(physics.time * 14.0f) * 0.12;
+            double ax = 22.0 + yawRad * 8.0;
+            double ay = -23.0 + pitchRad * 4.0;
+            cairo_save(cr);
+            cairo_translate(cr, ax, ay);
+            cairo_scale(cr, pulse, pulse);
+            cairo_set_source_rgba(cr, 0.94, 0.22, 0.22, 0.92 * anger);
+            cairo_set_line_width(cr, 2.2);
+            cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+            cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+            const double dirs[4][2] = { {-1,-1}, {1,-1}, {-1,1}, {1,1} };
+            for (int d = 0; d < 4; ++d) {
+                double sx = dirs[d][0], sy = dirs[d][1];
+                cairo_new_path(cr);
+                cairo_move_to(cr, sx * 2.0, sy * 6.0);
+                cairo_line_to(cr, sx * 2.0, sy * 2.0);
+                cairo_line_to(cr, sx * 6.0, sy * 2.0);
+                cairo_stroke(cr);
+            }
+            cairo_restore(cr);
+        }
+
+        // Orbiting golden dizzy stars above head
+        float dizzy = std::clamp(physics.dizzyIntensity.value, 0.0f, 1.0f);
+        if (dizzy > 0.15f) {
+            cairo_save(cr);
+            for (int i = 0; i < 3; ++i) {
+                double ang = physics.dizzyPhase * 0.85 + i * (PI * 2.0 / 3.0);
+                double sx = std::cos(ang) * 26.0;
+                double sy = -36.0 + std::sin(ang) * 6.5;
+                double r = 4.2 * (0.75 + 0.25 * std::sin(ang));
+                cairo_save(cr);
+                cairo_translate(cr, sx, sy);
+                cairo_rotate(cr, physics.dizzyPhase + i);
+                cairo_set_source_rgba(cr, 1.0, 0.86, 0.22, 0.95 * dizzy);
+                cairo_new_path(cr);
+                for (int k = 0; k < 8; ++k) {
+                    double rad = (k % 2 == 0) ? r : r * 0.42;
+                    double a = k * PI * 0.25;
+                    if (k == 0) cairo_move_to(cr, std::cos(a) * rad, std::sin(a) * rad);
+                    else cairo_line_to(cr, std::cos(a) * rad, std::sin(a) * rad);
+                }
+                cairo_close_path(cr);
+                cairo_fill(cr);
+                cairo_restore(cr);
+            }
+            cairo_restore(cr);
+        }
+
         cairo_restore(cr);
     }
 
@@ -1050,6 +1106,30 @@ private:
         cairo_translate(cr, proj.x, proj.y);
         cairo_scale(cr, foreX, foreY);
 
+        // Mode 0: Dizzy spinning spiral eyes (@ @) after 10s of rapid mouse shaking
+        float dizzy = std::clamp(physics.dizzyIntensity.value, 0.0f, 1.0f);
+        if (dizzy > 0.25f) {
+            cairo_set_source_rgba(cr, 0.98, 0.98, 0.96, 0.95);
+            cairo_new_path(cr);
+            fillEllipse(cr, 0.0, 0.0, 11.5, 11.0);
+            cairo_fill(cr);
+            cairo_set_source_rgba(cr, 0.14, 0.14, 0.18, 0.95);
+            cairo_set_line_width(cr, 1.85);
+            cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+            double spin = physics.dizzyPhase * (isLeft ? 1.0 : -1.0);
+            cairo_new_path(cr);
+            for (int i = 0; i <= 42; ++i) {
+                double t = (double)i / 42.0;
+                double theta = spin + t * PI * 5.2;
+                double rad = 1.0 + t * 8.6;
+                if (i == 0) cairo_move_to(cr, std::cos(theta) * rad, std::sin(theta) * rad);
+                else cairo_line_to(cr, std::cos(theta) * rad, std::sin(theta) * rad);
+            }
+            cairo_stroke(cr);
+            cairo_restore(cr);
+            return;
+        }
+
         if (physics.isHappyClosedEyes()) {
             setCol(cr, eyeCol);
             cairo_set_line_width(cr, 2.6);
@@ -1144,6 +1224,21 @@ private:
         }
 
         cairo_restore(cr);
+
+        // Angry furrowed V-brow slant over eyes when typing super fast
+        float anger = std::clamp(physics.angerIntensity.value, 0.0f, 1.0f);
+        if (anger > 0.08f) {
+            double drop = anger * 8.2;
+            setCol(cr, coat == CatCoatTheme::Siamese ? siamesePoint : furColor(coat));
+            cairo_new_path(cr);
+            cairo_move_to(cr, -rx - 2.0, -ry - 2.0);
+            cairo_line_to(cr,  rx + 2.0, -ry - 2.0);
+            cairo_line_to(cr,  rx + 2.0, -ry + (isLeft ? drop : 1.0));
+            cairo_line_to(cr, -rx - 2.0, -ry + (isLeft ? 1.0 : drop));
+            cairo_close_path(cr);
+            cairo_fill(cr);
+        }
+
         cairo_restore(cr);
     }
 
