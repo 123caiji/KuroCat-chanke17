@@ -112,7 +112,9 @@ enum MenuCmd : UINT {
     CMD_OPEN_UPDATE,
     CMD_RELAUNCH_ADMIN,
     CMD_TOGGLE_RUN_AS_ADMIN,
-    CMD_QUIT
+    CMD_QUIT,
+    CMD_COAT_TABBY,
+    CMD_EYE_OLIVE_GOLD
 };
 
 struct AppState {
@@ -1000,6 +1002,7 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(coatMenu, MF_STRING | (app.settings.coatTheme == CatCoatTheme::Shorthair ? MF_CHECKED : 0), CMD_COAT_SHORTHAIR, tr(L"\u7F8E\u77ED\uFF08\u94F6\u864E\u6591\u52A0\u767D\uFF09", L"Silver Tabby Shorthair"));
     AppendMenuW(coatMenu, MF_STRING | (app.settings.coatTheme == CatCoatTheme::OrangeWhite ? MF_CHECKED : 0), CMD_COAT_ORANGE_WHITE, tr(L"\u6A58\u767D\u732B", L"Orange & White Cat"));
     AppendMenuW(coatMenu, MF_STRING | (app.settings.coatTheme == CatCoatTheme::Dazed ? MF_CHECKED : 0), CMD_COAT_DAZED, tr(L"\u5446\u732B", L"Dazed Cat"));
+    AppendMenuW(coatMenu, MF_STRING | (app.settings.coatTheme == CatCoatTheme::Tabby ? MF_CHECKED : 0), CMD_COAT_TABBY, tr(L"\u72F8\u82B1\u732B", L"Tabby Cat"));
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)coatMenu, tr(L"\u732B\u54AA\u76AE\u80A4", L"Cat Skin"));
 
     // Keyboard Theme submenu
@@ -1017,6 +1020,7 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(eyeMenu, MF_STRING | (app.settings.eyeTheme == EyeColorTheme::IceCyan ? MF_CHECKED : 0), CMD_EYE_CYAN, tr(L"\u51B0\u6676\u6D45\u84DD", L"Ice Cyan"));
     AppendMenuW(eyeMenu, MF_STRING | (app.settings.eyeTheme == EyeColorTheme::SoftAmber ? MF_CHECKED : 0), CMD_EYE_SOFT_AMBER, tr(L"\u67D4\u548C\u7425\u73C0", L"Soft Amber"));
     AppendMenuW(eyeMenu, MF_STRING | (app.settings.eyeTheme == EyeColorTheme::ReferenceHazel ? MF_CHECKED : 0), CMD_EYE_REFERENCE_HAZEL, tr(L"\u6DE1\u91D1\u9752\u7EFF", L"Golden Hazel"));
+    AppendMenuW(eyeMenu, MF_STRING | (app.settings.eyeTheme == EyeColorTheme::OliveGold ? MF_CHECKED : 0), CMD_EYE_OLIVE_GOLD, tr(L"\u6A44\u6984\u91D1", L"Olive Gold"));
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)eyeMenu, tr(L"\u77B3\u8272\u5207\u6362", L"Eye Color"));
 
     // Language submenu
@@ -1143,6 +1147,11 @@ void showContextMenu(AppState& app, POINT screenPt) {
             app.settings.eyeTheme = EyeColorTheme::SiameseBlue;
             app.settings.saveToRegistry();
             break;
+        case CMD_COAT_TABBY:
+            app.settings.coatTheme = CatCoatTheme::Tabby;
+            app.settings.eyeTheme = EyeColorTheme::OliveGold;
+            app.settings.saveToRegistry();
+            break;
         case CMD_COAT_SHORTHAIR:
         case CMD_COAT_ORANGE_WHITE:
             app.settings.coatTheme = cmd == CMD_COAT_SHORTHAIR ? CatCoatTheme::Shorthair : CatCoatTheme::OrangeWhite;
@@ -1156,6 +1165,7 @@ void showContextMenu(AppState& app, POINT screenPt) {
             break;
         case CMD_EYE_SOFT_AMBER: app.settings.eyeTheme = EyeColorTheme::SoftAmber; app.settings.saveToRegistry(); break;
         case CMD_EYE_REFERENCE_HAZEL: app.settings.eyeTheme = EyeColorTheme::ReferenceHazel; app.settings.saveToRegistry(); break;
+        case CMD_EYE_OLIVE_GOLD: app.settings.eyeTheme = EyeColorTheme::OliveGold; app.settings.saveToRegistry(); break;
         case CMD_KB_MILK:   app.settings.keyboardTheme = KeyboardTheme::ClassicMilk; app.settings.saveToRegistry(); break;
         case CMD_KB_HACKER: app.settings.keyboardTheme = KeyboardTheme::MidnightHacker; app.settings.saveToRegistry(); break;
         case CMD_KB_RETRO:  app.settings.keyboardTheme = KeyboardTheme::RetroCream; app.settings.saveToRegistry(); break;

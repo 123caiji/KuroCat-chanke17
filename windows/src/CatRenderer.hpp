@@ -7,6 +7,7 @@
 #include <vector>
 #include <algorithm>
 #include "CatPhysics.hpp"
+#include "TabbyCoat.hpp"
 #include "../../shared/CoatPatterns.hpp"
 
 enum class CatHitZone {
@@ -186,9 +187,15 @@ private:
     static Gdiplus::Color rgb(unsigned int hex, BYTE a = 255) { return Gdiplus::Color(a, (hex >> 16) & 255, (hex >> 8) & 255, hex & 255); }
     static Gdiplus::Color bodyColor(CatCoatTheme c) { return c == CatCoatTheme::Shorthair ? rgb(0xC2C5C1) : (c == CatCoatTheme::OrangeWhite ? rgb(0xF2EEE4) : catBlack()); }
     static Gdiplus::Color limbColor(CatCoatTheme c) { return c == CatCoatTheme::OrangeWhite ? rgb(0xD8AA73) : bodyColor(c); }
-    static Gdiplus::Color pawColor(CatCoatTheme c) { return patterned(c) ? rgb(0xF2EEE4) : (c == CatCoatTheme::Siamese ? siamesePoint() : catBlack()); }
+    static Gdiplus::Color pawColor(CatCoatTheme c) {
+        if (c == CatCoatTheme::Tabby) return tabby::milk();
+        return patterned(c) ? rgb(0xF2EEE4) : (c == CatCoatTheme::Siamese ? siamesePoint() : catBlack());
+    }
     static Gdiplus::Color earTailColor(CatCoatTheme c) { return c == CatCoatTheme::Siamese ? siamesePoint() : limbColor(c); }
-    static Gdiplus::Color creaseColor(CatCoatTheme c, BYTE a = 255) { return patterned(c) ? rgb(0x8B8171, (BYTE)(a*0.60f)) : contourMint(a); }
+    static Gdiplus::Color creaseColor(CatCoatTheme c, BYTE a = 255) {
+        if (c == CatCoatTheme::Tabby) return tabby::line(a);
+        return patterned(c) ? rgb(0x8B8171, (BYTE)(a*0.60f)) : contourMint(a);
+    }
     static Gdiplus::PointF coatMarkPoint(CoatPoint p, bool headSurface, bool skull, CatCoatTheme coat, float seatX, float seatY, Pt head, const CatPhysics& physics, bool whiteSurface=false) {
         if (headSurface) {
             float radius=std::max(0.0f,1-p.x*p.x/(46*46)-p.y*p.y/(40*40));
@@ -245,6 +252,7 @@ private:
             case EyeColorTheme::WarmAmber:      return Gdiplus::Color(a, 250, 194, 56);
             case EyeColorTheme::IceCyan:        return Gdiplus::Color(a, 115, 235, 245);
             case EyeColorTheme::ReferenceHazel: return Gdiplus::Color(a, 218, 178, 87);
+            case EyeColorTheme::OliveGold:      return Gdiplus::Color(a, 191, 179, 102);
             case EyeColorTheme::SoftAmber: return Gdiplus::Color(a, 217, 173, 85);
         }
         return Gdiplus::Color(a, 201, 242, 64);
@@ -641,6 +649,10 @@ private:
         tailPen.SetStartCap(LineCapRound);
         tailPen.SetEndCap(LineCapRound);
         tailPen.SetLineJoin(LineJoinRound);
+        if (coat == CatCoatTheme::Tabby) {
+            tabby::drawTail(g, tailPen, root, c1, c2, tip);
+            return;
+        }
         g.DrawBezier(&tailPen, root, c1, c2, tip);
         if (patterned(coat)) {
             GraphicsState state = g.Save();
@@ -706,6 +718,23 @@ private:
         addQuadBezier(ear, tipR, { (outerBase.x + tipR.x) * 0.5f + sign * 2.5f, (outerBase.y + tipR.y) * 0.5f - 2.0f }, outerBase);
         ear.CloseFigure();
 
+        if (coat == CatCoatTheme::Tabby) {
+            LinearGradientBrush fur(PointF(tip3D.x, tip3D.y - 2), PointF(outerBase.x, outerBase.y + 2),
+                                    tabby::dark(), tabby::oat());
+            fur.SetWrapMode(WrapModeTileFlipXY);
+            g.FillPath(&fur, &ear);
+            auto earPoint = [&](float width, float height) {
+                float x = innerBase.x + (outerBase.x - innerBase.x) * width;
+                float y = innerBase.y + (outerBase.y - innerBase.y) * width;
+                return PointF(x + (tip3D.x - x) * height, y + (tip3D.y - y) * height);
+            };
+            SolidBrush lining(Color(185, 151, 128));
+            tabby::shape(g, earPoint, lining, {.29f, .1f},
+                         {{.2f, .37f, .38f, .67f, .48f, .75f},
+                          {.60f, .63f, .77f, .26f, .76f, .1f},
+                          {.68f, .16f, .44f, .18f, .29f, .1f}});
+            return;
+        }
         SolidBrush b(earTailColor(coat));
         g.FillPath(&b, &ear);
 
@@ -809,7 +838,14 @@ private:
         path.AddBezier(lCheek, H(leftCheekX - 1.5f, cheekCtrlTopY), H(-crownCtrlW + cheekShift * 0.3f, crownBaseY + crownDrop), crown);
         path.CloseFigure();
 
-        if (coat != CatCoatTheme::Siamese) {
+        if (coat == CatCoatTheme::Tabby) {
+            auto face = [&](float x, float y) {
+                float depth = std::clamp(29.f - .012f * x * x - .22f * std::abs(y + 2.f), 3.f, 28.f);
+                Pt projected = projectHead3D(x, y, depth, yaw * .50f, pitch * .36f);
+                return H(projected.x, projected.y);
+            };
+            tabby::drawBody(g, path, face, B, physics);
+        } else if (coat != CatCoatTheme::Siamese) {
             SolidBrush b(bodyColor(coat));
             g.FillPath(&b, &path);
             if (coat==CatCoatTheme::OrangeWhite) {
@@ -890,8 +926,8 @@ private:
         float rightHindX = isSiamese ? 15.5f : 18.0f;
         float leftHindY = isSiamese ? 3.5f : 3.0f;
         float leftHindH = isSiamese ? 12.0f : 11.0f;
-        float rightHindY = (coat == CatCoatTheme::ClassicBlack || isSiamese) ? 4.5f : 3.0f;
-        float rightHindH = (coat == CatCoatTheme::ClassicBlack || isSiamese) ? 12.5f : 11.0f;
+        float rightHindY = patterned(coat) ? 3.0f : 4.5f;
+        float rightHindH = patterned(coat) ? 11.0f : 12.5f;
 
         SolidBrush pawBrush(pawColor(coat));
         g.FillEllipse(&pawBrush, leftHindX, leftHindY, hindW, leftHindH);
@@ -1311,7 +1347,7 @@ private:
         if (physics.isHappyClosedEyes()) {
             GraphicsPath hp;
             addQuadBezier(hp, {-11.5f, 1.0f}, {sign * 1.5f, 3.4f}, {11.5f, 1.0f});
-            Pen p(eyeCol, 2.6f);
+            Pen p(coat == CatCoatTheme::Tabby ? tabby::dark() : eyeCol, 2.6f);
             p.SetStartCap(LineCapRound); p.SetEndCap(LineCapRound);
             g.DrawPath(&p, &hp);
             g.Restore(st);
@@ -1324,7 +1360,7 @@ private:
             addQuadBezier(sp, {-11.5f, -0.5f}, {0.0f, 0.6f}, {11.5f, -0.5f});
             addQuadBezier(sp, {11.5f, -0.5f}, {0.0f, 4.8f}, {-11.5f, -0.5f});
             sp.CloseFigure();
-            SolidBrush sb(eyeCol);
+            SolidBrush sb(coat == CatCoatTheme::Tabby ? tabby::dark() : eyeCol);
             g.FillPath(&sb, &sp);
             g.Restore(st);
             return;
@@ -1361,6 +1397,15 @@ private:
             REAL iPos[3] = { 0.0f, 0.55f, 1.0f };
             irisGrad.SetInterpolationColors(iCols, iPos, 3);
             g.FillRectangle(&irisGrad, -rx - 1.0f, -ry - 1.0f, rx * 2.0f + 2.0f, ry * 2.0f + 2.0f);
+        }
+
+        if (eyeTheme == EyeColorTheme::OliveGold) {
+            LinearGradientBrush iris(PointF(0, -ry - 1), PointF(0, ry + 1),
+                                     blendColor(eyeCol, tabby::brown(), .39f),
+                                     blendColor(eyeCol, Color(250, 237, 189), .31f));
+            g.FillRectangle(&iris, -rx - 1.f, -ry - 1.f, 2 * rx + 2, 2 * ry + 2);
+            Pen eyeRim(tabby::dark(), 1.5f);
+            g.DrawEllipse(&eyeRim, -rx + .4f, -ry + .4f, 2 * rx - .8f, 2 * ry - .8f);
         }
 
         // Pupil morphs smoothly from vertical slit -> HUGE round black boba pupil!
@@ -1422,7 +1467,8 @@ private:
     static void drawWhiskers3D(Gdiplus::Graphics& g, float yawRad, float pitchRad, const CatPhysics& physics, CatCoatTheme coat) {
         using namespace Gdiplus;
         float wiggle = std::sin(physics.time * 4.5f) * (std::max(physics.petHeadIntensity, physics.petBodyIntensity) * 1.2f);
-        Pen pen(coat == CatCoatTheme::Siamese ? siameseWhisker() : (patterned(coat) ? rgb(0x8D8170,174) : whiskerWhite()), 1.05f);
+        Color whiskers = coat == CatCoatTheme::Siamese ? siameseWhisker() : (patterned(coat) ? rgb(0x8D8170,174) : whiskerWhite());
+        Pen pen(coat == CatCoatTheme::Tabby ? tabby::line(174) : whiskers, 1.05f);
         pen.SetStartCap(LineCapRound); pen.SetEndCap(LineCapRound);
 
         const float rows[3][3] = {
@@ -1510,7 +1556,7 @@ private:
             g.FillPath(&grad, &lp);
         }
 
-        if (patterned(coat) || coat == CatCoatTheme::ClassicBlack) {
+        if (coat != CatCoatTheme::Siamese) {
             SolidBrush cuff(pawColor(coat));
             g.FillRectangle(&cuff, bottom.x-7.5f, bottom.y-13.0f, 15.0f, 13.0f);
             g.FillEllipse(&cuff, bottom.x-7.5f, bottom.y-5.0f, 15.0f, 10.0f);
@@ -1633,7 +1679,9 @@ private:
             return;
         }
 
-        if (coat != CatCoatTheme::Siamese) {
+        if (coat == CatCoatTheme::Tabby) {
+            tabby::drawLimb(g, limbPath, pawRect, start, ctrl, end, startW, endW);
+        } else if (coat != CatCoatTheme::Siamese) {
             SolidBrush b(patterned(coat) ? pawColor(coat) : limbColor(coat));
             g.FillPath(&b, &limbPath);
             if (!patterned(coat)) g.FillEllipse(&b, pawRect);
