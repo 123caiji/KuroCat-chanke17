@@ -99,7 +99,7 @@ public:
 
     static void drawEditOverlay(cairo_t* cr, bool isEnglish, float scale) {
         cairo_save(cr);
-        addRoundedRect(cr, 10.0, 10.0, 340.0, 300.0, 12.0);
+        roundedRect(cr, 10.0, 10.0, 340.0, 300.0, 12.0);
         cairo_set_source_rgba(cr, 0.16, 0.56, 0.98, 0.07);
         cairo_fill_preserve(cr);
         double dashes[2] = { 6.0, 4.0 };
@@ -121,7 +121,7 @@ public:
         }
 
         auto drawBtn = [&](double x, double y, double w, double h, const char* txt, bool primary) {
-            addRoundedRect(cr, x, y, w, h, 11.0);
+            roundedRect(cr, x, y, w, h, 11.0);
             if (primary) cairo_set_source_rgba(cr, 0.16, 0.54, 0.96, 0.95);
             else cairo_set_source_rgba(cr, 0.14, 0.15, 0.19, 0.88);
             cairo_fill_preserve(cr);
@@ -143,7 +143,7 @@ public:
 
         char buf[16];
         std::snprintf(buf, sizeof(buf), "%.0f%%", scale * 100.0f);
-        addRoundedRect(cr, 158.0, 290.0, 44.0, 16.0, 6.0);
+        roundedRect(cr, 158.0, 290.0, 44.0, 16.0, 6.0);
         cairo_set_source_rgba(cr, 0.12, 0.13, 0.16, 0.82);
         cairo_fill(cr);
         cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
@@ -1229,7 +1229,7 @@ private:
         float anger = std::clamp(physics.angerIntensity.value, 0.0f, 1.0f);
         if (anger > 0.08f) {
             double drop = anger * 8.2;
-            setCol(cr, coat == CatCoatTheme::Siamese ? siamesePoint : furColor(coat));
+            setCol(cr, coat == CatCoatTheme::Siamese ? siamesePoint : bodyColor(coat));
             cairo_new_path(cr);
             cairo_move_to(cr, -rx - 2.0, -ry - 2.0);
             cairo_line_to(cr,  rx + 2.0, -ry - 2.0);

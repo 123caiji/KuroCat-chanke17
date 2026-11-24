@@ -804,6 +804,8 @@ void assertTopmost(AppState& app) {
 /// resolution) or a rendering stall: clears stuck keys, re-registers Raw Input, rebuilds the
 /// layered-window buffer, restarts the frame timer and re-places the window on a visible monitor
 /// WITHOUT overwriting the user's saved position.
+void applyOBSMode(AppState& app);
+
 void recoverAfterSystemEvent(AppState& app) {
     if (!app.hwnd) return;
     double now = nowSeconds();
