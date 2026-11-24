@@ -8,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lastFrameTime: CFTimeInterval = CACurrentMediaTime()
     private var lastFullscreenCheckTime: CFTimeInterval = 0
     private var hiddenByFullscreen = false
+    private var ticksSinceLastRedraw = 0
+    private var lastDemoKeyTime: CFTimeInterval = 0
     private var isPetVisible = true
     private var availableUpdateVersion: String?
     private var availableUpdateURL: URL?
@@ -144,7 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    // MARK: - 60 FPS Render Loop
+    // MARK: - Adaptive Redraw
 
     private func startRenderLoop() {
         lastFrameTime = CACurrentMediaTime()
@@ -173,9 +175,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
 
             let view = self.overlayWindow.catView
-            view.physics.step(dt: dt, windowFrameInScreen: self.overlayWindow.frame)
+            let physics = view.physics
+            let input = InputEngine.shared
+            let windowFrame = self.overlayWindow.frame
+            let previousMouseMoveTime = input.lastMouseMoveTime
+            let wasBlinking = physics.isBlinking
+            let wasYawning = physics.isYawning
+            physics.step(dt: dt, windowFrameInScreen: windowFrame)
             view.updateHoverAndClickThrough()
-            view.needsDisplay = true
+
+            // Track the mouse at 60 Hz. Ordinary movement away from the pet can share the idle redraw cadence.
+            let lastDirectInput = max(input.lastKeyActivityTime, input.lastMouseClickTime, self.lastDemoKeyTime)
+            let mouseMoving = now - input.lastMouseMoveTime < 0.12
+            let mouseStartedMoving = mouseMoving && now - previousMouseMoveTime >= 0.12
+            let mouseNearPet = mouseMoving && windowFrame.insetBy(dx: -24, dy: -24).contains(input.lastMouseLocation)
+            let isAsleep = physics.sleepiness >= 0.95
+            let isActive = now - lastDirectInput < 0.8 || !input.activeKeys.isEmpty
+                || mouseStartedMoving || mouseNearPet
+                || input.leftMouseDown || input.rightMouseDown || input.otherMouseDown || view.isDraggingOrResizing
+                || !physics.keyGlow.isEmpty || !physics.floatingKeycaps.isEmpty
+                || physics.petHeadIntensity > 0.02 || physics.huntIntensity.value > 0.02
+                || physics.scruffDrag.value > 0.02 || physics.lieIntensity.value > 0.02
+                || physics.angerIntensity.value > 0.02 || physics.dizzyIntensity.value > 0.02
+                || wasYawning || physics.isYawning || (!isAsleep && (wasBlinking || physics.isBlinking))
+            let ticksPerRedraw = isActive ? 1 : (isAsleep ? 3 : 2) // 60, 20, or 30 FPS on a 60 Hz tick.
+            self.ticksSinceLastRedraw += 1
+            // Give small idle movements time to accumulate, but refresh at least every 100 ms.
+            if self.ticksSinceLastRedraw >= ticksPerRedraw &&
+                (isActive || self.ticksSinceLastRedraw >= 6 || view.poseNeedsDisplay()) {
+                self.ticksSinceLastRedraw = 0
+                view.needsDisplay = true
+            }
         }
         RunLoop.main.add(timer, forMode: .common)
         renderTimer = timer
@@ -473,6 +503,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleVisibility() {
         isPetVisible.toggle()
         if isPetVisible {
+            lastFrameTime = CACurrentMediaTime()
+            ticksSinceLastRedraw = 0
+            overlayWindow.catView.needsDisplay = true
             overlayWindow.orderFrontRegardless()
         } else {
             overlayWindow.orderOut(nil)
@@ -663,7 +696,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let keys: [PhysicalKey] = [.w, .a, .s, .d, .f, .j, .o, .e, .space, .leftShift]
         for (idx, k) in keys.enumerated() {
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(idx) * 0.13) { [weak self] in
-                self?.overlayWindow.catView.physics.triggerKeyDown(k)
+                guard let self else { return }
+                let now = CACurrentMediaTime()
+                self.lastDemoKeyTime = now
+                self.overlayWindow.catView.physics.triggerKeyDown(k, at: now)
             }
         }
     }
