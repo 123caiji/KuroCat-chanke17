@@ -38,6 +38,8 @@ struct CatSettings {
     bool showMouseBadges = true;
     bool showKeyLegends = true;
     bool footEasterEgg = true;
+    bool tailEasterEgg = true;
+    bool keyboardMarquee = true;
     bool petInteraction = true;
     bool fullClickThrough = false;
     bool alwaysOnTop = true;
@@ -76,6 +78,8 @@ struct CatSettings {
                 else if (k == "showMouseBadges") showMouseBadges = (std::stoi(v) != 0);
                 else if (k == "showKeyLegends") showKeyLegends = (std::stoi(v) != 0);
                 else if (k == "footEasterEgg") footEasterEgg = (std::stoi(v) != 0);
+                else if (k == "tailEasterEgg") tailEasterEgg = (std::stoi(v) != 0);
+                else if (k == "keyboardMarquee") keyboardMarquee = (std::stoi(v) != 0);
                 else if (k == "petInteraction") petInteraction = (std::stoi(v) != 0);
                 else if (k == "fullClickThrough") fullClickThrough = (std::stoi(v) != 0);
                 else if (k == "alwaysOnTop") alwaysOnTop = (std::stoi(v) != 0);
@@ -101,6 +105,8 @@ struct CatSettings {
           << "showMouseBadges=" << (showMouseBadges ? 1 : 0) << "\n"
           << "showKeyLegends=" << (showKeyLegends ? 1 : 0) << "\n"
           << "footEasterEgg=" << (footEasterEgg ? 1 : 0) << "\n"
+          << "tailEasterEgg=" << (tailEasterEgg ? 1 : 0) << "\n"
+          << "keyboardMarquee=" << (keyboardMarquee ? 1 : 0) << "\n"
           << "petInteraction=" << (petInteraction ? 1 : 0) << "\n"
           << "fullClickThrough=" << (fullClickThrough ? 1 : 0) << "\n"
           << "alwaysOnTop=" << (alwaysOnTop ? 1 : 0) << "\n"
@@ -169,6 +175,11 @@ public:
     Spring2D rightPaw{RightPawRest};
     Spring2D hindFoot{HindFootRest};
     Spring1D hindFootActive{0.0f};
+    Spring2D tailTip{{275.0f, 196.0f}};
+    Spring1D tailTyping{0.0f};
+    // Keyboard marquee: normalized position (0..1) of the light head, plus its speed boost.
+    float marqueePhase = 0.0f;
+    Spring1D marqueeBoost{0.0f};
 
     Spring1D bodyShiftX{0.0f};
     Spring1D bodyTilt{0.0f};
@@ -433,6 +444,27 @@ public:
             hindFoot.setTarget(HindFootRest);
             hindFootActive.target = 0.0f;
         }
+
+        // Count held physical keys, never key-repeat events or mouse buttons.
+        tailTyping.target = (settings.tailEasterEgg && activeKeys.size() == 4) ? 1.0f : 0.0f;
+        tailTyping.step(dt, 180.0f, 24.0f);
+        // Marquee chase across the keyboard deck: a steady sweep that speeds up while
+        // several keys are held, so a chord visibly "fan out" the light.
+        if (settings.keyboardMarquee) {
+            marqueeBoost.target = std::clamp(((float)activeKeys.size() - 2.0f) / 5.0f, 0.0f, 1.0f);
+            marqueeBoost.step(dt, 90.0f, 20.0f);
+            marqueePhase = std::fmod(marqueePhase + dt * (0.42f + 0.40f * marqueeBoost.value), 1.0f);
+        }
+        PhysicalKey tailKey = PhysicalKey::None;
+        if (tailTyping.target > 0.0f) {
+            for (PhysicalKey k : orderedKeys) {
+                if (k != leftKey && k != rightKey && k != footKey) { tailKey = k; break; }
+            }
+        }
+        Pt tip = tailKey != PhysicalKey::None ? KeyboardLayout::canvasPointForKey(tailKey) : Pt{275.0f, 196.0f};
+        tip.y -= tailTyping.target * (1.0f + std::sin(time * 18.0f)) * 3.0f;
+        tailTip.setTarget(tip);
+        tailTip.step(dt, 280.0f, 26.0f);
 
         leftPaw.step(dt, 360.0f, 24.0f);
         rightPaw.step(dt, 360.0f, 24.0f);

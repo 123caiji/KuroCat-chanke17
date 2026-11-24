@@ -741,6 +741,14 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
         g_app->settings.footEasterEgg = gtk_check_menu_item_get_active(item);
         g_app->settings.save();
     }));
+    addCheck("4键同时按「用尾巴按」彩蛋", app.settings.tailEasterEgg, G_CALLBACK(+[](GtkCheckMenuItem* item, gpointer) {
+        g_app->settings.tailEasterEgg = gtk_check_menu_item_get_active(item);
+        g_app->settings.save();
+    }));
+    addCheck("键盘跑马灯流光", app.settings.keyboardMarquee, G_CALLBACK(+[](GtkCheckMenuItem* item, gpointer) {
+        g_app->settings.keyboardMarquee = gtk_check_menu_item_get_active(item);
+        g_app->settings.save();
+    }));
     addCheck("摸头/摸背闭眼互动", app.settings.petInteraction, G_CALLBACK(+[](GtkCheckMenuItem* item, gpointer) {
         g_app->settings.petInteraction = gtk_check_menu_item_get_active(item);
         g_app->settings.save();

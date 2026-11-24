@@ -67,6 +67,12 @@ final class CatSettings {
     var footEasterEgg: Bool {
         didSet { UserDefaults.standard.set(footEasterEgg, forKey: "KuroCat.FootEasterEgg") }
     }
+    var tailEasterEgg: Bool {
+        didSet { UserDefaults.standard.set(tailEasterEgg, forKey: "KuroCat.TailEasterEgg") }
+    }
+    var keyboardMarquee: Bool {
+        didSet { UserDefaults.standard.set(keyboardMarquee, forKey: "KuroCat.KeyboardMarquee") }
+    }
     var petInteraction: Bool {
         didSet { UserDefaults.standard.set(petInteraction, forKey: "KuroCat.PetInteraction") }
     }
@@ -95,6 +101,8 @@ final class CatSettings {
         showMouseBadges = d.object(forKey: "KuroCat.ShowMouseBadges") as? Bool ?? true
         showKeyLegends = d.object(forKey: "KuroCat.ShowKeyLegends") as? Bool ?? true
         footEasterEgg = d.object(forKey: "KuroCat.FootEasterEgg") as? Bool ?? true
+        tailEasterEgg = d.object(forKey: "KuroCat.TailEasterEgg") as? Bool ?? true
+        keyboardMarquee = d.object(forKey: "KuroCat.KeyboardMarquee") as? Bool ?? true
         petInteraction = d.object(forKey: "KuroCat.PetInteraction") as? Bool ?? true
         fullClickThrough = d.object(forKey: "KuroCat.FullClickThrough") as? Bool ?? false
         fullScreenOverlay = d.object(forKey: "KuroCat.FullScreenOverlay") as? Bool ?? true
@@ -199,6 +207,11 @@ final class CatPhysics {
     var rightPaw = Spring2D(rightPawRest)
     var hindFoot = Spring2D(hindFootRest)
     var hindFootActive = Spring1D(0) // 0 = tucked, 1 = kicking 3rd key
+    var tailTip = Spring2D(CGPoint(x: 275, y: 196))
+    var tailTyping = Spring1D(0)
+    // Keyboard marquee: normalized position (0..1) of the light head, plus its speed boost.
+    var marqueePhase: CGFloat = 0
+    var marqueeBoost = Spring1D(0)
 
     var bodyShiftX = Spring1D(0)
     var bodyTilt = Spring1D(0)       // radians
@@ -572,6 +585,21 @@ final class CatPhysics {
             hindFoot.target = CatPhysics.hindFootRest
             hindFootActive.target = 0.0
         }
+
+        // Held physical keys determine the mode; repeats and mouse buttons do not count.
+        tailTyping.target = (CatSettings.shared.tailEasterEgg && activeKeys.count == 4) ? 1 : 0
+        tailTyping.step(dt: dt, stiffness: 180, damping: 24)
+        // Marquee chase across the keyboard deck: steady sweep, faster while many keys are held.
+        if CatSettings.shared.keyboardMarquee {
+            marqueeBoost.target = max(0, min(1, (CGFloat(activeKeys.count) - 2) / 5))
+            marqueeBoost.step(dt: dt, stiffness: 90, damping: 20)
+            marqueePhase = (marqueePhase + dt * (0.42 + 0.40 * marqueeBoost.value)).truncatingRemainder(dividingBy: 1.0)
+        }
+        let tailKey = orderedKeys.first { $0 != leftKey && $0 != rightKey && $0 != footKey }
+        var tip = tailTyping.target > 0 ? tailKey.map { KeyboardLayout.canvasPoint(for: $0) } ?? CGPoint(x: 275, y: 196) : CGPoint(x: 275, y: 196)
+        tip.y -= tailTyping.target * (1 + sin(time * 18)) * 3
+        tailTip.target = tip
+        tailTip.step(dt: dt, stiffness: 280, damping: 26)
 
         leftPaw.step(dt: dt, stiffness: 360, damping: 24)
         rightPaw.step(dt: dt, stiffness: 360, damping: 24)
