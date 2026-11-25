@@ -308,3 +308,16 @@ rejects(##"{"formatVersion":1,"name":"x","palette":{"body":"#000000"},"shape":{"
 let clamped = try! SkinSpec.parse(Data(##"{"formatVersion":1,"name":"  胖  ","palette":{"body":"#112233"},"shape":{"bodyWidth":9},"unknownField":true}"##.utf8))
 precondition(clamped.shape.bodyWidth == 1.35 && clamped.name == "胖", "Clamping / trimming / unknown-field rules broken")
 print("PASS: 4 .kurocat templates match their built-in coats, curve-regions sample renders, invalid files are rejected in Chinese")
+
+// MARK: - A sleeping cat lying still is not animating
+let sitting=CatPhysics()
+precondition(!sitting.isChangingLie,"A sitting cat counts as changing its lie")
+let lyingStill=CatPhysics();lyingStill.lieIntensity.value=1;lyingStill.lieIntensity.target=1
+precondition(!lyingStill.isChangingLie,"A cat lying still counts as changing its lie")
+let lyingDown=CatPhysics();lyingDown.lieIntensity.value=0.4;lyingDown.lieIntensity.target=1
+precondition(lyingDown.isChangingLie,"Lying down does not count as changing the lie")
+let sittingUp=CatPhysics();sittingUp.lieIntensity.value=0.7;sittingUp.lieIntensity.target=0
+precondition(sittingUp.isChangingLie,"Sitting up does not count as changing the lie")
+let settling=CatPhysics();settling.lieIntensity.value=1;settling.lieIntensity.target=1;settling.lieIntensity.velocity=0.3
+precondition(settling.isChangingLie,"A lying cat still in motion does not count as changing the lie")
+print("PASS: lying down, sitting up and settling count as lie changes; sitting or lying still does not")

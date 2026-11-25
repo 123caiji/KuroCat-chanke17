@@ -57,7 +57,7 @@ private struct RenderedPose {
             || !physics.tabletTrail.isEmpty || physics.kbSparkTimer > 0.005
             || physics.angerIntensity.value > 0.02 || physics.dizzyIntensity.value > 0.02
             || physics.huntIntensity.value > 0.02
-            || physics.scruffDrag.value > 0.02 || physics.lieIntensity.value > 0.02
+            || physics.scruffDrag.value > 0.02 || physics.isChangingLie
             || abs(physics.scruffSwing.value) > 0.01 || abs(physics.scruffSwingY.value) > 0.01
             || abs(physics.scruffTailSwing.value) > 0.01
             || (physics.douniLoafBlend.value > 0.005 && physics.douniLoafBlend.value < 0.995)
