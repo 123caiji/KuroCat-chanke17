@@ -941,11 +941,15 @@ void applyOBSMode(AppState& app) {
     bool wantLayered = (app.settings.obsCaptureMode != 2);
     bool isToolWindow = (ex & WS_EX_TOOLWINDOW) != 0;
     bool isLayered = (ex & WS_EX_LAYERED) != 0;
-    if (wantToolWindow != isToolWindow || wantLayered != isLayered) {
+    bool styleChanged = (wantToolWindow != isToolWindow || wantLayered != isLayered);
+    if (styleChanged) {
         if (wantToolWindow) ex |= WS_EX_TOOLWINDOW;
         else ex &= ~WS_EX_TOOLWINDOW;
         if (wantLayered) ex |= WS_EX_LAYERED;
         else ex &= ~WS_EX_LAYERED;
+        if (app.settings.obsCaptureMode == 2 && !app.settings.fullClickThrough) {
+            ex &= ~WS_EX_TRANSPARENT;
+        }
         bool wasVis = app.isVisible && !app.hiddenByFullscreen;
         if (wasVis) ShowWindow(app.hwnd, SW_HIDE);
         SetWindowLongPtrW(app.hwnd, GWL_EXSTYLE, ex);
@@ -954,12 +958,16 @@ void applyOBSMode(AppState& app) {
     }
     bool hideDesk = (app.settings.obsCaptureMode > 0 && app.settings.obsHideDesktop);
     if (hideDesk) {
-        // Move off-monitor & remove topmost so desktop stays clean while OBS WGC/BitBlt captures live frames!
-        int offX = GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN) + 120;
-        int offY = GetSystemMetrics(SM_YVIRTUALSCREEN) + 40;
+        // Keep 1px inside virtual screen edge so DWM continuously composites live frames for both WGC and BitBlt,
+        // while staying tucked behind all windows (HWND_BOTTOM) and virtually invisible on the desktop.
+        int offX = GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN) - 1;
+        int offY = GetSystemMetrics(SM_YVIRTUALSCREEN) + GetSystemMetrics(SM_CYVIRTUALSCREEN) - 1;
         SetWindowPos(app.hwnd, HWND_BOTTOM, offX, offY, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
     } else {
         applyWindowScaleAndPosition(app, false);
+    }
+    if (styleChanged) {
+        RedrawWindow(app.hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_FRAME);
     }
 }
 
@@ -2366,14 +2374,19 @@ void tickAndRender(AppState& app) {
                     app.hasLastHover = false;
                 }
                 // Holding Alt temporarily unlocks click-through so user can ALWAYS right-click or drag the cat!
+                // In Green Screen mode (non-layered window), keep WS_EX_TRANSPARENT off unless fullClickThrough is active,
+                // so window capture tools never skip or misread the solid green-screen window.
                 bool altHeld = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
-                bool clickThrough = (app.settings.fullClickThrough && !altHeld) || (zone == CatHitZone::None);
+                bool clickThrough = (app.settings.fullClickThrough && !altHeld)
+                                  || (app.settings.obsCaptureMode != 2 && zone == CatHitZone::None);
                 setClickThrough(app.hwnd, clickThrough);
             }
         } else {
             app.hasLastHover = false;
             app.physics.updateTailHover(nullptr);
-            setClickThrough(app.hwnd, true);
+            bool altHeld = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+            bool clickThrough = (app.settings.fullClickThrough && !altHeld) || (app.settings.obsCaptureMode != 2);
+            setClickThrough(app.hwnd, clickThrough);
         }
     }
 
@@ -3110,7 +3123,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     }
 
     DWORD exStyle = (app.settings.obsCaptureMode != 2 ? WS_EX_LAYERED : 0)
-                  | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT
+                  | WS_EX_NOACTIVATE
+                  | (app.settings.obsCaptureMode != 2 ? WS_EX_TRANSPARENT : 0)
                   | (app.settings.obsCaptureMode == 0 ? WS_EX_TOOLWINDOW : 0)
                   | (app.settings.alwaysOnTop ? WS_EX_TOPMOST : 0);
 

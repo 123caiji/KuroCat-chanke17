@@ -1003,7 +1003,7 @@ public:
 
         // Count held physical keys, never key-repeat events or mouse buttons.
         // Tail-only mode (!footEasterEgg && tailEasterEgg): 3+ keys (or 2+ keys while mouse is active) -> tail!
-        bool tailOnlyTrigger = !settings.footEasterEgg && (orderedKeys.size() >= 3 || (mouseActivelyUsed && leftKey == PhysicalKey::None && rightCandidates.size() >= 2));
+        bool tailOnlyTrigger = !settings.footEasterEgg && (orderedKeys.size() >= 3 || (mouseActivelyUsed && leftKey == PhysicalKey::None && orderedKeys.size() >= 2 && rightKey != PhysicalKey::None));
         bool tailActiveNow = settings.tailEasterEgg && (activeKeys.size() >= 4 || tailOnlyTrigger);
         tailTyping.target = tailActiveNow ? 1.0f : 0.0f;
         tailTyping.step(dt, 180.0f, 24.0f);
