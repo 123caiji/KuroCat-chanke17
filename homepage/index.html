@@ -3,53 +3,81 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>KuroCat 官网 · 开源免费的全平台原生桌面萌猫（Bongo Cat 替代）</title>
-  <meta name="description" content="KuroCat 是一款开源免费的原生桌面萌猫，支持 macOS、Windows、Linux 与统信 UOS。全状态键鼠与数位板同步、2.5D 转头捕猎、OBS 直播透明捕获、自定义皮肤工坊，不上传任何按键记录。" />
-  <meta name="keywords" content="KuroCat,桌面宠物,Bongo Cat替代,敲键盘小猫,OBS直播桌宠,Mac桌面宠物,Windows桌宠,Linux桌宠,统信UOS,数位板桌宠,开源桌宠" />
-  <meta name="robots" content="index, follow" />
+  <title>KuroCat 官网 — 开源免费全平台原生桌面萌猫（macOS/Win/Linux/UOS · OBS · 皮肤工坊）</title>
+  <meta name="description" content="KuroCat 官方网站（kurocat.cc）：开源免费的全平台原生桌面萌猫与 Bongo Cat 替代工具（Swift / Win32 C++ / GTK3 原生开发，Windows 单文件仅 802 KB）。支持 macOS、Windows、Linux 与统信 UOS，内置 2.5D 球面转头捕猎、数位板压感笔、OBS 透明/绿幕直播捕获与在线皮肤工坊，零按键上传。" />
+  <meta name="keywords" content="KuroCat,KuroCat官网,KuroCat桌宠,桌面宠物,Bongo Cat替代,敲键盘小猫,OBS直播桌宠,Mac桌面宠物,Windows桌宠,Linux桌宠,统信UOS桌宠,数位板桌宠,开源桌宠,小豆泥桌宠,怪猎呆猫" />
+  <meta name="author" content="chanke17" />
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
   <meta name="theme-color" content="#F7F5F0" />
   <link rel="canonical" href="https://kurocat.cc/" />
+  <link rel="alternate" hreflang="zh-CN" href="https://kurocat.cc/" />
+  <link rel="alternate" hreflang="en" href="https://kurocat.cc/en/" />
+  <link rel="alternate" hreflang="x-default" href="https://kurocat.cc/en/" />
 
   <!-- Open Graph / Social Sharing -->
   <meta property="og:type" content="website" />
-  <meta property="og:site_name" content="KuroCat" />
-  <meta property="og:title" content="KuroCat · 让一只原生小猫趴在你的键盘上" />
-  <meta property="og:description" content="开源免费全平台桌面萌猫（macOS / Windows / Linux / 统信 UOS）。支持 OBS 直播捕获、2.5D 数位板握笔与自定义皮肤工坊，全程本地运行，零按键上传。" />
+  <meta property="og:site_name" content="KuroCat 官网" />
+  <meta property="og:locale" content="zh_CN" />
+  <meta property="og:locale:alternate" content="en_US" />
+  <meta property="og:title" content="KuroCat 官网 — 让一只原生小猫趴在你的键盘上" />
+  <meta property="og:description" content="开源免费全平台原生桌面萌猫（macOS / Windows / Linux / 统信 UOS，Windows 单文件 802 KB）。支持 OBS 透明绿幕直播、2.5D 数位板握笔与自定义皮肤工坊，全程本地运行，零按键上传。" />
   <meta property="og:url" content="https://kurocat.cc/" />
   <meta property="og:image" content="https://kurocat.cc/assets/og-cover.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="KuroCat 开源全平台原生桌面萌猫官网预览图（含实时网页桌宠与多款猫咪皮肤）" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="KuroCat · Native Open Source Desktop Cat Pet" />
-  <meta name="twitter:description" content="Lightweight native Bongo Cat alternative for macOS, Windows, and Linux. OBS overlay, graphics tablet mode, custom .kurocat skins, zero keystroke upload." />
+  <meta name="twitter:title" content="KuroCat — Free Open-Source Native Desktop Cat Pet" />
+  <meta name="twitter:description" content="802 KB native Bongo Cat alternative for macOS, Windows, Linux & UOS. 2.5D head tracking, OBS transparent/green overlay, graphics tablet mode, browser Skin Workshop, zero keystroke upload." />
   <meta name="twitter:image" content="https://kurocat.cc/assets/og-cover.png" />
 
-  <!-- Branded Favicon -->
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%231E2B25'/%3E%3Cpath d='M16 24 14 10l12 8h12l12-8-2 14c4 6 4 18 0 24-4 7-10 10-18 10S18 55 14 48c-4-6-4-18 2-24Z' fill='%231E2B25' stroke='%23C5A059' stroke-width='2.5'/%3E%3Cellipse cx='24' cy='36' rx='4.2' ry='7.5' fill='%23C5A059'/%3E%3Cellipse cx='40' cy='36' rx='4.2' ry='7.5' fill='%23C5A059'/%3E%3C/svg%3E" />
+  <!-- Branded Hosted Favicons (Google SERP & Apple/Android Standard) -->
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
+  <link rel="icon" type="image/png" sizes="48x48" href="/assets/favicon-48.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/assets/favicon-192.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png" />
 
   <!-- Approved Fonts: Manrope + Geist Mono (code/metrics only) -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@500;600&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20261125b" />
+  <link rel="stylesheet" href="styles.css?v=20261125c" />
 
-  <!-- GEO & SEO Structured Data -->
+  <!-- GEO & SEO Entity Knowledge Graph -->
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@graph": [
       {
+        "@type": "Person",
+        "@id": "https://kurocat.cc/#creator",
+        "name": "chanke17",
+        "url": "https://github.com/chanke17",
+        "sameAs": [
+          "https://github.com/chanke17",
+          "https://github.com/chanke17/KuroCat"
+        ]
+      },
+      {
         "@type": "WebSite",
+        "@id": "https://kurocat.cc/#website",
         "name": "KuroCat",
+        "alternateName": ["KuroCat 官网", "KuroCat 桌宠", "KuroCat Desktop Pet", "Kuro Cat"],
         "url": "https://kurocat.cc/",
-        "inLanguage": ["zh-CN", "en"]
+        "inLanguage": ["zh-CN", "en"],
+        "publisher": { "@id": "https://kurocat.cc/#creator" }
       },
       {
         "@type": "SoftwareApplication",
+        "@id": "https://kurocat.cc/#software",
         "name": "KuroCat",
+        "alternateName": ["Kuro Cat", "KuroCat 桌面萌猫", "KuroCat 桌宠", "KuroCat Desktop Cat Pet"],
         "applicationCategory": "UtilitiesApplication",
-        "operatingSystem": "macOS 11+, Windows 7/8/10/11, Linux, UnionTech UOS, Kylin",
+        "operatingSystem": "macOS 11+, Windows 7, Windows 8, Windows 10, Windows 11, Linux, UnionTech UOS 20, Kylin V10",
         "softwareVersion": "1.4.3",
+        "dateModified": "2026-11-25",
+        "fileSize": "802KB",
         "license": "https://opensource.org/licenses/MIT",
         "isAccessibleForFree": true,
         "offers": {
@@ -60,7 +88,31 @@
         "url": "https://kurocat.cc/",
         "downloadUrl": "https://kurocat-download.app.workbuddy.host/?sharecode=JVAABIVZ7L",
         "codeRepository": "https://github.com/chanke17/KuroCat",
-        "description": "开源免费的全平台原生桌面萌猫与 Bongo Cat 替代工具，采用 Swift、Win32 GDI+ 与 GTK3 Cairo 原生开发，支持全状态键鼠捕获、2.5D 数位板、OBS 透明窗口及绿幕直播捕获、自定义 .kurocat 皮肤工坊，零按键上传。"
+        "sameAs": [
+          "https://github.com/chanke17/KuroCat",
+          "https://workshop.kurocat.cc/",
+          "https://kurocat.cc/en/"
+        ],
+        "image": "https://kurocat.cc/assets/og-cover.png",
+        "screenshot": [
+          "https://kurocat.cc/assets/preview_siamese.jpg",
+          "https://kurocat.cc/assets/preview_black.jpg",
+          "https://kurocat.cc/assets/preview_shorthair.jpg",
+          "https://kurocat.cc/assets/preview_orangeWhite.jpg",
+          "https://kurocat.cc/assets/preview_tabby_windows.png"
+        ],
+        "featureList": [
+          "100% 原生架构（Swift CoreGraphics / Win32 GDI+ C++ / GTK3 Cairo），无 Electron 壳，Windows 单文件约 802 KB",
+          "全状态键鼠硬件级捕获（NKRO 打字、WASD 游戏长按、3 键翘后脚、4 键摇尾拍键）",
+          "2.5D 球面转头追踪、捕猎大圆眼、拎后颈 2D 惯性拖拽、团球低功耗睡眠",
+          "自动识别数位板压感笔，实时切换 2.5D 握笔画画模式",
+          "OBS Studio / 抖音直播伴侣 / B 站直播姬透明窗口捕获与绿幕色度键（#00FF00）",
+          "开放 .kurocat 皮肤与 .kurokb 键盘格式，配套免费在线皮肤工坊与社区广场（含小豆泥、怪猎呆猫等）",
+          "MIT 完全开源免费，键鼠信号仅在本地内存运行，零按键记录与零数据上传"
+        ],
+        "author": { "@id": "https://kurocat.cc/#creator" },
+        "publisher": { "@id": "https://kurocat.cc/#creator" },
+        "description": "KuroCat 是开源免费的全平台原生桌面萌猫与 Bongo Cat 替代工具，采用 Swift、Win32 GDI+ 与 GTK3 Cairo 原生开发，Windows 单文件仅约 802 KB，支持 macOS、Windows、Linux 与统信 UOS，内置全状态键鼠与数位板同步、2.5D 球面转头捕猎、OBS 透明窗口与绿幕直播捕获及自定义 .kurocat 皮肤工坊，零按键上传。"
       },
       {
         "@type": "FAQPage",
@@ -186,7 +238,7 @@
       </div>
 
       <div class="nav-actions">
-        <button class="lang-btn caption-3" id="langToggle" type="button" aria-label="Switch language">EN</button>
+        <a class="lang-btn caption-3" id="langToggle" href="/en/" hreflang="en" lang="en" aria-label="Switch to English">EN</a>
         <a class="btn btn-primary button-sm" href="https://kurocat-download.app.workbuddy.host/?sharecode=JVAABIVZ7L" target="_blank" rel="noopener" data-i18n="nav_cta">国内直链下载</a>
         <button class="menu-toggle" id="menuToggle" type="button" aria-expanded="false" aria-controls="mobileDrawer" aria-label="打开菜单">
           <span class="menu-bars" aria-hidden="true">
@@ -224,7 +276,7 @@
               <span data-i18n="hero_badge">· MIT 开源 · 零按键上传</span>
             </div>
 
-            <h1 class="hero-title heading-1" data-i18n-html="hero_h1">让一只原生小猫<br />趴在你的键盘上</h1>
+            <h1 class="hero-title heading-1" data-i18n-html="hero_h1"><span class="hero-brand-kicker">KuroCat</span>让一只原生小猫<br />趴在你的键盘上</h1>
 
             <p class="hero-sub body-3" data-i18n="hero_sub">KuroCat 是专为 macOS、Windows、Linux 与统信 UOS 打造的原生轻量桌面萌猫。打字、玩游戏、画数位板与 OBS 直播全场景跟手，支持拖入自定义皮肤，所有键鼠信号仅在本机内存运行。</p>
 
@@ -425,9 +477,10 @@
               <p class="body-6" data-i18n="hub_4_desc">查阅 .kurocat v1 部位坐标系、曲线分区与贴纸锚点说明，或者快速了解如何把原创猫咪皮肤、键盘配色提交到官方社区广场。</p>
             </div>
             <div class="hub-sublinks">
+              <a class="hub-chip caption-4" href="/obs-guide/">OBS 直播配置指南</a>
               <a class="hub-chip caption-4" href="https://github.com/chanke17/KuroCat/blob/main/docs/skin-format.md" target="_blank" rel="noopener" data-i18n="hub_4_c1">.kurocat 规范</a>
               <a class="hub-chip caption-4" href="https://github.com/chanke17/KuroCat-Workshop/blob/main/community/README.md" target="_blank" rel="noopener" data-i18n="hub_4_c2">广场投稿指南</a>
-              <a class="hub-chip caption-4" href="llms.txt" target="_blank" rel="noopener">llms.txt</a>
+              <a class="hub-chip caption-4" href="/llms.txt" target="_blank" rel="noopener">llms.txt</a>
             </div>
             <div class="hub-card-foot">
               <span class="hub-url caption-5">docs/skin-format.md</span>
@@ -896,10 +949,12 @@
         <div class="footer-col">
           <h4 class="title-4" data-i18n="foot_c2">开源与文档</h4>
           <ul class="caption-2">
+            <li><a href="/obs-guide/">OBS 直播与权限配置指南</a></li>
+            <li><a href="/en/" hreflang="en" lang="en">English Homepage</a></li>
             <li><a href="https://github.com/chanke17/KuroCat" target="_blank" rel="noopener">GitHub 开源仓库</a></li>
             <li><a href="https://github.com/chanke17/KuroCat/releases" target="_blank" rel="noopener">版本发布记录</a></li>
             <li><a href="https://github.com/chanke17/KuroCat/blob/main/docs/skin-format.md" target="_blank" rel="noopener">.kurocat 格式规范</a></li>
-            <li><a href="llms.txt" target="_blank" rel="noopener">llms.txt (AI 索引)</a></li>
+            <li><a href="/llms.txt" target="_blank" rel="noopener">llms.txt / AI 知识库</a></li>
           </ul>
         </div>
 
@@ -947,9 +1002,9 @@
 
   <div class="toast caption-3" id="toast" role="status" aria-live="polite">已复制到剪贴板</div>
 
-  <script src="pet/spec.js?v=20261125b"></script>
-  <script src="pet/renderer.js?v=20261125b"></script>
-  <script src="pet/web-pet.js?v=20261125b"></script>
-  <script src="app.js?v=20261125b"></script>
+  <script src="pet/spec.js?v=20261125c"></script>
+  <script src="pet/renderer.js?v=20261125c"></script>
+  <script src="pet/web-pet.js?v=20261125c"></script>
+  <script src="app.js?v=20261125c"></script>
 </body>
 </html>

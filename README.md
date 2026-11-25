@@ -3,6 +3,7 @@
 <p align="center">
   <b>简体中文</b> | <a href="README.en.md">English</a> ·
   <a href="https://kurocat.cc/">🌐 官方首页（网页直接试玩桌宠）</a> ·
+  <a href="https://kurocat.cc/obs-guide/">🎥 OBS 直播配置指南</a> ·
   <a href="https://kurocat-download.app.workbuddy.host/?sharecode=JVAABIVZ7L">⚡ 国内高速下载</a> ·
   <a href="https://workshop.kurocat.cc/">🎨 皮肤工坊与广场</a>
 </p>
@@ -77,7 +78,7 @@ open KuroCat.app
 ```
 
 ### 🪟 Windows (Windows 7 SP1 / 8 / 10 / 11 x64)
-1. 下载单文件 `KuroCat-Windows-x64.exe`（约 220 KB，**零外部运行时依赖**），双击即可运行，常驻右下角系统托盘。
+1. 下载单文件 `KuroCat-Windows-x64.exe`（约 802 KB，**零外部运行时依赖**，无 Electron 壳），双击即可运行，常驻右下角系统托盘。
 2. 右键小猫或左键/右键托盘小猫图标即可切换皮肤、键盘配色、尺寸、**开机自动启动**、游戏防误触穿透模式等。
 3. **开启「完全鼠标穿透」后，以下 4 种方式均可随时取消或呼出菜单**：
    - 全局快捷键：**`Ctrl + Alt + Shift + P`** 一键切换/取消穿透；
@@ -126,6 +127,18 @@ cmake -B build && cmake --build build --config Release
    ./build.sh        # 编译可执行文件
    ./build_deb.sh    # 一键打成 .deb 安装包
    ```
+
+---
+
+## 🌐 官方生态入口（Official Ecosystem）
+
+| 入口 | 链接 | 说明 |
+| :--- | :--- | :--- |
+| **KuroCat 官方网站（中文）** | https://kurocat.cc/ | 网页内直接试玩 2.5D 交互桌宠、三端 SHA-256 校验下载、与 Bongo Cat 参数对比 |
+| **KuroCat Official Site (EN)** | https://kurocat.cc/en/ | Full English overview, live web pet demo, platform downloads & FAQ |
+| **OBS 直播与权限配置指南** | https://kurocat.cc/obs-guide/ | OBS Studio 透明窗口 / `#00FF00` 绿幕抠像、抖音直播伴侣、B 站直播姬与游戏防误触教程 |
+| **在线皮肤工坊 & 社区广场** | https://workshop.kurocat.cc/ | 照片取色捏猫、贝塞尔花纹分区、免费下载小豆泥 / 怪猎呆猫（艾露猫）/ 狸花猫等 `.kurocat` 皮肤与 `.kurokb` 键盘 |
+| **国内极速直链下载页** | https://kurocat-download.app.workbuddy.host/?sharecode=JVAABIVZ7L | 国内免代理高速镜像，附带评论区 10 问高频答疑 |
 
 ---
 

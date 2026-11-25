@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var currentLang = 'zh';
+  var currentLang = /^en/i.test(document.documentElement.lang || '') ? 'en' : 'zh';
 
   var EN_COPY = {
     skip: 'Skip to main content',
@@ -322,9 +322,9 @@
     window.addEventListener('scroll', onScrollThrottled, { passive: true });
     window.addEventListener('resize', onScrollThrottled, { passive: true });
   }
-  buildTaglineTokens('zh');
+  buildTaglineTokens(currentLang);
 
-  // Language Switcher (ZH <-> EN)
+  // Language Switcher (only attaches in-place toggle when #langToggle is a button; link navigates directly)
   var langBtn = document.getElementById('langToggle');
   function setLanguage(lang) {
     currentLang = lang;
@@ -338,7 +338,7 @@
       var k = el.getAttribute('data-i18n-html');
       if (dict[k] !== undefined) el.innerHTML = dict[k];
     });
-    if (langBtn) langBtn.textContent = lang === 'en' ? '中文' : 'EN';
+    if (langBtn && langBtn.tagName === 'BUTTON') langBtn.textContent = lang === 'en' ? '中文' : 'EN';
     var activeTab = document.querySelector('.showcase-tab.active');
     if (activeTab && showcaseCaption) {
       showcaseCaption.textContent = activeTab.getAttribute(lang === 'en' ? 'data-cap-en' : 'data-cap-zh');
@@ -346,7 +346,7 @@
     buildTaglineTokens(lang);
     updateHeroCtaLabel();
   }
-  if (langBtn) {
+  if (langBtn && langBtn.tagName === 'BUTTON') {
     langBtn.addEventListener('click', function () {
       setLanguage(currentLang === 'zh' ? 'en' : 'zh');
     });

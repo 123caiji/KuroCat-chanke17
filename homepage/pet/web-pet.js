@@ -513,8 +513,9 @@
     window.requestAnimationFrame(tick);
   }
 
-  // Load curated skin bundle
-  fetch('pet/skins.json?v=20261125b')
+  // Load curated skin bundle (supports root / and /en/ subpages)
+  var assetBase = (typeof window.KUROCAT_ASSET_BASE === 'string') ? window.KUROCAT_ASSET_BASE : '';
+  fetch(assetBase + 'pet/skins.json?v=20261125c')
     .then(function (r) { return r.json(); })
     .then(function (list) {
       skinEntries = list.map(function (entry) {
