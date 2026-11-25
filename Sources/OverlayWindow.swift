@@ -15,6 +15,7 @@ private struct RenderedPose {
         let flipped: Bool
         let rotationDeg: CGFloat
         let whiteOutline: Bool
+        let overrideSkinIris: Bool
         let captureMode: Int
         let showEditControls: Bool
         let englishLabels: Bool
@@ -33,6 +34,9 @@ private struct RenderedPose {
     let headTilt: CGFloat
     let eyeGaze: CGPoint
     let mouseOffset: CGPoint
+    let mousePressLeft: CGFloat
+    let mousePressRight: CGFloat
+    let mousePressMiddle: CGFloat
     let pawOnMouse: Bool
     let douniLoaf: CGFloat
     let douniMouse: CGFloat
@@ -52,12 +56,15 @@ private struct RenderedPose {
                                 showsLegends: settings.showKeyLegends, levelKeyboard: settings.levelKeyboard,
                                 size: size, flipped: settings.flipHorizontal,
                                 rotationDeg: settings.rotationDeg, whiteOutline: settings.whiteOutline,
+                                overrideSkinIris: settings.overrideSkinIris,
                                 captureMode: settings.obsCaptureMode, showEditControls: settings.isEditMode,
                                 englishLabels: settings.isEnglish, tabletActive: physics.isTabletActive)
         hasEffects = settings.keyboardMarquee || !physics.sparkles.isEmpty
             || !physics.floatingKeycaps.isEmpty || !physics.keyGlow.isEmpty
             || !physics.tabletTrail.isEmpty || physics.kbSparkTimer > 0.005
             || physics.angerIntensity.value > 0.02 || physics.dizzyIntensity.value > 0.02
+            || physics.scruffDizzyIntensity.value > 0.02
+            || physics.mousePressMiddle.value > 0.02 || physics.mousePressLeft.value > 0.02 || physics.mousePressRight.value > 0.02
             || physics.huntIntensity.value > 0.02
             || physics.scruffDrag.value > 0.02 || physics.isChangingLie
             || abs(physics.scruffSwing.value) > 0.01 || abs(physics.scruffSwingY.value) > 0.01
@@ -78,6 +85,9 @@ private struct RenderedPose {
         headTilt = physics.headTilt.value
         eyeGaze = physics.eyeGaze.point
         mouseOffset = physics.mouseOffset.point
+        mousePressLeft = physics.mousePressLeft.value
+        mousePressRight = physics.mousePressRight.value
+        mousePressMiddle = physics.mousePressMiddle.value
         pawOnMouse = physics.leftPawOnMouse
         douniLoaf = physics.douniLoafBlend.value
         douniMouse = physics.douniMouseBlend.value
@@ -101,6 +111,9 @@ private struct RenderedPose {
                            abs(eyeClosure - previous.eyeClosure) * 40, distance(headTurn, previous.headTurn) * 24,
                            abs(headTilt - previous.headTilt) * 52, distance(eyeGaze, previous.eyeGaze) * 10,
                            distance(mouseOffset, previous.mouseOffset),
+                           abs(mousePressLeft - previous.mousePressLeft) * 20,
+                           abs(mousePressRight - previous.mousePressRight) * 20,
+                           abs(mousePressMiddle - previous.mousePressMiddle) * 20,
                            abs(douniLoaf - previous.douniLoaf) * 90,
                            abs(douniMouse - previous.douniMouse) * 50,
                            abs(douniLeftRaise - previous.douniLeftRaise) * 55,
@@ -1331,8 +1344,10 @@ final class SettingsWindowController: NSWindowController {
         guard idx >= 0 && idx < skinIds.count else { return }
         let token = skinIds[idx]
         if token.hasPrefix("custom:") {
+            CatSettings.shared.overrideSkinIris = false
             CatSettings.shared.customSkin = String(token.dropFirst(7))
         } else if token.hasPrefix("coat:"), let coat = CatCoatTheme(rawValue: String(token.dropFirst(5))) {
+            CatSettings.shared.overrideSkinIris = false
             CatSettings.shared.customSkin = ""
             CatSettings.shared.coatTheme = coat
             switch coat {
@@ -1377,6 +1392,7 @@ final class SettingsWindowController: NSWindowController {
     @objc private func onEyeSelected() {
         let idx = eyePopup.indexOfSelectedItem
         guard idx >= 0 && idx < EyeColorTheme.allCases.count else { return }
+        CatSettings.shared.overrideSkinIris = true
         CatSettings.shared.eyeTheme = EyeColorTheme.allCases[idx]
         onSettingsChanged?()
     }

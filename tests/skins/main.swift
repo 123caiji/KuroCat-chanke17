@@ -15,6 +15,7 @@ final class RenderSettings {
  let flipHorizontal = false
  let rotationDeg: CGFloat = 0
  let whiteOutline = true
+ let overrideSkinIris = false
  let isEditMode = false
  let isEnglish = false
  let scale: CGFloat = 1.0

@@ -142,6 +142,10 @@ final class CatSettings {
     var eyeTheme: EyeColorTheme {
         didSet { UserDefaults.standard.set(eyeTheme.rawValue, forKey: "KuroCat.EyeTheme") }
     }
+    /// True once the user explicitly picks an eye colour, allowing desktop settings to override a skin's built-in iris.
+    var overrideSkinIris: Bool {
+        didSet { UserDefaults.standard.set(overrideSkinIris, forKey: "KuroCat.OverrideSkinIris") }
+    }
     /// Content id of the imported .kurocat skin in use; empty = the built-in coatTheme.
     var customSkin: String {
         didSet { UserDefaults.standard.set(customSkin, forKey: "KuroCat.CustomSkin") }
@@ -188,6 +192,7 @@ final class CatSettings {
         keyboardTheme = KeyboardTheme(rawValue: d.string(forKey: "KuroCat.KeyboardTheme") ?? "") ?? .classicMilk
         let savedEye = d.string(forKey: "KuroCat.EyeTheme") ?? ""
         eyeTheme = EyeColorTheme.saved(savedEye)
+        overrideSkinIris = d.object(forKey: "KuroCat.OverrideSkinIris") as? Bool ?? false
         customSkin = d.string(forKey: "KuroCat.CustomSkin") ?? ""
         customKeyboard = d.string(forKey: "KuroCat.CustomKeyboard") ?? ""
     }
@@ -262,6 +267,7 @@ struct ScriptedFrameInput {
     var mouseVelocity: CGVector
     var leftMouseDown: Bool
     var rightMouseDown: Bool
+    var otherMouseDown: Bool = false
     var lastMouseMoveTime: CFTimeInterval
     var lastMouseClickTime: CFTimeInterval
     var lastKeyActivityTime: CFTimeInterval
@@ -326,6 +332,12 @@ final class CatPhysics {
     private var scruffDragDy: CGFloat = 0
     private var scruffDragAccumX: CGFloat = 0
     private var scruffDragAccumY: CGFloat = 0
+    // Pickup shaking changes only the face, never the existing collapse state.
+    var scruffDizzyIntensity = Spring1D(0)
+    private(set) var scruffShakeDuration: CGFloat = 0
+    private var scruffShakeDirection = CGVector.zero
+    private var scruffShakeLastReversal: CGFloat = -100
+    private var scruffDizzyTimer: CGFloat = 0
     private var fastMouseDuration: CGFloat = 0
     private var dizzyTimer: CGFloat = 0
     private var fastTypeAccum: CGFloat = 0
@@ -334,6 +346,7 @@ final class CatPhysics {
     var mouseOffset = Spring2D(.zero)
     var mousePressLeft = Spring1D(0)
     var mousePressRight = Spring1D(0)
+    var mousePressMiddle = Spring1D(0)
 
     // Graphics Tablet & Stylus state (auto-activates when a tablet/pen is connected or forced on!)
     static func tabletQuadPoint(u: CGFloat, v: CGFloat) -> CGPoint {
@@ -356,6 +369,22 @@ final class CatPhysics {
     var tabletPenPress = Spring1D(0)
     var tabletPenTilt = Spring1D(0)
     var tabletTrail: [TabletStrokePoint] = []
+    private(set) var scruffStartedHoldingPen = false
+    private(set) var scruffPenStartNib = CGPoint(x: 60, y: 261)
+    private(set) var scruffPenStartAngle: CGFloat = -2.45
+
+    // Standard cats share one pen geometry in both the desk and carried poses so paw grips the barrel middle.
+    static let stylusBarrelGripDistance: CGFloat = 22.0
+    static let stylusGripOffsetX: CGFloat = -5.0
+    static let stylusBaseAngle: CGFloat = -2.45
+    var stylusAngle: CGFloat { Self.stylusBaseAngle + tabletPenTilt.value }
+    var stylusPawGrip: CGPoint {
+        let nib = tabletNib.point
+        return CGPoint(
+            x: nib.x + cos(stylusAngle) * Self.stylusBarrelGripDistance - Self.stylusGripOffsetX,
+            y: nib.y + sin(stylusAngle) * Self.stylusBarrelGripDistance
+        )
+    }
 
     // Paw mode flags (for crisp outline & posture rendering)
     private(set) var leftPawOnMouse = false
@@ -550,10 +579,16 @@ final class CatPhysics {
             }
             if button == 0 {
                 mousePressLeft.target = 1.0
+                mousePressLeft.value = max(mousePressLeft.value, 0.35)
                 leftPaw.y.velocity += 130
-            } else {
+            } else if button == 1 {
                 mousePressRight.target = 1.0
+                mousePressRight.value = max(mousePressRight.value, 0.35)
                 leftPaw.y.velocity += 110
+            } else {
+                mousePressMiddle.target = 1.0
+                mousePressMiddle.value = max(mousePressMiddle.value, 0.35)
+                leftPaw.y.velocity += 120
             }
             pupilScale.target = 1.12
             earTwitch.velocity -= 2.2
@@ -568,7 +603,8 @@ final class CatPhysics {
             }
         } else {
             if button == 0 { mousePressLeft.target = 0 }
-            else { mousePressRight.target = 0 }
+            else if button == 1 { mousePressRight.target = 0 }
+            else { mousePressMiddle.target = 0 }
         }
     }
 
@@ -579,7 +615,13 @@ final class CatPhysics {
         isScruffDragging = effectiveDragging
         if effectiveDragging {
             if !wasDragging {
+                scruffStartedHoldingPen = isTabletActive && leftPawOnMouse
+                scruffPenStartNib = tabletNib.point
+                scruffPenStartAngle = stylusAngle
                 scruffHoldTime = 0
+                scruffShakeDuration = 0
+                scruffShakeDirection = .zero
+                scruffShakeLastReversal = -100
                 scruffDropTimer = 0
                 scruffDragAccumX = 0
                 scruffDragAccumY = 0
@@ -741,6 +783,7 @@ final class CatPhysics {
         let curMouseLoc = scripted?.mouseScreenPos ?? engine.lastMouseLocation
         let curLeftMouse = scripted?.leftMouseDown ?? engine.leftMouseDown
         let curRightMouse = scripted?.rightMouseDown ?? engine.rightMouseDown
+        let curOtherMouse = scripted?.otherMouseDown ?? engine.otherMouseDown
         let curLastMouseMove = scripted?.lastMouseMoveTime ?? engine.lastMouseMoveTime
         let curLastMouseClick = scripted?.lastMouseClickTime ?? engine.lastMouseClickTime
         let curLastKeyTime = scripted?.lastKeyActivityTime ?? engine.lastKeyActivityTime
@@ -855,6 +898,35 @@ final class CatPhysics {
         dizzyIntensity.step(dt: dt, stiffness: 75, damping: 14)
         let dizzy = max(0, min(1, dizzyIntensity.value))
 
+        // Scruff shake dizzy (spiral eyes only; does not collapse onto keyboard)
+        if isScruffDragging && dt > 0 {
+            let speed = hypot(scruffDragDx, scruffDragDy) / max(dt, 1.0 / 120.0)
+            if speed > 420 && hypot(scruffDragDx, scruffDragDy) > 3.5 {
+                let len = hypot(scruffDragDx, scruffDragDy)
+                let dir = CGVector(dx: scruffDragDx / len, dy: scruffDragDy / len)
+                let dot = dir.dx * scruffShakeDirection.dx + dir.dy * scruffShakeDirection.dy
+                if dot < -0.25 { scruffShakeLastReversal = time }
+                scruffShakeDirection = dir
+            }
+            if speed > 650 && time - scruffShakeLastReversal < 0.65 {
+                scruffShakeDuration = min(1.2, scruffShakeDuration + dt)
+            } else {
+                scruffShakeDuration = max(0, scruffShakeDuration - dt * 0.45)
+            }
+            if scruffShakeDuration >= 1.2 {
+                scruffDizzyTimer = 2.5
+                scruffShakeDuration = 0.96
+            }
+        } else {
+            scruffShakeDuration = 0
+        }
+        scruffDizzyTimer = max(0, scruffDizzyTimer - dt)
+        scruffDizzyIntensity.target = scruffDizzyTimer > 0 ? 1.0 : 0.0
+        scruffDizzyIntensity.step(dt: dt, stiffness: 75, damping: 14)
+        if scruffDizzyIntensity.value > 0.01 && dizzyTimer <= 0 && fastMouseDuration <= 6.8 {
+            dizzyPhase += dt * 7.5
+        }
+
         // 2c. Scruff-drag pickup, idle lie-on-keyboard, and episodic low-frequency fast-typing anger
         if !CatSettings.shared.enableDragAnimation && isScruffDragging {
             isScruffDragging = false
@@ -882,6 +954,7 @@ final class CatPhysics {
         scruffSwingY.target = isScruffDragging ? 0.78 * tanh(-scruffDragDy / 18.0) : 0.0
         scruffTailSwing.target = isScruffDragging ? 1.22 * tanh(scruffDragDx / 16.0) : 0.0
         scruffDrag.step(dt: dt, stiffness: 190, damping: 17)
+        if !isScruffDragging && scruffDrag.value < 0.005 { scruffStartedHoldingPen = false }
         scruffSwing.step(dt: dt, stiffness: 92, damping: 7.4)
         scruffSwingY.step(dt: dt, stiffness: 108, damping: 8.4)
         scruffTailSwing.step(dt: dt, stiffness: 58, damping: 5.2)
@@ -926,8 +999,9 @@ final class CatPhysics {
 
         // 3. Determine limb targets (Left Paw, Right Paw, 3rd-Key Hind Foot!)
         let tapHoldWindow: CFTimeInterval = 0.14
-        let mouseRecent = (now - curLastMouseMove < 2.2) || curLeftMouse || curRightMouse
-        let mouseActivelyUsed = (now - curLastMouseMove < 0.75) || curLeftMouse || curRightMouse
+        let mouseButtonHeld = curLeftMouse || curRightMouse || curOtherMouse
+        let mouseRecent = (now - curLastMouseMove < 2.2) || mouseButtonHeld
+        let mouseActivelyUsed = (now - curLastMouseMove < 0.75) || mouseButtonHeld
 
         // Partition active keys
         var leftCandidates: [PhysicalKey] = []
@@ -966,12 +1040,20 @@ final class CatPhysics {
             }
         }
 
-        // Keep quick taps visible for a tiny snappy window
-        if leftKey == nil, let rec = recentLeftKey, now - rec.time < tapHoldWindow {
-            leftKey = rec.key
+        // Keep quick taps visible for a tiny snappy window, and clear stale recent state once expired
+        if leftKey == nil, let rec = recentLeftKey {
+            if now - rec.time < tapHoldWindow {
+                leftKey = rec.key
+            } else {
+                recentLeftKey = nil
+            }
         }
-        if rightKey == nil, let rec = recentRightKey, now - rec.time < tapHoldWindow {
-            rightKey = rec.key
+        if rightKey == nil, let rec = recentRightKey {
+            if now - rec.time < tapHoldWindow {
+                rightKey = rec.key
+            } else {
+                recentRightKey = nil
+            }
         }
 
         // Subtle mini-mouse movement driven by global cursor velocity
@@ -981,6 +1063,7 @@ final class CatPhysics {
         mouseOffset.step(dt: dt, stiffness: 120, damping: 16)
         mousePressLeft.step(dt: dt, stiffness: 400, damping: 24)
         mousePressRight.step(dt: dt, stiffness: 400, damping: 24)
+        mousePressMiddle.step(dt: dt, stiffness: 400, damping: 24)
 
         let liveMouseCenter = CGPoint(
             x: CatPhysics.mouseBaseCenter.x + mouseOffset.point.x,
@@ -1099,7 +1182,7 @@ final class CatPhysics {
         } else if (mouseRecent || (isTabletActive && engine.isPenInProximity)) && sleepiness < 0.3 {
             if isTabletActive {
                 let nib = tabletNib.point
-                leftPaw.target = CGPoint(x: nib.x + 6, y: nib.y - 7)
+                leftPaw.target = isDouniSkin ? CGPoint(x: nib.x + 6, y: nib.y - 7) : stylusPawGrip
                 if curLeftMouse || engine.penPressure > 0.02 {
                     let last = tabletTrail.last?.point
                     if last == nil || hypot(nib.x - last!.x, nib.y - last!.y) >= 1.8 {
@@ -1208,9 +1291,11 @@ final class CatPhysics {
         // Keep body sleek & natural during lie/dizzy (zero fat distortion; renderer handles smooth rigid fall & forward sprawl!)
         bodySquash.target = 1.0 - hunt * 0.11 + scruff * 0.16
 
-        headOffsetY.target = ((leftPawTyping || rightPawTyping) ? 3.5 : (sleepiness * 5.0 + hunt * 10.5))
+        let classicSleepBlend: CGFloat = ["builtin:0", "builtin:1", "builtin:2", "builtin:3"].contains(CatSettings.shared.activeSkin.id)
+            ? lie * lie * (3.0 - 2.0 * lie) : 0
+        headOffsetY.target = ((leftPawTyping || rightPawTyping) ? 3.5 : (sleepiness * 5.0 * (1.0 - classicSleepBlend) + hunt * 10.5))
             - scruff * 10.0
-        earFold.target = max(petHeadIntensity * 0.7, petBodyIntensity * 0.45) + sleepiness * 0.25 - hunt * 0.18
+        earFold.target = max(petHeadIntensity * 0.7, petBodyIntensity * 0.45) + sleepiness * 0.25 * (1.0 - classicSleepBlend) - hunt * 0.18
             + scruff * 0.35 + anger * 0.45 + dizzy * 0.35
         earTwitch.target = 0
 
@@ -1259,7 +1344,7 @@ final class CatPhysics {
         // Head turns smoothly in 2.5D (yaw & pitch) — locks on faster during hunting mode!
         if sleepiness > 0.45 {
             headYaw.target = 0
-            headPitch.target = 0.45 * sleepiness
+            headPitch.target = 0.45 * sleepiness * (1.0 - classicSleepBlend)
         } else {
             headYaw.target = max(-1.0, min(1.0, lookTargetX))
             headPitch.target = max(-1.0, min(1.0, lookTargetY))
@@ -1271,7 +1356,7 @@ final class CatPhysics {
 
         // Subtle natural head roll coupled to head turning (curious tilt / locked-on hunt!)
         if now - lastPetTime > 0.28 {
-            headTilt.target = bodyTilt.target * 0.45 + headYaw.value * (0.11 + hunt * 0.05) - headYaw.value * headPitch.value * 0.04 + lie * 0.12
+            headTilt.target = (bodyTilt.target * 0.45 + headYaw.value * (0.11 + hunt * 0.05) - headYaw.value * headPitch.value * 0.04 + lie * 0.12) * (1.0 - classicSleepBlend)
         }
         headTilt.step(dt: dt, stiffness: 130, damping: 16)
 

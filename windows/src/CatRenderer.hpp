@@ -248,21 +248,10 @@ public:
         }
 
         // Universal Scruff-Lifted Drag Pose (ALL non-Douni cat skins keep their own authentic KuroCat face/head/ears/markings in front,
-        // with scruff-lifted arched neck/back, 4 dangling swinging paws, and limp drooping tail!)
+        // with scruff-lifted arched neck/back, 4 dangling swinging paws, carried peripherals, and limp drooping tail!)
         if (scruff > 0.005f) {
-            float kbFade = std::clamp(1.0f - scruff * 2.6f, 0.0f, 1.0f);
-            if (kbFade > 0.01f) {
-                drawWithLayerAlpha(g, kbFade, [&](Graphics& lg) {
-                    if (physics.isTabletActive) {
-                        drawTablet(lg, physics, settings.keyboardTheme, settings.eyeTheme);
-                        drawParkedStylus(lg, settings.keyboardTheme, settings.eyeTheme);
-                    } else {
-                        drawMouse(lg, physics, kbSkin);
-                    }
-                    drawKeyboard(lg, physics, kbSkin, settings.eyeTheme, settings.showKeyLegends, settings.keyboardMarquee);
-                });
-            }
-            drawNativeScruffDragCat(g, physics, skin, settings.eyeTheme, scruff);
+            drawNativeScruffDragCat(g, physics, skin, settings.eyeTheme, kbSkin, settings.keyboardTheme,
+                                    settings.showKeyLegends, settings.keyboardMarquee, settings.overrideSkinIris, scruff);
             if (!physics.floatingKeycaps.empty()) {
                 drawFloatingKeycaps(g, physics);
             }
@@ -277,10 +266,12 @@ public:
         float fallAngle = -dizzyFall * 1.46f + std::sin(physics.time * 9.5f) * 0.16f * preWobble;
         float fallShiftX = dizzyFall * 56.0f;
         float fallShiftY = dizzyFall * 20.0f;
+        bool isClassic = isClassicBlack(skin) || isSiamese(skin) || isShorthair(skin) || isOrangeWhite(skin);
+        float sharedSleepHead = isClassic ? (standardBuild().headLift - buildOf(skin).headLift) * lieS : 0.0f;
 
         Pt headCenter = {
             seatX + physics.bodyTilt.value * 36.0f + physics.headYaw.value * 7.5f - lieS * 4.0f,
-            126.0f + buildOf(skin).headLift + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f - scruff * 22.0f + lieS * 60.0f
+            126.0f + buildOf(skin).headLift + sharedSleepHead + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f - scruff * 22.0f + lieS * 60.0f
         };
 
         // 1. Mini White Mouse OR Graphics Tablet (when drawing tablet/stylus is connected!)
@@ -345,7 +336,7 @@ public:
         }
 
         // 8. 2.5D Eyes & Whiskers (+ optional nose/mouth, yawn, angry vein)
-        drawHeadFeatures(g, headCenter, physics, settings.eyeTheme, skin);
+        drawHeadFeatures(g, headCenter, physics, settings.eyeTheme, skin, 0.0f, 0.0f, settings.overrideSkinIris);
 
         // 8b. Face & head-top stickers cleanly above eyes, ears & features
         if (!skin.decorations.empty()) {
@@ -510,7 +501,7 @@ private:
         float idleTopDY, idleTopX, idleBotX, shoulderX, limbStartW, limbEndW;
         bool sleekEyes;
     };
-    static const Build& buildOf(const SkinSpec& skin) {
+    static const Build& standardBuild() {
         static const Build standard = { 0.0f,
             42.5f, 26.0f, -30.0f, 5.0f, -14.0f, 2.5f, 24.0f,
             49.0f, 51.5f, -48.0f, 47.0f, 36.0f, 24.0f,
@@ -519,6 +510,9 @@ private:
             -35.0f, 17.0f, 18.0f, 3.0f, 11.0f, 4.5f, 12.5f,
             30.0f, 18.0f, 16.0f, 20.0f, 19.0f, 13.5f,
             false };
+        return standard;
+    }
+    static const Build& buildOf(const SkinSpec& skin) {
         static const Build sleek = { -3.0f,
             42.5f, 25.0f, -29.5f, 6.5f, -13.0f, 6.5f, 27.5f,
             44.5f, 41.0f, -50.0f, 42.0f, 32.0f, 22.0f,
@@ -527,7 +521,7 @@ private:
             -31.0f, 15.5f, 15.5f, 3.5f, 12.0f, 4.5f, 12.5f,
             31.0f, 16.5f, 15.0f, 18.5f, 17.0f, 12.5f,
             true };
-        return skin.shape.build == SkinBuild::Sleek ? sleek : standard;
+        return skin.shape.build == SkinBuild::Sleek ? sleek : standardBuild();
     }
 
     // Scale v around c by k; returns v untouched when k == 1 so default shapes stay bit-identical.
@@ -749,7 +743,7 @@ private:
         using namespace Gdiplus;
         Pt center = { CatPhysics::MouseBaseCenter.x + physics.mouseOffset.point().x,
                       CatPhysics::MouseBaseCenter.y + physics.mouseOffset.point().y };
-        float pressShift = std::max(physics.mousePressLeft.value, physics.mousePressRight.value) * 1.6f;
+        float pressShift = std::max({physics.mousePressLeft.value, physics.mousePressRight.value, physics.mousePressMiddle.value}) * 1.6f;
 
         GraphicsState st = g.Save();
         g.TranslateTransform(center.x, center.y + pressShift);
@@ -786,9 +780,11 @@ private:
         g.DrawLine(&seamPen, 0.0f, 16.0f, 0.0f, 1.5f);
 
         // Amber scroll wheel on front (bottom) half
+        float wheelPress = std::clamp(physics.mousePressMiddle.value, 0.0f, 1.0f);
+        Color wheelFill = (wheelPress > 0.02f) ? blendColor(wheelCol, Color(255, 255, 255, 255), 0.6f * wheelPress) : wheelCol;
         GraphicsPath wheelPath;
-        addRoundedRect(wheelPath, -1.9f, 2.5f, 3.8f, 8.5f, 1.9f);
-        SolidBrush wheelBrush(wheelCol);
+        addRoundedRect(wheelPath, -1.9f, 2.5f + wheelPress, 3.8f, 8.5f - wheelPress, 1.9f);
+        SolidBrush wheelBrush(wheelFill);
         g.FillPath(&wheelBrush, &wheelPath);
 
         Pen borderPen(borderCol, 1.7f);
@@ -994,8 +990,12 @@ private:
         using namespace Gdiplus;
         Pt lPos = physics.leftPaw.point();
         float press = std::clamp(physics.tabletPenPress.value, 0.0f, 1.0f);
-        Pt nib = { lPos.x - 5.5f, lPos.y + 7.0f + press * 1.4f };
-        float angleDeg = (-2.18f + physics.tabletPenTilt.value) * RadToDeg;
+        float angleRad = physics.stylusAngle();
+        Pt nib = {
+            lPos.x - std::cos(angleRad) * CatPhysics::StylusBarrelGripDistance,
+            lPos.y - std::sin(angleRad) * CatPhysics::StylusBarrelGripDistance + press * 1.4f
+        };
+        float angleDeg = angleRad * RadToDeg;
 
         GraphicsState st = g.Save();
         g.TranslateTransform(nib.x, nib.y);
@@ -1303,7 +1303,12 @@ private:
     static void drawTail(Gdiplus::Graphics& g, float seatX, float seatY, const CatPhysics& physics, const SkinSpec& skin, bool outlineOnly = false) {
         using namespace Gdiplus;
         TailCurve c = tailCurve(seatX, seatY, physics, skin);
-        float width = isDazed(skin) ? 13.0f : (buildOf(skin).tailWidth * skin.shape.tailThickness);
+        float lie = std::clamp(physics.lieIntensity.value, 0.0f, 1.0f);
+        float lieS = lie * lie * (3.0f - 2.0f * lie);
+        bool isClassic = isClassicBlack(skin) || isSiamese(skin) || isShorthair(skin) || isOrangeWhite(skin);
+        float sharedSleep = isClassic ? lieS : 0.0f;
+        float tailBaseW = lerpF(buildOf(skin).tailWidth, standardBuild().tailWidth, sharedSleep);
+        float width = isDazed(skin) ? 13.0f : (tailBaseW * skin.shape.tailThickness);
 
         if (outlineOnly) {
             Pen outPen(blackOutline(), width + BlackOutlineW * 2.0f);
@@ -1329,8 +1334,6 @@ private:
             g.DrawBezier(&tailPen, c.root, c.c1, c.c2, c.tip);
         }
 
-        float lie = std::clamp(physics.lieIntensity.value, 0.0f, 1.0f);
-        float lieS = lie * lie * (3.0f - 2.0f * lie);
         if (lieS > 0.35f) {
             float rAlpha = std::min(1.0f, (lieS - 0.35f) / 0.45f) * 0.72f;
             Color rc = col(skin.palette.crease);
@@ -1542,19 +1545,22 @@ private:
 
         float cheekShift = yaw * 3.0f;
         float crownDrop = pitch * 2.0f;
-        float cheekHalfW = bd.cheekHalfW * skin.shape.cheekFullness;
-        float crownCtrlW = bd.crownCtrlW;
-        float crownBaseY = bd.crownBaseY;
-        float cheekY = bd.cheekY;
-        float cheekCtrlTopY = bd.cheekCtrlTopY;
-        float neckPinchX = bd.neckPinchX;
-        float neckCtrlY = bd.neckCtrlY;
-        float hipHalfW = bd.hipHalfW;
-        float waistCtrlW = bd.waistCtrlW;
-        float waistCtrlY = bd.waistCtrlY;
-        float botOuterW = bd.botOuterW;
-        float botInnerW = bd.botInnerW;
-        float botHalfW = bd.botHalfW;
+        bool isClassic = isClassicBlack(skin) || isSiamese(skin) || isShorthair(skin) || isOrangeWhite(skin);
+        float sharedSleep = isClassic ? lieS : 0.0f;
+        const Build& sbd = standardBuild();
+        float cheekHalfW = lerpF(bd.cheekHalfW, sbd.cheekHalfW, sharedSleep) * skin.shape.cheekFullness;
+        float crownCtrlW = lerpF(bd.crownCtrlW, sbd.crownCtrlW, sharedSleep);
+        float crownBaseY = lerpF(bd.crownBaseY, sbd.crownBaseY, sharedSleep);
+        float cheekY = lerpF(bd.cheekY, sbd.cheekY, sharedSleep);
+        float cheekCtrlTopY = lerpF(bd.cheekCtrlTopY, sbd.cheekCtrlTopY, sharedSleep);
+        float neckPinchX = lerpF(bd.neckPinchX, sbd.neckPinchX, sharedSleep);
+        float neckCtrlY = lerpF(bd.neckCtrlY, sbd.neckCtrlY, sharedSleep);
+        float hipHalfW = lerpF(bd.hipHalfW, sbd.hipHalfW, sharedSleep);
+        float waistCtrlW = lerpF(bd.waistCtrlW, sbd.waistCtrlW, sharedSleep);
+        float waistCtrlY = lerpF(bd.waistCtrlY, sbd.waistCtrlY, sharedSleep);
+        float botOuterW = lerpF(bd.botOuterW, sbd.botOuterW, sharedSleep);
+        float botInnerW = lerpF(bd.botInnerW, sbd.botInnerW, sharedSleep);
+        float botHalfW = lerpF(bd.botHalfW, sbd.botHalfW, sharedSleep);
         float leftCheekX = -cheekHalfW + cheekShift * 0.4f;
         float rightCheekX = cheekHalfW + cheekShift * 0.4f;
 
@@ -1780,7 +1786,7 @@ private:
             g.FillEllipse(&pawBrush, rightHindX, rightHindY, hindW, rightHindH);
         }
 
-        Pen rimPen(skin.colorpoint() ? withAlpha(pal.body, 140) : (isClassicBlack(skin) ? blackOutline(0) : creaseWith(pal.crease, 148)), 1.3f);
+        Pen rimPen(skin.colorpoint() ? withAlpha(pal.body, (BYTE)std::lround(140.0f * (1.0f - sharedSleep))) : (isClassicBlack(skin) ? blackOutline(0) : creaseWith(pal.crease, (BYTE)std::lround(148.0f * (1.0f - sharedSleep)))), 1.3f);
         rimPen.SetStartCap(LineCapRound); rimPen.SetEndCap(LineCapRound);
         g.DrawArc(&rimPen, leftHindX + hindW * 0.5f - 7.5f, leftHindY + leftHindH * 0.5f - 7.5f, 15.0f, 15.0f, 15.0f, 150.0f);
         if (rightTucked) {
@@ -1957,7 +1963,7 @@ private:
     // MARK: - 2.5D Eyes & Whiskers
 
     static void drawHeadFeatures(Gdiplus::Graphics& g, Pt center, const CatPhysics& physics, EyeColorTheme eyeTheme, const SkinSpec& skin,
-                                 float scruffStartle = 0.0f, float scruffWide = 0.0f) {
+                                 float scruffStartle = 0.0f, float scruffWide = 0.0f, bool overrideSkinIris = false) {
         using namespace Gdiplus;
         GraphicsState st = g.Save();
         g.TranslateTransform(center.x, center.y);
@@ -1973,8 +1979,8 @@ private:
             return;
         }
 
-        drawEye3D(g, true, yawRad, pitchRad, physics, eyeTheme, skin, scruffStartle, scruffWide);
-        drawEye3D(g, false, yawRad, pitchRad, physics, eyeTheme, skin, scruffStartle, scruffWide);
+        drawEye3D(g, true, yawRad, pitchRad, physics, eyeTheme, skin, scruffStartle, scruffWide, overrideSkinIris);
+        drawEye3D(g, false, yawRad, pitchRad, physics, eyeTheme, skin, scruffStartle, scruffWide, overrideSkinIris);
         if (skin.palette.nose.set) {
             Pt nose = projectHead3D(0.0f, 8.2f, 29.0f, yawRad, pitchRad);
             GraphicsPath np;
@@ -2080,6 +2086,26 @@ private:
         SolidBrush nose(ink);
         g.FillEllipse(&nose, -1.9f, 10.1f, 3.8f, 2.8f);
 
+        float dazedDizzy = std::clamp(std::max(physics.dizzyIntensity.value, physics.scruffDizzyIntensity.value), 0.0f, 1.0f);
+        if (dazedDizzy > 0.28f) {
+            for (int side = 0; side < 2; ++side) {
+                float x = (side == 0) ? -11.8f : 11.8f;
+                SolidBrush bg(Color(242, 250, 250, 245));
+                g.FillEllipse(&bg, x - 8.5f, 1.0f - 8.5f, 17.0f, 17.0f);
+                Pen sp(ink, 1.6f);
+                sp.SetStartCap(LineCapRound); sp.SetEndCap(LineCapRound);
+                PointF pts[41];
+                float spin = physics.dizzyPhase * (side == 0 ? 1.0f : -1.0f);
+                for (int i = 0; i <= 40; ++i) {
+                    float t = (float)i / 40.0f;
+                    float theta = spin + t * 3.1415926f * 4.8f;
+                    float rad = 0.8f + t * 6.5f;
+                    pts[i] = PointF(x + std::cos(theta) * rad, 1.0f + std::sin(theta) * rad);
+                }
+                g.DrawLines(&sp, pts, 41);
+            }
+            return;
+        }
         bool happy = physics.isHappyClosedEyes();
         bool squint = physics.isBlissfulSquint();
         if (happy || squint) {
@@ -2204,12 +2230,12 @@ private:
     }
 
     static void drawEye3D(Gdiplus::Graphics& g, bool isLeft, float yawRad, float pitchRad, const CatPhysics& physics, EyeColorTheme eyeTheme, const SkinSpec& skin,
-                          float scruffStartle = 0.0f, float scruffWide = 0.0f) {
+                          float scruffStartle = 0.0f, float scruffWide = 0.0f, bool overrideSkinIris = false) {
         using namespace Gdiplus;
         float sign = isLeft ? -1.0f : 1.0f;
         const SkinColor& sideIris = isLeft ? skin.palette.irisLeft : skin.palette.irisRight;
         const SkinColor& activeIris = sideIris.set ? sideIris : skin.palette.iris;
-        bool customIris = activeIris.set; // a skin's iris overrides the eye-colour menu
+        bool customIris = !overrideSkinIris && activeIris.set; // custom skin iris unless user explicitly switched eye color
         Color eyeCol = customIris ? col(activeIris) : eyePrimary(eyeTheme);
         const SkinColor& sidePupil = isLeft ? skin.palette.pupilLeft : skin.palette.pupilRight;
         const SkinColor& activePupil = sidePupil.set ? sidePupil : skin.palette.pupil;
@@ -2223,8 +2249,8 @@ private:
         g.TranslateTransform(proj.x, proj.y);
         g.ScaleTransform(foreX, foreY);
 
-        // Mode 0: Dizzy spinning spiral eyes (@ @) after 10s of rapid mouse shaking
-        float dizzy = std::clamp(physics.dizzyIntensity.value, 0.0f, 1.0f);
+        // Mode 0: Dizzy spinning spiral eyes (@ @) after 10s of rapid mouse shaking or scruff shaking
+        float dizzy = std::clamp(std::max(physics.dizzyIntensity.value, physics.scruffDizzyIntensity.value), 0.0f, 1.0f);
         if (dizzy > 0.28f) {
             SolidBrush bg(Color(242, 250, 250, 245));
             g.FillEllipse(&bg, -11.5f, -11.0f, 23.0f, 22.0f);
@@ -2248,13 +2274,8 @@ private:
         };
         float bodyLuma = colorLuma(skin.palette.headBody.set ? skin.palette.headBody : skin.palette.body);
         float pointsLuma = skin.palette.points.set ? colorLuma(skin.palette.points) : 1.0f;
-        float outlineLuma = skin.palette.outline.set ? colorLuma(skin.palette.outline) : 1.0f;
         bool isDarkEyeArea = bodyLuma < 0.28f || (skin.colorpoint() && pointsLuma < 0.38f);
-        Color closedLidCol = isTabby(skin)
-            ? tabby::dark()
-            : (isDarkEyeArea
-                ? eyeCol
-                : (skin.palette.outline.set && outlineLuma < 0.42f ? withAlpha(skin.palette.outline, 230) : Color(224, 60, 50, 44)));
+        Color closedLidCol = isTabby(skin) ? tabby::dark() : eyeCol;
 
         // Mode 1: Happy closed curved line eyes (petting head!)
         if (physics.isHappyClosedEyes()) {
@@ -2597,27 +2618,46 @@ private:
         float limbEndW = bd.limbEndW;
 
         const bool approved = !skin.palette.points.set && skin.palette.belly.set && skin.palette.belly.sameAs(skin.palette.legs) && !skin.idleLegsTinted && !skin.marks.empty();
-        const float shoulderDepth = approved ? 43.0f : 58.0f, faceClearance = approved ? 52.0f : 42.0f;
+        const float shoulderDepth = approved ? 43.0f : 49.0f;
+        const float faceClearance = approved ? 52.0f : 51.0f;
+        float tiltChinDrop = std::fabs(std::sin(physics.headTilt.value)) * 18.0f * skin.shape.headScale;
+        float scaledClearance = faceClearance * skin.shape.headScale + tiltChinDrop;
+        float headBottom = 126.0f + headLift + physics.headOffsetY.value + physics.headPitch.value * 4.8f
+                         + breath * 1.1f + lieS * 60.0f + scaledClearance;
+        float idleAlpha = 1.0f - smoothstep(0.48f, 0.78f, lieS);
+        float safeIdleTopY = std::max(idleTopY, headBottom - 4.0f);
         auto shoulder = [&](float x) -> Pt {
             float sy=physics.bodySquash.value*(1.0f-lieS*0.42f), sx=(1+(1-physics.bodySquash.value)*0.55f)*(1.0f+lieS*0.03f);
             float c=std::cos(physics.bodyTilt.value), s=std::sin(physics.bodyTilt.value);
-            float floor=126+headLift+physics.headOffsetY.value+physics.headPitch.value*4.8f+breath*1.1f+faceClearance;
-            return {seatX+x*sx*c+shoulderDepth*sy*s, std::max(seatY+x*sx*s-shoulderDepth*sy*c,floor)};
+            return {seatX+x*sx*c+shoulderDepth*sy*s, std::max(seatY+x*sx*s-shoulderDepth*sy*c, headBottom)};
         };
         Pt leftShoulder=shoulder(-shX), rightShoulder=shoulder(shX);
 
         if (lDist < 6.0f && !physics.leftPawOnMouse && !physics.leftPawTyping) {
-            if (lieS < 0.78f) drawIdleFrontLeg(g, { seatX - idleTopX, idleTopY }, { seatX - idleBotX, idleBotY }, true, skin);
+            if (lieS < 0.78f) {
+                auto drawLeftIdle = [&](Gdiplus::Graphics& lg) {
+                    drawIdleFrontLeg(lg, { seatX - idleTopX, safeIdleTopY }, { seatX - idleBotX, std::max(idleBotY, safeIdleTopY + 12.0f) }, true, skin);
+                };
+                if (idleAlpha < 0.999f) drawWithLayerAlpha(g, idleAlpha, drawLeftIdle);
+                else drawLeftIdle(g);
+            }
         } else {
             Pt mid = { (leftShoulder.x + lPos.x) * 0.5f - (physics.leftPawOnMouse ? 8.0f : 4.0f),
-                       (leftShoulder.y + lPos.y) * 0.5f - 6.0f };
+                       std::max((leftShoulder.y + lPos.y) * 0.5f - 6.0f, headBottom - 1.0f) };
             drawLimb(g, leftShoulder, mid, lPos, limbStartW, limbEndW, false, 0.78f, skin, true);
         }
 
         if (rDist < 6.0f && !physics.rightPawTyping) {
-            if (lieS < 0.78f) drawIdleFrontLeg(g, { seatX + idleTopX, idleTopY }, { seatX + idleBotX, idleBotY }, false, skin);
+            if (lieS < 0.78f) {
+                auto drawRightIdle = [&](Gdiplus::Graphics& lg) {
+                    drawIdleFrontLeg(lg, { seatX + idleTopX, safeIdleTopY }, { seatX + idleBotX, std::max(idleBotY, safeIdleTopY + 12.0f) }, false, skin);
+                };
+                if (idleAlpha < 0.999f) drawWithLayerAlpha(g, idleAlpha, drawRightIdle);
+                else drawRightIdle(g);
+            }
         } else {
-            Pt mid = { (rightShoulder.x + rPos.x) * 0.5f + 4.0f, (rightShoulder.y + rPos.y) * 0.5f - 6.0f };
+            Pt mid = { (rightShoulder.x + rPos.x) * 0.5f + 4.0f,
+                       std::max((rightShoulder.y + rPos.y) * 0.5f - 6.0f, headBottom - 1.0f) };
             drawLimb(g, rightShoulder, mid, rPos, limbStartW, limbEndW, true, 0.78f, skin, true);
         }
     }
@@ -2627,7 +2667,7 @@ private:
         const SkinPalette& pal = skin.palette;
         float sign = isLeft ? -1.0f : 1.0f;
         if (isDazed(skin)) {
-            Pt shoulder = {top.x + sign * 4.0f, top.y - 10.0f};
+            Pt shoulder = {top.x + sign * 4.0f, top.y - 6.0f};
             Pt elbow = {top.x + sign * 11.0f, top.y + 1.0f};
             Pt paw = {top.x + sign * 10.0f, top.y + 15.0f};
             drawLimb(g, shoulder, elbow, paw, 19.0f, 14.0f, !isLeft, 0.78f, skin, true);
@@ -3733,8 +3773,32 @@ private:
         Pt rightEyeCenter = { lerpF(510.0f, 501.0f, s), lerpF(222.0f, 324.0f, s) };
         float eyeRX = lerpF(87.0f, 89.0f, s);
         float eyeRY = lerpF(91.0f, 84.0f, s);
-        drawV1WateryEye(g, leftEyeCenter, eyeRX, eyeRY, true, irisColor, inkColor, lw, s, isBlackRim);
-        drawV1WateryEye(g, rightEyeCenter, eyeRX + 2.0f, eyeRY, false, irisColor, inkColor, lw, s, isBlackRim);
+        if (physics.scruffDizzyIntensity.value > 0.28f) {
+            for (int side = 0; side < 2; ++side) {
+                Pt ec = (side == 0) ? leftEyeCenter : rightEyeCenter;
+                float er = (side == 0) ? eyeRX : (eyeRX + 2.0f);
+                SolidBrush bg(Color(246, 250, 250, 245));
+                g.FillEllipse(&bg, ec.x - er, ec.y - eyeRY, er * 2.0f, eyeRY * 2.0f);
+                Pen ep(inkColor, lw * 0.94f);
+                setRound(ep);
+                g.DrawEllipse(&ep, ec.x - er, ec.y - eyeRY, er * 2.0f, eyeRY * 2.0f);
+                Pen sp(inkColor, lw * 0.72f);
+                setRound(sp);
+                PointF pts[45];
+                float spin = physics.dizzyPhase * (side == 0 ? 1.0f : -1.0f);
+                float maxR = std::min(er, eyeRY) * 0.78f;
+                for (int i = 0; i <= 44; ++i) {
+                    float t = (float)i / 44.0f;
+                    float theta = spin + t * 3.1415926f * 4.4f;
+                    float rad = t * maxR;
+                    pts[i] = PointF(ec.x + std::cos(theta) * rad, ec.y + std::sin(theta) * rad);
+                }
+                g.DrawLines(&sp, pts, 45);
+            }
+        } else {
+            drawV1WateryEye(g, leftEyeCenter, eyeRX, eyeRY, true, irisColor, inkColor, lw, s, isBlackRim);
+            drawV1WateryEye(g, rightEyeCenter, eyeRX + 2.0f, eyeRY, false, irisColor, inkColor, lw, s, isBlackRim);
+        }
 
         // Optional cute tiny nose on patterned non-Douni cats
         if (!isDouni && !isBlackRim && !skin.colorpoint()) {
@@ -4390,7 +4454,7 @@ private:
                                          glowBaseColor, eyePrimary(eyeTheme), ink, catLW, mouseBlend < 0.18f);
                 } else {
                     drawDouniComicMouse(lg, mouseCenter, physics.mousePressLeft.value, physics.mousePressRight.value,
-                                        mouseBodyColor, kbBevelColor, mouseWheelColor, glowBaseColor, ink, catLW);
+                                        mouseBodyColor, kbBevelColor, mouseWheelColor, glowBaseColor, ink, catLW, physics.mousePressMiddle.value);
                 }
                 lg.Restore(gs);
             });
@@ -4453,10 +4517,11 @@ private:
                 float gazeY = poseOverride ? 0.0f : physics.eyeGaze.y.value;
                 float baseBlink = poseOverride ? 0.0f : physics.blinkProgress();
                 float blink = std::max(baseBlink, smoothstep(0.04f, 0.44f, morph));
+                float v2Dizzy = std::max(dizzy, std::clamp(physics.scruffDizzyIntensity.value, 0.0f, 1.0f));
                 drawV2BobaEye(lg, { 518.0f, 262.0f }, 47.5f, true, gazeX, gazeY, blink,
-                              hunt, dizzy, physics.dizzyPhase, anger, cream, ink, catLW);
+                              hunt, v2Dizzy, physics.dizzyPhase, anger, cream, ink, catLW);
                 drawV2BobaEye(lg, { 652.0f, 274.0f }, 46.5f, false, gazeX, gazeY, blink,
-                              hunt, dizzy, physics.dizzyPhase, anger, cream, ink, catLW);
+                              hunt, v2Dizzy, physics.dizzyPhase, anger, cream, ink, catLW);
 
                 // 2e. Expressive Comic Emotion Accents: Pulsing Red Anger Vein, Alert Hunter Ticks, Orbiting Dizzy Stars!
                 if (anger > 0.14f) {
@@ -4464,15 +4529,15 @@ private:
                     float pulse = (1.0f + std::sin(physics.time * 16.0f) * 0.12f) * 0.90f;
                     drawDouniAngerVein(lg, { 682.0f, 198.0f }, pulse, aAlpha);
                 }
-                if (hunt > 0.35f && dizzy < 0.15f) {
+                if (hunt > 0.35f && v2Dizzy < 0.15f) {
                     float hAlpha = smoothstep(0.35f, 0.78f, hunt);
                     Pen hp(scaleAlpha(ink, hAlpha), catLW * 0.68f);
                     setRound(hp);
                     lg.DrawLine(&hp, 472.0f, 112.0f, 454.0f,  92.0f);
                     lg.DrawLine(&hp, 454.0f, 138.0f, 432.0f, 130.0f);
                 }
-                if (dizzy > 0.08f) {
-                    drawDouniDizzyStars(lg, { 590.0f, 74.0f }, physics.dizzyPhase, dizzy, ink);
+                if (v2Dizzy > 0.08f) {
+                    drawDouniDizzyStars(lg, { 590.0f, 74.0f }, physics.dizzyPhase, v2Dizzy, ink);
                 }
 
                 lg.Restore(hs);
@@ -4516,20 +4581,21 @@ private:
                     physics.douniLeftKeyTarget.point().x + impT * 10.0f,
                     physics.douniLeftKeyTarget.point().y + impY * 8.5f
                 };
+                float penAngle = -2.14f + physics.tabletPenTilt.value;
                 Pt leftToolTarget = isTablet
-                    ? Pt{ v2Nib.x + 14.0f, v2Nib.y - 12.0f + tabletPress * 5.0f }
+                    ? Pt{ v2Nib.x + std::cos(penAngle) * 54.0f - 6.0f,
+                          v2Nib.y + std::sin(penAngle) * 54.0f - 12.0f + tabletPress * 4.0f }
                     : Pt{ mouseCenter.x + 8.0f, mouseCenter.y - 2.0f + mousePress * 8.0f };
 
                 drawV2LeftArm(lg, effectiveLeftPose, effectiveMouseBlend, leftToolTarget,
                               poseOverride ? nullptr : &lTarget,
                               cream, taupe, ink, catLW, lVel);
 
-                // Held Hand-Drawn Comic Stylus gripped right at Douni's left paw when using Graphics Tablet!
+                // Held Hand-Drawn Comic Stylus gripped right at the middle of barrel by Douni's left paw!
                 if (showMouse && isTablet && effectiveMouseBlend > 0.18f) {
                     float penAlpha = smoothstep(0.18f, 0.42f, effectiveMouseBlend);
                     GraphicsState ps = lg.Save();
                     Pt nibDrawPt = { v2Nib.x, v2Nib.y + tabletPress * 4.0f };
-                    float penAngle = -2.14f + physics.tabletPenTilt.value;
                     lg.TranslateTransform(nibDrawPt.x, nibDrawPt.y);
                     lg.RotateTransform(penAngle * RadToDeg);
                     drawWithRectLayerAlpha(lg, -24.0f, -32.0f, 180.0f, 64.0f, penAlpha, [&](Graphics& pg) {
@@ -5077,10 +5143,11 @@ private:
         Gdiplus::Color wheelColor,
         Gdiplus::Color glowColor,
         Gdiplus::Color ink,
-        float lw
+        float lw,
+        float pressMiddle = 0.0f
     ) {
         using namespace Gdiplus;
-        float pressShift = std::max(pressLeft, pressRight) * 5.0f;
+        float pressShift = std::max({pressLeft, pressRight, pressMiddle}) * 5.0f;
         GraphicsState st = g.Save();
 
         // Cute short wavy comic mouse cord trailing up-left
@@ -5141,9 +5208,11 @@ private:
 
         // Scroll wheel pill
         {
+            float wpMix = std::clamp(pressMiddle, 0.0f, 1.0f);
+            Color wCol = (wpMix > 0.02f) ? blendColor(wheelColor, Color(255, 255, 255, 255), 0.6f * wpMix) : wheelColor;
             GraphicsPath wheelPath;
-            addRoundedRect(wheelPath, -29.0f, -5.5f, 17.0f, 11.0f, 5.0f);
-            SolidBrush wb(wheelColor);
+            addRoundedRect(wheelPath, -29.0f + wpMix * 2.0f, -5.5f + wpMix * 0.6f, 17.0f - wpMix * 2.0f, 11.0f - wpMix * 1.2f, 5.0f);
+            SolidBrush wb(wCol);
             g.FillPath(&wb, &wheelPath);
             Pen wp(ink, lw * 0.62f);
             setRound(wp);
@@ -5415,11 +5484,11 @@ private:
         constexpr float rP = 33.0f;
         float archLift = 14.0f * std::fabs(ux);
 
-        Pt shTop = { shoulder.x + nx * rS, shoulder.y + ny * rS };
+        Pt shTop = { shoulder.x + nx * rS, std::max(shoulder.y + ny * rS, 304.0f) };
         Pt shBot = { shoulder.x - nx * rS, shoulder.y - ny * rS };
         Pt tip   = { target.x + ux * 16.0f, target.y + uy * 16.0f };
 
-        Pt topC1 = { lerpF(shTop.x, target.x + nx * rP, 0.42f), lerpF(shTop.y, target.y + ny * rP, 0.42f) - archLift };
+        Pt topC1 = { lerpF(shTop.x, target.x + nx * rP, 0.42f), std::max(lerpF(shTop.y, target.y + ny * rP, 0.42f) - archLift, 286.0f) };
         Pt topC2 = { target.x + nx * (rP * 1.15f) + ux * 8.0f, target.y + ny * (rP * 1.15f) + uy * 8.0f };
         Pt botC1 = { target.x - nx * (rP * 1.15f) + ux * 8.0f, target.y - ny * (rP * 1.15f) + uy * 8.0f };
         Pt botC2 = { lerpF(shBot.x, target.x - nx * rP, 0.42f), lerpF(shBot.y, target.y - ny * rP, 0.42f) - archLift * 0.4f };
@@ -5603,6 +5672,11 @@ private:
         const CatPhysics& physics,
         const SkinSpec& skin,
         EyeColorTheme eyeTheme,
+        const KeyboardSkinSpec& kbSkin,
+        KeyboardTheme kbTheme,
+        bool showKeyLegends,
+        bool keyboardMarquee,
+        bool overrideSkinIris,
         float lift
     ) {
         using namespace Gdiplus;
@@ -6191,13 +6265,76 @@ private:
             }
 
             // 5. Native KuroCat Face Features (normal authentic almond eyes — no round bug-eyes!)
-            drawHeadFeatures(lg, headCenter, physics, eyeTheme, skin, 0.0f, 0.0f);
+            drawHeadFeatures(lg, headCenter, physics, eyeTheme, skin, 0.0f, 0.0f, overrideSkinIris);
 
-            // 6. Dangling front arms hanging along the outer shoulder slopes (leaving central chest/belly 100% unobstructed!)
-            drawDragLimb(frontLeftLimb);
-            drawDragLimb(frontRightLimb);
+            // 6. Carried Keyboard + Mouse / Graphics Tablet + Held Stylus gripped naturally in front!
+            constexpr float carryScale = 0.74f;
+            float carryAngle = bodyPendulum * 0.85f + swingH * 0.14f;
+            Pt kbMid = KeyboardLayout::screenQuadPoint(0.5f, 0.5f);
+            Pt deskAnchor = physics.isTabletActive ? Pt{ 134.0f, kbMid.y } : Pt{ 166.0f, kbMid.y };
+            Pt carryPivot = {
+                rumpCenterX + 4.0f,
+                std::min(226.0f, shoulderY + armLen + 36.0f)
+            };
+            float carryCos = std::cos(carryAngle), carrySin = std::sin(carryAngle);
+            auto mapDesk = [&](Pt dp) -> Pt {
+                float dx = (dp.x - deskAnchor.x) * carryScale;
+                float dy = (dp.y - deskAnchor.y) * carryScale;
+                return { carryPivot.x + dx * carryCos - dy * carrySin,
+                         carryPivot.y + dx * carrySin + dy * carryCos };
+            };
 
-            // 7. Skin stickers / decorations stay anchored cleanly to the lifted cat's head and neck!
+            DragLimb carriedLeftLimb = frontLeftLimb;
+            DragLimb carriedRightLimb = frontRightLimb;
+            Pt deskNib = physics.scruffStartedHoldingPen ? physics.scruffPenStartNib : CatPhysics::tabletQuadPoint(0.58f, 0.48f);
+            float carryPenRad = (physics.scruffStartedHoldingPen ? physics.scruffPenStartAngle : physics.stylusAngle()) + carryAngle;
+            Pt carriedNib = mapDesk(deskNib);
+            Pt carriedPenGrip = {
+                carriedNib.x + std::cos(carryPenRad) * (CatPhysics::StylusBarrelGripDistance * carryScale),
+                carriedNib.y + std::sin(carryPenRad) * (CatPhysics::StylusBarrelGripDistance * carryScale)
+            };
+            Pt leftGearTarget = physics.isTabletActive
+                ? carriedPenGrip
+                : mapDesk({ CatPhysics::MouseBaseCenter.x + physics.mouseOffset.point().x, CatPhysics::MouseBaseCenter.y + physics.mouseOffset.point().y - 4.0f });
+            Pt rightGearTarget = mapDesk(KeyboardLayout::screenQuadPoint(0.52f, 0.12f));
+            carriedLeftLimb.tip = lerpPt(leftGearTarget, frontLeftLimb.tip, startle);
+            carriedRightLimb.tip = lerpPt(rightGearTarget, frontRightLimb.tip, startle);
+
+            {
+                GraphicsState gs = lg.Save();
+                lg.TranslateTransform(carryPivot.x, carryPivot.y);
+                lg.RotateTransform(carryAngle * RadToDeg);
+                lg.ScaleTransform(carryScale, carryScale);
+                lg.TranslateTransform(-deskAnchor.x, -deskAnchor.y);
+                if (physics.isTabletActive) {
+                    drawTablet(lg, physics, kbTheme, eyeTheme);
+                } else {
+                    drawMouse(lg, physics, kbSkin);
+                }
+                drawKeyboard(lg, physics, kbSkin, eyeTheme, showKeyLegends, keyboardMarquee);
+                lg.Restore(gs);
+            }
+
+            // 7. Dangling / Carrying Front Arms
+            drawDragLimb(carriedLeftLimb);
+            drawDragLimb(carriedRightLimb);
+
+            // Held stylus anchored by its middle directly at the carried left paw!
+            if (physics.isTabletActive) {
+                float press = std::clamp(physics.tabletPenPress.value, 0.0f, 1.0f);
+                Pt heldNib = {
+                    carriedLeftLimb.tip.x - std::cos(carryPenRad) * (CatPhysics::StylusBarrelGripDistance * carryScale),
+                    carriedLeftLimb.tip.y - std::sin(carryPenRad) * (CatPhysics::StylusBarrelGripDistance * carryScale) + press * 1.1f
+                };
+                GraphicsState ss = lg.Save();
+                lg.TranslateTransform(heldNib.x, heldNib.y);
+                lg.RotateTransform(carryPenRad * RadToDeg);
+                lg.ScaleTransform(carryScale, carryScale);
+                drawStylusBody(lg, 35.0f, kbTheme, eyeTheme, press);
+                lg.Restore(ss);
+            }
+
+            // 8. Skin stickers / decorations stay anchored cleanly to the lifted cat's head and neck!
             if (!skin.decorations.empty()) {
                 Pt dragNeck = { headCenter.x + hipLagX * 0.08f, headCenter.y + 36.0f * hs };
                 drawDecorations(lg, rumpCenterX, torsoBottomY, headCenter, physics, skin, &dragNeck, &tailTip,

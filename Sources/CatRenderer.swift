@@ -242,22 +242,13 @@ enum CatRenderer {
         }
 
         // Universal Scruff-Lifted Drag Pose (ALL non-Douni cat skins keep their own authentic KuroCat face/head/ears/markings in front,
-        // with scruff-lifted arched neck/back, 4 dangling swinging paws, and limp drooping tail!)
+        // carrying their keyboard & mouse/tablet+stylus cleanly with 2D pendulum inertia!)
         if scruff > 0.005 {
-            let kbFade = max(0, min(1, 1.0 - scruff * 2.6))
-            if kbFade > 0.01 {
-                ctx.saveGState()
-                ctx.setAlpha(kbFade)
-                if physics.isTabletActive {
-                    drawTablet(in: ctx, physics: physics, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme)
-                    drawParkedStylus(in: ctx, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme)
-                } else {
-                    drawMouse(in: ctx, physics: physics, kbSkin: kbSkin)
-                }
-                drawKeyboard(in: ctx, physics: physics, kbSkin: kbSkin, eyeTheme: settings.eyeTheme, showLegends: settings.showKeyLegends, flipped: flipped, marquee: settings.keyboardMarquee)
-                ctx.restoreGState()
-            }
-            drawNativeScruffDragCat(in: ctx, physics: physics, skin: skin, eyeTheme: settings.eyeTheme, lift: scruff)
+            drawNativeScruffDragCat(in: ctx, physics: physics, skin: skin, eyeTheme: settings.eyeTheme, lift: scruff,
+                                    kbSkin: kbSkin, keyboardTheme: settings.keyboardTheme,
+                                    showKeyLegends: settings.showKeyLegends, flipped: flipped,
+                                    keyboardMarquee: settings.keyboardMarquee,
+                                    overrideSkinIris: settings.overrideSkinIris)
             if !physics.floatingKeycaps.isEmpty {
                 drawFloatingKeycaps(in: ctx, physics: physics)
             }
@@ -290,7 +281,9 @@ enum CatRenderer {
         let fallShiftX: CGFloat = dizzyFall * 56.0
         let fallShiftY: CGFloat = dizzyFall * 20.0
         let baseHead = headPosition(physics, skin: skin)
-        let localHeadCenter = CGPoint(x: baseHead.x - lieS * 4.0, y: baseHead.y + lieS * 60.0)
+        let sharedSleepHead = ["builtin:0", "builtin:1", "builtin:2", "builtin:3"].contains(skin.id)
+            ? (standardBuild.headLift - build(skin).headLift) * lieS : 0
+        let localHeadCenter = CGPoint(x: baseHead.x - lieS * 4.0, y: baseHead.y + lieS * 60.0 + sharedSleepHead)
         let tailInFront = (physics.tailTyping.value >= 0.5) || (lieS >= 0.45)
 
         ctx.saveGState()
@@ -362,7 +355,8 @@ enum CatRenderer {
         }
 
         // 8. 2.5D Turning Head Features: Luminous Eyes & Whiskers (+ optional nose/mouth)
-        drawHeadFeatures(in: ctx, center: localHeadCenter, physics: physics, eyeTheme: settings.eyeTheme, skin: skin)
+        drawHeadFeatures(in: ctx, center: localHeadCenter, physics: physics, eyeTheme: settings.eyeTheme, skin: skin,
+                         overrideSkinIris: settings.overrideSkinIris)
 
         // 8b. Face & head-top stickers cleanly above eyes, ears & features
         if !skin.decorations.isEmpty {
@@ -534,7 +528,7 @@ enum CatRenderer {
             x: CatPhysics.mouseBaseCenter.x + physics.mouseOffset.point.x,
             y: CatPhysics.mouseBaseCenter.y + physics.mouseOffset.point.y
         )
-        let pressShift = max(physics.mousePressLeft.value, physics.mousePressRight.value) * 1.6
+        let pressShift = max(physics.mousePressLeft.value, max(physics.mousePressRight.value, physics.mousePressMiddle.value)) * 1.6
 
         ctx.saveGState()
         ctx.translateBy(x: center.x, y: center.y + pressShift)
@@ -581,9 +575,10 @@ enum CatRenderer {
         ctx.strokePath()
 
         // Signature amber scroll wheel on the front (bottom) half facing away from cat
-        let wheelRect = CGRect(x: -1.9, y: 2.5, width: 3.8, height: 8.5)
+        let wheelPress = max(0, min(1, physics.mousePressMiddle.value))
+        let wheelRect = CGRect(x: -1.9, y: 2.5 + wheelPress, width: 3.8, height: 8.5 - wheelPress)
         let wheelPath = CGPath(roundedRect: wheelRect, cornerWidth: 1.9, cornerHeight: 1.9, transform: nil)
-        ctx.setFillColor(wheelColor.cgColor)
+        ctx.setFillColor(blendColor(wheelColor, .white, t: 0.6 * wheelPress).cgColor)
         ctx.addPath(wheelPath)
         ctx.fillPath()
 
@@ -842,12 +837,10 @@ enum CatRenderer {
     }
 
     private static func drawHeldStylus(in ctx: CGContext, physics: CatPhysics, theme: KeyboardTheme, eyeTheme: EyeColorTheme) {
-        let lPos = physics.leftPaw.point
         let press = max(0, min(1, physics.tabletPenPress.value))
-        // Nib rests right at the front-bottom tip of the paw touching the tablet surface;
-        // shaft angles cleanly upward-left away from the cat's arm so it's 100% crisp and clear!
-        let nib = CGPoint(x: lPos.x - 5.5, y: lPos.y + 7.0 + press * 1.4)
-        let angle: CGFloat = -2.18 + physics.tabletPenTilt.value
+        // Use the actual tablet/ink contact; the paw grips the middle of the barrel above-left of this point.
+        let nib = physics.tabletNib.point
+        let angle = physics.stylusAngle
 
         ctx.saveGState()
         ctx.translateBy(x: nib.x, y: nib.y)
@@ -1604,6 +1597,33 @@ enum CatRenderer {
         ctx.setFillColor(ink)
         ctx.fillEllipse(in: CGRect(x: -1.9, y: 10.1, width: 3.8, height: 2.8))
 
+        let dazedDizzy = max(0, min(1, max(physics.dizzyIntensity.value, physics.scruffDizzyIntensity.value)))
+        if dazedDizzy > 0.28 {
+            for x in [-11.8, 11.8] as [CGFloat] {
+                ctx.saveGState()
+                ctx.translateBy(x: x, y: 1.0)
+                ctx.setFillColor(NSColor(calibratedRed: 0.98, green: 0.98, blue: 0.96, alpha: 0.95).cgColor)
+                ctx.fillEllipse(in: CGRect(x: -8.5, y: -8.5, width: 17.0, height: 17.0))
+                ctx.setStrokeColor(ink)
+                ctx.setLineWidth(1.6)
+                ctx.setLineCap(.round)
+                let spiral = CGMutablePath()
+                let rotDir: CGFloat = (x < 0) ? 1.0 : -1.0
+                for step in 0...30 {
+                    let t = CGFloat(step) / 30.0
+                    let ang = t * .pi * 4.0 + physics.dizzyPhase * rotDir
+                    let rad = 1.0 + t * 6.5
+                    let pt = CGPoint(x: cos(ang) * rad, y: sin(ang) * rad)
+                    if step == 0 { spiral.move(to: pt) } else { spiral.addLine(to: pt) }
+                }
+                ctx.addPath(spiral)
+                ctx.strokePath()
+                ctx.restoreGState()
+            }
+            ctx.restoreGState()
+            return
+        }
+
         let happy = physics.isHappyClosedEyes
         let squint = physics.isBlissfulSquint
         if happy || squint {
@@ -1747,9 +1767,11 @@ enum CatRenderer {
 
     private static func drawTail(in ctx: CGContext, seatX: CGFloat, seatY: CGFloat, physics: CatPhysics, skin: SkinSpec, outlineOnly: Bool = false) {
         let curve = tailCurve(seatX: seatX, seatY: seatY, physics: physics, skin: skin)
-        let width = (skin.renderStyle == .dazed) ? 13.0 : (build(skin).tailWidth * skin.shape.tailThickness)
+        let awakeTailWidth = (skin.renderStyle == .dazed) ? 13.0 : (build(skin).tailWidth * skin.shape.tailThickness)
         let lie = max(0, min(1, physics.lieIntensity.value))
         let lieS = lie * lie * (3.0 - 2.0 * lie)
+        let sharedSleep = ["builtin:0", "builtin:1", "builtin:2", "builtin:3"].contains(skin.id) ? lieS : 0
+        let width = awakeTailWidth + (standardBuild.tailWidth - awakeTailWidth) * sharedSleep
 
         ctx.saveGState()
         if outlineOnly {
@@ -1871,20 +1893,25 @@ enum CatRenderer {
             )
         }
 
+        let sharedSleep = ["builtin:0", "builtin:1", "builtin:2", "builtin:3"].contains(skin.id) ? lieS : 0
+        func sleepShape(_ awake: CGFloat, _ classic: CGFloat) -> CGFloat {
+            awake + (classic - awake) * sharedSleep
+        }
+
         let cheekShift = yaw * 3.0
         let crownDrop = pitch * 2.0
-        let cheekHalfW: CGFloat = bd.cheekHalfW * skin.shape.cheekFullness
-        let crownCtrlW: CGFloat = bd.crownCtrlW
-        let crownBaseY: CGFloat = bd.crownBaseY
-        let cheekY: CGFloat = bd.cheekY
-        let neckPinchX: CGFloat = bd.neckPinchX
-        let neckCtrlY: CGFloat = bd.neckCtrlY
-        let hipHalfW: CGFloat = bd.hipHalfW
-        let waistCtrlW: CGFloat = bd.waistCtrlW
-        let waistCtrlY: CGFloat = bd.waistCtrlY
-        let botOuterW: CGFloat = bd.botOuterW
-        let botInnerW: CGFloat = bd.botInnerW
-        let botHalfW: CGFloat = bd.botHalfW
+        let cheekHalfW: CGFloat = sleepShape(bd.cheekHalfW * skin.shape.cheekFullness, standardBuild.cheekHalfW)
+        let crownCtrlW: CGFloat = sleepShape(bd.crownCtrlW, standardBuild.crownCtrlW)
+        let crownBaseY: CGFloat = sleepShape(bd.crownBaseY, standardBuild.crownBaseY)
+        let cheekY: CGFloat = sleepShape(bd.cheekY, standardBuild.cheekY)
+        let neckPinchX: CGFloat = sleepShape(bd.neckPinchX, standardBuild.neckPinchX)
+        let neckCtrlY: CGFloat = sleepShape(bd.neckCtrlY, standardBuild.neckCtrlY)
+        let hipHalfW: CGFloat = sleepShape(bd.hipHalfW, standardBuild.hipHalfW)
+        let waistCtrlW: CGFloat = sleepShape(bd.waistCtrlW, standardBuild.waistCtrlW)
+        let waistCtrlY: CGFloat = sleepShape(bd.waistCtrlY, standardBuild.waistCtrlY)
+        let botOuterW: CGFloat = sleepShape(bd.botOuterW, standardBuild.botOuterW)
+        let botInnerW: CGFloat = sleepShape(bd.botInnerW, standardBuild.botInnerW)
+        let botHalfW: CGFloat = sleepShape(bd.botHalfW, standardBuild.botHalfW)
         let leftCheekX: CGFloat = -cheekHalfW + cheekShift * 0.4
         let rightCheekX: CGFloat = cheekHalfW + cheekShift * 0.4
 
@@ -1897,7 +1924,7 @@ enum CatRenderer {
         let lHip   = B(-hipHalfW, -14)
         let lCheek = H(leftCheekX, cheekY)
 
-        let cheekCtrlTopY: CGFloat = bd.cheekCtrlTopY
+        let cheekCtrlTopY: CGFloat = sleepShape(bd.cheekCtrlTopY, standardBuild.cheekCtrlTopY)
         let nw = skin.shape.neckWidth
         let neckCenter = cheekShift * 0.4
         let rNeckX = neckCenter + (rightCheekX - neckPinchX - neckCenter) * nw
@@ -1915,13 +1942,13 @@ enum CatRenderer {
         path.closeSubpath()
 
         let stagger = skin.shape.pawStagger
-        let hindW: CGFloat = bd.hindW
-        let leftHindX: CGFloat = bw == 1 ? bd.hindLeftX : (bd.hindLeftX + hindW * 0.5) * bw - hindW * 0.5
-        let rightHindX: CGFloat = bw == 1 ? bd.hindRightX : (bd.hindRightX + hindW * 0.5) * bw - hindW * 0.5
-        let leftHindY: CGFloat = bd.hindLeftY
-        let leftHindH: CGFloat = bd.hindLeftH
-        let rightHindY: CGFloat = bd.hindLeftY + (bd.hindStaggerY - bd.hindLeftY) * stagger
-        let rightHindH: CGFloat = bd.hindLeftH + (bd.hindStaggerH - bd.hindLeftH) * stagger
+        let hindW: CGFloat = sleepShape(bd.hindW, standardBuild.hindW)
+        let leftHindX: CGFloat = sleepShape(bw == 1 ? bd.hindLeftX : (bd.hindLeftX + bd.hindW * 0.5) * bw - bd.hindW * 0.5, standardBuild.hindLeftX)
+        let rightHindX: CGFloat = sleepShape(bw == 1 ? bd.hindRightX : (bd.hindRightX + bd.hindW * 0.5) * bw - bd.hindW * 0.5, standardBuild.hindRightX)
+        let leftHindY: CGFloat = sleepShape(bd.hindLeftY, standardBuild.hindLeftY)
+        let leftHindH: CGFloat = sleepShape(bd.hindLeftH, standardBuild.hindLeftH)
+        let rightHindY: CGFloat = sleepShape(bd.hindLeftY + (bd.hindStaggerY - bd.hindLeftY) * stagger, standardBuild.hindStaggerY)
+        let rightHindH: CGFloat = sleepShape(bd.hindLeftH + (bd.hindStaggerH - bd.hindLeftH) * stagger, standardBuild.hindStaggerH)
         let rightTucked = physics.hindFootActive.value < 0.35
 
         if outlineOnly {
@@ -2152,7 +2179,7 @@ enum CatRenderer {
         let rimColor = skin.colorpoint
             ? pal.body.withAlpha(0.55)
             : (isClassicBlackRim(skin) ? blackOutlineColor.withAlphaComponent(0.0) : pal.crease.withAlpha(0.58))
-        ctx.setStrokeColor(rimColor.cgColor)
+        ctx.setStrokeColor(rimColor.withAlphaComponent(rimColor.alphaComponent * (1.0 - sharedSleep)).cgColor)
         ctx.setLineWidth(1.3)
         ctx.setLineCap(.round)
         ctx.addArc(center: CGPoint(x: leftHindX + hindW * 0.5, y: leftHindY + leftHindH * 0.5), radius: 7.5, startAngle: 0.25, endAngle: .pi - 0.25, clockwise: false)
@@ -2272,7 +2299,8 @@ enum CatRenderer {
         eyeTheme: EyeColorTheme,
         skin: SkinSpec,
         scruffStartle: CGFloat = 0,
-        scruffWide: CGFloat = 0
+        scruffWide: CGFloat = 0,
+        overrideSkinIris: Bool = false
     ) {
         ctx.saveGState()
         ctx.translateBy(x: center.x, y: center.y)
@@ -2291,8 +2319,8 @@ enum CatRenderer {
         }
 
         // 1. 3D-Projected Eyes with authentic spherical foreshortening & parallax!
-        drawEye3D(in: ctx, isLeft: true, yawRad: yawRad, pitchRad: pitchRad, physics: physics, eyeTheme: eyeTheme, skin: skin, scruffStartle: scruffStartle, scruffWide: scruffWide)
-        drawEye3D(in: ctx, isLeft: false, yawRad: yawRad, pitchRad: pitchRad, physics: physics, eyeTheme: eyeTheme, skin: skin, scruffStartle: scruffStartle, scruffWide: scruffWide)
+        drawEye3D(in: ctx, isLeft: true, yawRad: yawRad, pitchRad: pitchRad, physics: physics, eyeTheme: eyeTheme, skin: skin, scruffStartle: scruffStartle, scruffWide: scruffWide, overrideSkinIris: overrideSkinIris)
+        drawEye3D(in: ctx, isLeft: false, yawRad: yawRad, pitchRad: pitchRad, physics: physics, eyeTheme: eyeTheme, skin: skin, scruffStartle: scruffStartle, scruffWide: scruffWide, overrideSkinIris: overrideSkinIris)
 
         // 1b. Optional little kitty nose + delicate `:3` mouth hint (小豆泥 charm on the Siamese!)
         if skin.palette.nose != nil || skin.palette.mouth != nil {
@@ -2597,10 +2625,11 @@ enum CatRenderer {
         eyeTheme: EyeColorTheme,
         skin: SkinSpec,
         scruffStartle: CGFloat = 0,
-        scruffWide: CGFloat = 0
+        scruffWide: CGFloat = 0,
+        overrideSkinIris: Bool = false
     ) {
         let sign: CGFloat = isLeft ? -1.0 : 1.0
-        let customIris = (isLeft ? skin.palette.irisLeft : skin.palette.irisRight) ?? skin.palette.iris   // a skin's iris overrides the eye-colour menu
+        let customIris = overrideSkinIris ? nil : ((isLeft ? skin.palette.irisLeft : skin.palette.irisRight) ?? skin.palette.iris)
         let customPupil = (isLeft ? skin.palette.pupilLeft : skin.palette.pupilRight) ?? skin.palette.pupil
         let eyeColor = customIris?.ns ?? eyeTheme.primaryColor
         let siameseBlue = customIris == nil && eyeTheme == .siameseBlue
@@ -2618,7 +2647,7 @@ enum CatRenderer {
         ctx.scaleBy(x: foreshortenX, y: foreshortenY)
 
         // Mode 0: Dizzy spinning spiral eyes (@ @) — appear AFTER initial golden stars warning (>0.28)!
-        let dizzy = max(0, min(1, physics.dizzyIntensity.value))
+        let dizzy = max(0, min(1, max(physics.dizzyIntensity.value, physics.scruffDizzyIntensity.value)))
         if dizzy > 0.28 {
             ctx.setFillColor(NSColor(calibratedRed: 0.98, green: 0.98, blue: 0.96, alpha: 0.95).cgColor)
             ctx.fillEllipse(in: CGRect(x: -11.5, y: -11.0, width: 23.0, height: 22.0))
@@ -2645,15 +2674,9 @@ enum CatRenderer {
         let headCol = skin.palette.headBody ?? skin.palette.body
         let bodyLuma = 0.299 * headCol.r + 0.587 * headCol.g + 0.114 * headCol.b
         let pointsLuma: CGFloat = skin.palette.points.map { 0.299 * $0.r + 0.587 * $0.g + 0.114 * $0.b } ?? 1.0
-        let outlineLuma: CGFloat = skin.palette.outline.map { 0.299 * $0.r + 0.587 * $0.g + 0.114 * $0.b } ?? 1.0
         let isDarkEyeArea = bodyLuma < 0.28 || (skin.colorpoint && pointsLuma < 0.38)
-        let closedLidColor: CGColor = {
-            if isDarkEyeArea { return eyeColor.cgColor }
-            if let out = skin.palette.outline, outlineLuma < 0.42 {
-                return out.ns.withAlphaComponent(0.90).cgColor
-            }
-            return NSColor(calibratedRed: 60.0 / 255.0, green: 50.0 / 255.0, blue: 44.0 / 255.0, alpha: 0.88).cgColor
-        }()
+        // Keep the closed-lid curves, but match the selected/custom iris in every state.
+        let closedLidColor = eyeColor.cgColor
 
         // Mode 1: Happy closed curved line eyes (petting head!)
         if physics.isHappyClosedEyes {
@@ -2670,7 +2693,7 @@ enum CatRenderer {
             return
         }
 
-        // Mode 1b: Peaceful closed sleeping eyelids on light-faced cats so eyes never vanish into light fur!
+        // Mode 1b: Visible closed sleeping eyelids on light-faced cats, matching the current iris.
         if !isDarkEyeArea && physics.sleepiness > 0.62 && scruffStartle < 0.15 {
             ctx.setStrokeColor(closedLidColor)
             ctx.setLineWidth(2.5)
@@ -2922,50 +2945,60 @@ enum CatRenderer {
         physics: CatPhysics,
         skin: SkinSpec
     ) {
-        let lPos = physics.leftPaw.point
+        // tabletNib is already spring-smoothed: use the same geometric contact for pen and paw,
+        // avoiding a second spring lag that would let the barrel slip out of the fingers.
+        let holdingPen = physics.isTabletActive && physics.leftPawOnMouse
+            && physics.dizzyIntensity.value <= 0.35 && physics.lieIntensity.value <= 0.45
+        let lPos = holdingPen ? physics.stylusPawGrip : physics.leftPaw.point
         let rPos = physics.rightPaw.point
 
         let lDist = hypot(lPos.x - CatPhysics.leftPawRest.x, lPos.y - CatPhysics.leftPawRest.y)
         let rDist = hypot(rPos.x - CatPhysics.rightPawRest.x, rPos.y - CatPhysics.rightPawRest.y)
 
-        // Attach to the transformed chest, below the moving face rather than its white blaze.
+        // Attach to the transformed chest, cleanly below the moving chin/cheeks so limbs never clip into face!
         let bd = build(skin)
         let bw = skin.shape.bodyWidth
         let headLift: CGFloat = bd.headLift
         let lie = max(0, min(1, physics.lieIntensity.value))
         let lieS = lie * lie * (3.0 - 2.0 * lie)
-        // When curling into a cozy sleeping ball, tuck front legs neatly inward underneath the chin (揣手手)!
+        let headBottom: CGFloat = 126 + headLift + lieS * 60.0 + physics.headOffsetY.value + physics.headPitch.value * 4.8 + breath * 1.1
+        // When curling into a cozy sleeping ball, tuck front legs downward smoothly beneath the chin before fading!
         let armSp = skin.shape.armSpacing
         let armLen = skin.shape.armLength
         let armRY = skin.shape.armRootY
-        let idleTopY: CGFloat = (seatY - bd.idleTopDY + armRY) + lieS * 24.0
+        let idleTopY: CGFloat = max((seatY - bd.idleTopDY + armRY) + lieS * 34.0, headBottom + 40.0 * skin.shape.headScale)
         let idleTopX: CGFloat = bd.idleTopX * bw * armSp - lieS * 5.0
         let idleBotX: CGFloat = bd.idleBotX * bw * armSp - lieS * 4.5
-        let idleBotY: CGFloat = (seatY + 12.0 + (armLen - 1.0) * 16.0) - lieS * 4.0
+        let idleBotY: CGFloat = max(idleTopY + 14.0, (seatY + 12.0 + (armLen - 1.0) * 16.0) + lieS * 12.0)
         let shX: CGFloat = bd.shoulderX * bw * armSp
         let approved = !skin.colorpoint && skin.palette.belly != nil && skin.palette.belly == skin.palette.legs && !skin.idleLegsTinted && !skin.marks.isEmpty
-        let shoulderDepth: CGFloat = approved ? 43 : 58
-        let faceClearance: CGFloat = approved ? 52 : 42
+        let shoulderDepth: CGFloat = approved ? 43 : 49
+        let tiltChinDrop: CGFloat = abs(sin(physics.headTilt.value)) * 20.0 * skin.shape.cheekFullness * skin.shape.headScale + max(0, skin.shape.headScale - 1.0) * 32.0
+        let faceClearance: CGFloat = (approved ? 52 : 51) + tiltChinDrop
+        let faceBottom = headBottom + faceClearance
         func shoulder(_ x: CGFloat) -> CGPoint {
             let sy = physics.bodySquash.value * (1.0 - lieS * 0.42)
             let sx = (1.0 + (1.0 - physics.bodySquash.value) * 0.55) * (1.0 + lieS * 0.03)
             let c = cos(physics.bodyTilt.value), s = sin(physics.bodyTilt.value)
-            let faceBottom = 126 + headLift + physics.headOffsetY.value + physics.headPitch.value * 4.8 + breath * 1.1 + faceClearance
             return CGPoint(x: seatX + x*sx*c + shoulderDepth*sy*s,
                            y: max(seatY + x*sx*s - shoulderDepth*sy*c, faceBottom))
         }
         let leftShoulder = shoulder(-shX)
         let rightShoulder = shoulder(shX)
+        let idleAlpha: CGFloat = 1.0 - smoothstep(0.48, 0.78, lieS)
 
         // Left arm
         if lDist < 6.0 && !physics.leftPawOnMouse && !physics.leftPawTyping {
-            if lieS < 0.78 {
+            if idleAlpha > 0.01 {
+                ctx.saveGState()
+                if idleAlpha < 0.995 { ctx.setAlpha(idleAlpha) }
                 drawIdleFrontLeg(in: ctx, top: CGPoint(x: seatX - idleTopX, y: idleTopY), bottom: CGPoint(x: seatX - idleBotX, y: idleBotY), isLeft: true, skin: skin)
+                ctx.restoreGState()
             }
         } else {
             let mid = CGPoint(
                 x: (leftShoulder.x + lPos.x) * 0.5 - (physics.leftPawOnMouse ? 8 : 4),
-                y: (leftShoulder.y + lPos.y) * 0.5 - 6
+                y: max((leftShoulder.y + lPos.y) * 0.5 - 6, faceBottom - 1.0)
             )
             drawLimb(
                 in: ctx,
@@ -2983,13 +3016,16 @@ enum CatRenderer {
 
         // Right arm
         if rDist < 6.0 && !physics.rightPawTyping {
-            if lieS < 0.78 {
+            if idleAlpha > 0.01 {
+                ctx.saveGState()
+                if idleAlpha < 0.995 { ctx.setAlpha(idleAlpha) }
                 drawIdleFrontLeg(in: ctx, top: CGPoint(x: seatX + idleTopX, y: idleTopY), bottom: CGPoint(x: seatX + idleBotX, y: idleBotY), isLeft: false, skin: skin)
+                ctx.restoreGState()
             }
         } else {
             let mid = CGPoint(
                 x: (rightShoulder.x + rPos.x) * 0.5 + 4,
-                y: (rightShoulder.y + rPos.y) * 0.5 - 6
+                y: max((rightShoulder.y + rPos.y) * 0.5 - 6, faceBottom - 1.0)
             )
             drawLimb(
                 in: ctx,
@@ -3010,7 +3046,7 @@ enum CatRenderer {
     private static func drawIdleFrontLeg(in ctx: CGContext, top: CGPoint, bottom: CGPoint, isLeft: Bool, skin: SkinSpec) {
         if skin.renderStyle == .dazed {
             let sign: CGFloat = isLeft ? -1.0 : 1.0
-            let shoulder = CGPoint(x: top.x + sign * 4.0, y: top.y - 10.0)
+            let shoulder = CGPoint(x: top.x + sign * 4.0, y: top.y - 6.0)
             let elbow = CGPoint(x: top.x + sign * 11.0, y: top.y + 1.0)
             let paw = CGPoint(x: top.x + sign * 10.0, y: top.y + 15.0)
             drawLimb(in: ctx, start: shoulder, control: elbow, end: paw, startWidth: 19.0, endWidth: 14.0, outlineOnLeftSide: !isLeft, outlineAlpha: 0.78, skin: skin, frontPaw: true)
@@ -4889,7 +4925,7 @@ enum CatRenderer {
             x: 168 + physics.mouseOffset.point.x * 5.2,
             y: 286 + physics.mouseOffset.point.y * 4.5
         )
-        let mousePress = max(physics.mousePressLeft.value, physics.mousePressRight.value)
+        let mousePress = max(physics.mousePressLeft.value, max(physics.mousePressRight.value, physics.mousePressMiddle.value))
         let nibUV = douniTabletUV(from: physics.tabletNib.point)
         let v2Nib = v2TabletPoint(u: nibUV.u, v: nibUV.v)
         let tabletPress = max(0, min(1, physics.tabletPenPress.value))
@@ -4925,6 +4961,7 @@ enum CatRenderer {
                     center: mouseCenter,
                     pressLeft: physics.mousePressLeft.value,
                     pressRight: physics.mousePressRight.value,
+                    pressMiddle: physics.mousePressMiddle.value,
                     bodyColor: mouseBodyColor,
                     bevelColor: kbBevelColor,
                     wheelColor: mouseWheelColor,
@@ -5012,6 +5049,7 @@ enum CatRenderer {
             let gazeY = (poseOverride != nil) ? 0 : physics.eyeGaze.y.value
             let baseBlink = (poseOverride != nil) ? 0 : physics.blinkProgress
             let blink = max(baseBlink, smoothstep(0.04, 0.44, morph))
+            let v2EyeDizzy = max(dizzy, max(0, min(1, physics.scruffDizzyIntensity.value)))
             drawV2BobaEye(
                 in: ctx,
                 center: CGPoint(x: 518, y: 262),
@@ -5021,7 +5059,7 @@ enum CatRenderer {
                 gazeY: gazeY,
                 blink: blink,
                 hunt: hunt,
-                dizzy: dizzy,
+                dizzy: v2EyeDizzy,
                 dizzyPhase: physics.dizzyPhase,
                 anger: anger,
                 cream: cream,
@@ -5037,7 +5075,7 @@ enum CatRenderer {
                 gazeY: gazeY,
                 blink: blink,
                 hunt: hunt,
-                dizzy: dizzy,
+                dizzy: v2EyeDizzy,
                 dizzyPhase: physics.dizzyPhase,
                 anger: anger,
                 cream: cream,
@@ -5118,8 +5156,9 @@ enum CatRenderer {
                 x: physics.douniLeftKeyTarget.point.x + impT * 10.0,
                 y: physics.douniLeftKeyTarget.point.y + impY * 8.5
             )
+            let penAngle: CGFloat = -2.14 + physics.tabletPenTilt.value
             let leftToolTarget: CGPoint = isTablet
-                ? CGPoint(x: v2Nib.x + 14, y: v2Nib.y - 12 + tabletPress * 5.0)
+                ? CGPoint(x: v2Nib.x + cos(penAngle) * 54.0 - 6.0, y: v2Nib.y + sin(penAngle) * 54.0 - 8.0 + tabletPress * 5.0)
                 : CGPoint(x: mouseCenter.x + 8, y: mouseCenter.y - 2 + mousePress * 8)
 
             drawV2LeftArm(
@@ -5135,13 +5174,12 @@ enum CatRenderer {
                 swingVelocity: lVel
             )
 
-            // Held Hand-Drawn Comic Stylus gripped right at Douni's left paw when using Graphics Tablet!
+            // Held Hand-Drawn Comic Stylus gripped right at the middle of the barrel by Douni's paw when using Graphics Tablet!
             if showMouse && isTablet && effectiveMouseBlend > 0.18 {
                 let penAlpha = smoothstep(0.18, 0.42, effectiveMouseBlend)
                 ctx.saveGState()
                 ctx.setAlpha(penAlpha * catAlpha)
                 let nibDrawPt = CGPoint(x: v2Nib.x, y: v2Nib.y + tabletPress * 4.0)
-                let penAngle: CGFloat = -2.14 + physics.tabletPenTilt.value
                 ctx.translateBy(x: nibDrawPt.x, y: nibDrawPt.y)
                 ctx.rotate(by: penAngle)
                 drawDouniComicStylus(
@@ -5803,6 +5841,7 @@ enum CatRenderer {
         center: CGPoint,
         pressLeft: CGFloat,
         pressRight: CGFloat,
+        pressMiddle: CGFloat = 0,
         bodyColor: NSColor,
         bevelColor: NSColor,
         wheelColor: NSColor,
@@ -5810,7 +5849,7 @@ enum CatRenderer {
         ink: NSColor,
         lw: CGFloat
     ) {
-        let pressShift = max(pressLeft, pressRight) * 5.0
+        let pressShift = max(pressLeft, max(pressRight, pressMiddle)) * 5.0
         ctx.saveGState()
         // Cute short wavy comic mouse cord trailing up-left
         ctx.setStrokeColor(ink.cgColor)
@@ -5865,9 +5904,10 @@ enum CatRenderer {
         ctx.strokePath()
 
         // Scroll wheel pill
-        let wheelRect = CGRect(x: -29, y: -5.5, width: 17, height: 11)
+        let wheelPress = max(0, min(1, pressMiddle))
+        let wheelRect = CGRect(x: -29, y: -5.5 + 2.0 * wheelPress, width: 17, height: 11 - 2.0 * wheelPress)
         let wheelPath = CGPath(roundedRect: wheelRect, cornerWidth: 5, cornerHeight: 5, transform: nil)
-        ctx.setFillColor(wheelColor.cgColor)
+        ctx.setFillColor(blendColor(wheelColor, .white, t: 0.6 * wheelPress).cgColor)
         ctx.addPath(wheelPath)
         ctx.fillPath()
         ctx.setStrokeColor(ink.cgColor)
@@ -6146,11 +6186,13 @@ enum CatRenderer {
         let rP: CGFloat = 33.0 // full chubby 66px rounded paw mitten width
         let archLift: CGFloat = 14.0 * abs(ux) // soft upward comic arch when reaching sideways
 
-        let shTop = CGPoint(x: shoulder.x + nx * rS, y: shoulder.y + ny * rS)
+        let minShTopY: CGFloat = shoulder.y < 360 ? 320.0 : 342.0
+        let minTopC1Y: CGFloat = shoulder.y < 360 ? 306.0 : 328.0
+        let shTop = CGPoint(x: shoulder.x + nx * rS, y: max(shoulder.y + ny * rS, minShTopY))
         let shBot = CGPoint(x: shoulder.x - nx * rS, y: shoulder.y - ny * rS)
         let tip   = CGPoint(x: target.x + ux * 16.0, y: target.y + uy * 16.0)
 
-        let topC1 = CGPoint(x: lerp(shTop.x, target.x + nx * rP, 0.42), y: lerp(shTop.y, target.y + ny * rP, 0.42) - archLift)
+        let topC1 = CGPoint(x: lerp(shTop.x, target.x + nx * rP, 0.42), y: max(lerp(shTop.y, target.y + ny * rP, 0.42) - archLift, minTopC1Y))
         let topC2 = CGPoint(x: target.x + nx * (rP * 1.15) + ux * 8.0, y: target.y + ny * (rP * 1.15) + uy * 8.0)
         let botC1 = CGPoint(x: target.x - nx * (rP * 1.15) + ux * 8.0, y: target.y - ny * (rP * 1.15) + uy * 8.0)
         let botC2 = CGPoint(x: lerp(shBot.x, target.x - nx * rP, 0.42), y: lerp(shBot.y, target.y - ny * rP, 0.42) - archLift * 0.4)
@@ -6445,8 +6487,15 @@ enum CatRenderer {
         physics: CatPhysics,
         skin: SkinSpec,
         eyeTheme: EyeColorTheme,
-        lift: CGFloat
+        lift: CGFloat,
+        kbSkin: KeyboardSkinSpec = CatSettings.shared.activeKeyboardSkin,
+        keyboardTheme: KeyboardTheme = CatSettings.shared.keyboardTheme,
+        showKeyLegends: Bool = CatSettings.shared.showKeyLegends,
+        flipped: Bool = CatSettings.shared.flipHorizontal,
+        keyboardMarquee: Bool = CatSettings.shared.keyboardMarquee,
+        overrideSkinIris: Bool = false
     ) {
+        let carry = smoothstep(0.0, 0.90, lift)
         let liftS = smoothstep(0.0, 1.0, lift)
         let startle: CGFloat
         if physics.isScruffDragging {
@@ -6643,16 +6692,16 @@ enum CatRenderer {
         let armLen: CGFloat = 56.0
         let frontLeftLimb = makeLimb(
             rootA: CGPoint(x: headCenter.x - shoulderInX + hipLagX * 0.16, y: shoulderY),
-            tipA: CGPoint(x: headCenter.x - shoulderInX + 1.5 + hipLagX * 0.30, y: shoulderY + armLen),
+            tipA: CGPoint(x: headCenter.x - shoulderInX + 1.5 - carry * 20.0 + hipLagX * 0.30, y: shoulderY + armLen + carry * 4.0),
             rootB: CGPoint(x: headCenter.x - shoulderInX + hipLagX * 0.12, y: shoulderY + 3.0),
-            tipB: CGPoint(x: headCenter.x - shoulderInX - 4.0 + hipLagX * 0.22, y: shoulderY + armLen * 0.84),
+            tipB: CGPoint(x: headCenter.x - shoulderInX - 4.0 - carry * 20.0 + hipLagX * 0.22, y: shoulderY + armLen * 0.84 + carry * 4.0),
             w0: 13.6, w1: 12.4, bendX: -1.5, swingScale: 0.42, splayDir: -0.65, armSpace: .leftArm
         )
         let frontRightLimb = makeLimb(
             rootA: CGPoint(x: headCenter.x + shoulderInX + hipLagX * 0.16, y: shoulderY),
-            tipA: CGPoint(x: headCenter.x + shoulderInX - 1.5 + hipLagX * 0.30, y: shoulderY + armLen),
+            tipA: CGPoint(x: headCenter.x + shoulderInX - 1.5 + carry * 8.0 + hipLagX * 0.30, y: shoulderY + armLen + carry * 4.0),
             rootB: CGPoint(x: headCenter.x + shoulderInX + hipLagX * 0.12, y: shoulderY + 3.0),
-            tipB: CGPoint(x: headCenter.x + shoulderInX + 4.0 + hipLagX * 0.22, y: shoulderY + armLen * 0.84),
+            tipB: CGPoint(x: headCenter.x + shoulderInX + 4.0 + carry * 8.0 + hipLagX * 0.22, y: shoulderY + armLen * 0.84 + carry * 4.0),
             w0: 13.6, w1: 12.4, bendX: 1.5, swingScale: 0.42, splayDir: 0.65, armSpace: .rightArm
         )
 
@@ -6821,17 +6870,21 @@ enum CatRenderer {
             ctx.restoreGState()
         }
 
+        let catLayerAlpha = smoothstep(0.0, 0.22, lift)
         ctx.saveGState()
-        ctx.setAlpha(smoothstep(0.0, 0.22, lift))
         ctx.setLineCap(.round)
         ctx.setLineJoin(.round)
 
         // Gentle pendulum rotation anchored right at the lifted scruff pinch point between the ears!
-        let bodyPendulum = max(-0.17, min(0.17, swingH * 0.16))
+        let bodyPendulum = max(-0.17, min(0.17, swingH * 0.16)) * smoothstep(0.0, 0.25, lift)
         if abs(bodyPendulum) > 0.001 {
             ctx.translateBy(x: scruffPinch.x, y: scruffPinch.y)
             ctx.rotate(by: bodyPendulum)
             ctx.translateBy(x: -scruffPinch.x, y: -scruffPinch.y)
+        }
+        if catLayerAlpha < 0.995 {
+            ctx.setAlpha(catLayerAlpha)
+            ctx.beginTransparencyLayer(auxiliaryInfo: nil)
         }
 
         // Pass 0 (ALL skins, when whiteOutline is enabled): unified sticker-style outer white silhouette rim painted FIRST
@@ -7123,10 +7176,94 @@ enum CatRenderer {
             eyeTheme: eyeTheme,
             skin: skin,
             scruffStartle: 0,
-            scruffWide: 0
+            scruffWide: 0,
+            overrideSkinIris: overrideSkinIris
         )
+        if catLayerAlpha < 0.995 {
+            ctx.endTransparencyLayer()
+            ctx.setAlpha(1.0)
+        }
 
-        // 6. Dangling front arms hanging along the outer shoulder slopes (leaving central chest/belly 100% unobstructed!)
+        // 5b. Carry the keyboard and mouse / tablet + middle-gripped stylus with smooth 2D inertia;
+        // at lift=0 (carry=0), the transform equals the exact desk coordinates so there is zero pop.
+        let worldKeyboardGrip = rot(frontRightLimb.tip, around: scruffPinch, angle: bodyPendulum)
+        let worldPointerGrip = rot(frontLeftLimb.tip, around: scruffPinch, angle: bodyPendulum)
+        let keyboardHandAngle = atan2(frontRightLimb.tip.y - frontRightLimb.root.y,
+                                      frontRightLimb.tip.x - frontRightLimb.root.x) - .pi / 2.0
+        let pointerHandAngle = atan2(frontLeftLimb.tip.y - frontLeftLimb.root.y,
+                                     frontLeftLimb.tip.x - frontLeftLimb.root.x) - .pi / 2.0
+        func carryTransform(from source: CGPoint, to target: CGPoint, angle: CGFloat, draw: () -> Void) {
+            let grip = lerpPt(source, target, carry)
+            ctx.saveGState()
+            ctx.setAlpha(1.0)
+            ctx.translateBy(x: scruffPinch.x, y: scruffPinch.y)
+            ctx.rotate(by: -bodyPendulum)
+            ctx.translateBy(x: -scruffPinch.x, y: -scruffPinch.y)
+            ctx.translateBy(x: grip.x, y: grip.y)
+            ctx.rotate(by: angle * carry)
+            ctx.translateBy(x: -source.x, y: -source.y)
+            draw()
+            ctx.restoreGState()
+        }
+
+        let kbGripDesk = KeyboardLayout.screenQuadPoint(su: 0.24, sv: 0.12)
+        carryTransform(from: kbGripDesk, to: worldKeyboardGrip,
+                       angle: 0.26 + keyboardHandAngle + bodyPendulum) {
+            drawKeyboard(in: ctx, physics: physics, kbSkin: kbSkin,
+                         eyeTheme: eyeTheme, showLegends: showKeyLegends,
+                         flipped: flipped, marquee: keyboardMarquee)
+        }
+        if physics.isTabletActive {
+            let tabletGrip = CatPhysics.tabletQuadPoint(u: 0.62, v: 0.12)
+            let tabletBaseAngle: CGFloat = -0.18
+            let tabletAngle: CGFloat = tabletBaseAngle + pointerHandAngle + bodyPendulum
+            carryTransform(from: tabletGrip, to: worldPointerGrip, angle: tabletAngle) {
+                drawTablet(in: ctx, physics: physics, theme: keyboardTheme, eyeTheme: eyeTheme)
+            }
+            let sourceHeldPen = physics.leftPawOnMouse || physics.scruffStartedHoldingPen
+            let originalNib = sourceHeldPen
+                ? (physics.isScruffDragging && physics.scruffStartedHoldingPen ? physics.scruffPenStartNib : physics.tabletNib.point)
+                : CatPhysics.tabletQuadPoint(u: 0.88, v: -0.02)
+            let parkedTail = CatPhysics.tabletQuadPoint(u: 0.18, v: -0.02)
+            let originalAngle = sourceHeldPen
+                ? (physics.isScruffDragging && physics.scruffStartedHoldingPen ? physics.scruffPenStartAngle : physics.stylusAngle)
+                : atan2(parkedTail.y - originalNib.y, parkedTail.x - originalNib.x)
+            let originalLength: CGFloat = sourceHeldPen ? 35.0 : hypot(parkedTail.x - originalNib.x, parkedTail.y - originalNib.y)
+            let heldAngle: CGFloat = CatPhysics.stylusBaseAngle + pointerHandAngle + bodyPendulum
+            let barrelGripDistance = CatPhysics.stylusBarrelGripDistance
+            let penToTabletAngle: CGFloat = CatPhysics.stylusBaseAngle - tabletBaseAngle
+            let gripOffset = CGPoint(x: CatPhysics.stylusGripOffsetX * cos(-tabletBaseAngle),
+                                     y: CatPhysics.stylusGripOffsetX * sin(-tabletBaseAngle))
+            let padContact = CGPoint(x: tabletGrip.x + gripOffset.x - cos(penToTabletAngle) * barrelGripDistance,
+                                     y: tabletGrip.y + gripOffset.y - sin(penToTabletAngle) * barrelGripDistance)
+            let localContact = lerpPt(originalNib, padContact, carry)
+            let tabletWorldGrip = lerpPt(tabletGrip, worldPointerGrip, carry)
+            let contactDelta = rot(localContact, around: tabletGrip, angle: tabletAngle * carry)
+            let penNib = CGPoint(x: tabletWorldGrip.x + contactDelta.x - tabletGrip.x,
+                                 y: tabletWorldGrip.y + contactDelta.y - tabletGrip.y)
+            ctx.saveGState()
+            ctx.setAlpha(1.0)
+            ctx.translateBy(x: scruffPinch.x, y: scruffPinch.y)
+            ctx.rotate(by: -bodyPendulum)
+            ctx.translateBy(x: -scruffPinch.x, y: -scruffPinch.y)
+            ctx.translateBy(x: penNib.x, y: penNib.y)
+            ctx.rotate(by: lerp(originalAngle, heldAngle, carry))
+            drawStylusBody(in: ctx, length: lerp(originalLength, 35.0, carry), theme: keyboardTheme,
+                           eyeTheme: eyeTheme, pressed: physics.tabletPenPress.value * (1.0 - carry))
+            ctx.restoreGState()
+        } else {
+            let mouseGrip = CGPoint(x: CatPhysics.mouseBaseCenter.x + physics.mouseOffset.point.x,
+                                    y: CatPhysics.mouseBaseCenter.y + physics.mouseOffset.point.y - 10.0)
+            carryTransform(from: mouseGrip, to: worldPointerGrip, angle: -0.18 + pointerHandAngle + bodyPendulum) {
+                drawMouse(in: ctx, physics: physics, kbSkin: kbSkin)
+            }
+        }
+
+        // 6. Dangling front arms hanging over the carried props & gripping barrel/keyboard/mouse!
+        if catLayerAlpha < 0.995 {
+            ctx.setAlpha(catLayerAlpha)
+            ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+        }
         drawDragLimb(frontLeftLimb)
         drawDragLimb(frontRightLimb)
 
@@ -7135,6 +7272,9 @@ enum CatRenderer {
             let dragNeck = CGPoint(x: headCenter.x + hipLagX * 0.08, y: headCenter.y + 36.0 * hs)
             drawDecorations(in: ctx, seatX: rumpCenterX, seatY: torsoBottomY, head: headCenter, physics: physics, skin: skin,
                             neckOverride: dragNeck, tailTipOverride: tailTip, anchors: [.neck, .face, .headTop])
+        }
+        if catLayerAlpha < 0.995 {
+            ctx.endTransparencyLayer()
         }
 
         ctx.restoreGState()

@@ -171,7 +171,9 @@ struct AppState {
     float rotateStartDeg = 0.0f;
     bool rButtonDown = false;
     bool pendingMenuAfterAlt = false;
+    double pendingMenuAltUpTime = 0.0;
     POINT pendingMenuPt = {};
+    bool inContextMenu = false;
     POINT dragStartCursor = {};
     POINT dragStartWinOrigin = {};
     bool hasLastHover = false;
@@ -1033,6 +1035,7 @@ bool importSkinFile(AppState& app, const std::wstring& path) {
         }
         return false;
     }
+    app.settings.overrideSkinIris = false;
     app.settings.customSkin = id;
     app.settings.saveToRegistry();
     const SkinSpec* s = app.skins.find(id);
@@ -1822,6 +1825,7 @@ LRESULT CALLBACK settingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                 int sel = (int)SendMessageW((HWND)lParam, CB_GETCURSEL, 0, 0);
                 if (sel < 0) return 0;
                 if (id == ID_COAT_COMBO) {
+                    app->settings.overrideSkinIris = false;
                     if (sel < 6) {
                         app->settings.customSkin.clear();
                         app->settings.coatTheme = (CatCoatTheme)sel;
@@ -1840,6 +1844,7 @@ LRESULT CALLBACK settingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                     refreshDressingRoom(*app);
                     refreshSettingsWindow(*app);
                 } else if (id == ID_EYE_COMBO && sel <= (int)EyeColorTheme::OliveGold) {
+                    app->settings.overrideSkinIris = true;
                     app->settings.eyeTheme = (EyeColorTheme)sel;
                     app->settings.saveToRegistry();
                 } else if (id == ID_KB_COMBO) {
@@ -2247,9 +2252,25 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(menu, MF_STRING, CMD_QUIT, tr(L"\u9000\u51FA KuroCat", L"Quit KuroCat"));
 
     HWND menuOwner = app.menuOwnerHwnd ? app.menuOwnerHwnd : app.hwnd;
+    app.inContextMenu = true;
+    if (app.menuOwnerHwnd) {
+        SetWindowPos(menuOwner, HWND_TOPMOST, screenPt.x, screenPt.y, 1, 1, SWP_NOACTIVATE);
+        ShowWindow(menuOwner, SW_SHOWNA);
+    }
+    HWND fg = GetForegroundWindow();
+    DWORD curTid = GetCurrentThreadId();
+    DWORD fgTid = (fg && fg != menuOwner) ? GetWindowThreadProcessId(fg, nullptr) : 0;
+    bool attached = (fgTid && fgTid != curTid) ? (AttachThreadInput(curTid, fgTid, TRUE) != FALSE) : false;
+    AllowSetForegroundWindow(ASFW_ANY);
+    BringWindowToTop(menuOwner);
     SetForegroundWindow(menuOwner);
+    if (attached) AttachThreadInput(curTid, fgTid, FALSE);
     UINT cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screenPt.x, screenPt.y, 0, menuOwner, nullptr);
     PostMessageW(menuOwner, WM_NULL, 0, 0);
+    if (app.menuOwnerHwnd) {
+        ShowWindow(menuOwner, SW_HIDE);
+    }
+    app.inContextMenu = false;
     DestroyMenu(menu);
 
     switch (cmd) {
@@ -2385,18 +2406,21 @@ void showContextMenu(AppState& app, POINT screenPt) {
             ShellExecuteW(nullptr, L"open", KeyboardSkinLibrary::directory().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
             break;
         case CMD_COAT_BLACK:
+            app.settings.overrideSkinIris = false;
             app.settings.customSkin.clear();
             app.settings.coatTheme = CatCoatTheme::ClassicBlack;
             app.settings.eyeTheme = EyeColorTheme::NeonChartreuse;
             app.settings.saveToRegistry();
             break;
         case CMD_COAT_SIAMESE:
+            app.settings.overrideSkinIris = false;
             app.settings.customSkin.clear();
             app.settings.coatTheme = CatCoatTheme::Siamese;
             app.settings.eyeTheme = EyeColorTheme::SiameseBlue;
             app.settings.saveToRegistry();
             break;
         case CMD_COAT_TABBY:
+            app.settings.overrideSkinIris = false;
             app.settings.customSkin.clear();
             app.settings.coatTheme = CatCoatTheme::Tabby;
             app.settings.eyeTheme = EyeColorTheme::OliveGold;
@@ -2404,20 +2428,22 @@ void showContextMenu(AppState& app, POINT screenPt) {
             break;
         case CMD_COAT_SHORTHAIR:
         case CMD_COAT_ORANGE_WHITE:
+            app.settings.overrideSkinIris = false;
             app.settings.customSkin.clear();
             app.settings.coatTheme = cmd == CMD_COAT_SHORTHAIR ? CatCoatTheme::Shorthair : CatCoatTheme::OrangeWhite;
             app.settings.eyeTheme = cmd == CMD_COAT_SHORTHAIR ? EyeColorTheme::ReferenceHazel : EyeColorTheme::WarmAmber;
             app.settings.saveToRegistry();
             break;
         case CMD_COAT_DAZED:
+            app.settings.overrideSkinIris = false;
             app.settings.customSkin.clear();
             app.settings.coatTheme = CatCoatTheme::Dazed;
             app.settings.eyeTheme = EyeColorTheme::SoftAmber;
             app.settings.saveToRegistry();
             break;
-        case CMD_EYE_SOFT_AMBER: app.settings.eyeTheme = EyeColorTheme::SoftAmber; app.settings.saveToRegistry(); break;
-        case CMD_EYE_REFERENCE_HAZEL: app.settings.eyeTheme = EyeColorTheme::ReferenceHazel; app.settings.saveToRegistry(); break;
-        case CMD_EYE_OLIVE_GOLD: app.settings.eyeTheme = EyeColorTheme::OliveGold; app.settings.saveToRegistry(); break;
+        case CMD_EYE_SOFT_AMBER: app.settings.overrideSkinIris = true; app.settings.eyeTheme = EyeColorTheme::SoftAmber; app.settings.saveToRegistry(); break;
+        case CMD_EYE_REFERENCE_HAZEL: app.settings.overrideSkinIris = true; app.settings.eyeTheme = EyeColorTheme::ReferenceHazel; app.settings.saveToRegistry(); break;
+        case CMD_EYE_OLIVE_GOLD: app.settings.overrideSkinIris = true; app.settings.eyeTheme = EyeColorTheme::OliveGold; app.settings.saveToRegistry(); break;
         case CMD_KB_MILK:
             app.settings.customKeyboard.clear();
             app.settings.keyboardTheme = KeyboardTheme::ClassicMilk;
@@ -2433,10 +2459,10 @@ void showContextMenu(AppState& app, POINT screenPt) {
             app.settings.keyboardTheme = KeyboardTheme::RetroCream;
             app.settings.saveToRegistry();
             break;
-        case CMD_EYE_LIME:  app.settings.eyeTheme = EyeColorTheme::NeonChartreuse; app.settings.saveToRegistry(); break;
-        case CMD_EYE_BLUE:  app.settings.eyeTheme = EyeColorTheme::SiameseBlue; app.settings.saveToRegistry(); break;
-        case CMD_EYE_AMBER: app.settings.eyeTheme = EyeColorTheme::WarmAmber; app.settings.saveToRegistry(); break;
-        case CMD_EYE_CYAN:  app.settings.eyeTheme = EyeColorTheme::IceCyan; app.settings.saveToRegistry(); break;
+        case CMD_EYE_LIME:  app.settings.overrideSkinIris = true; app.settings.eyeTheme = EyeColorTheme::NeonChartreuse; app.settings.saveToRegistry(); break;
+        case CMD_EYE_BLUE:  app.settings.overrideSkinIris = true; app.settings.eyeTheme = EyeColorTheme::SiameseBlue; app.settings.saveToRegistry(); break;
+        case CMD_EYE_AMBER: app.settings.overrideSkinIris = true; app.settings.eyeTheme = EyeColorTheme::WarmAmber; app.settings.saveToRegistry(); break;
+        case CMD_EYE_CYAN:  app.settings.overrideSkinIris = true; app.settings.eyeTheme = EyeColorTheme::IceCyan; app.settings.saveToRegistry(); break;
         case CMD_SCALE_65:  app.settings.scale = 0.65f; applyWindowScaleAndPosition(app, true); break;
         case CMD_SCALE_85:  app.settings.scale = 0.85f; applyWindowScaleAndPosition(app, true); break;
         case CMD_SCALE_100: app.settings.scale = 1.00f; applyWindowScaleAndPosition(app, true); break;
@@ -2478,6 +2504,7 @@ void showContextMenu(AppState& app, POINT screenPt) {
             break;
         default:
             if (cmd >= CMD_SKIN_SELECT_BASE && cmd < CMD_SKIN_SELECT_BASE + CMD_SKIN_RANGE && cmd - CMD_SKIN_SELECT_BASE < app.skins.skins.size()) {
+                app.settings.overrideSkinIris = false;
                 app.settings.customSkin = app.skins.skins[cmd - CMD_SKIN_SELECT_BASE].id;
                 app.settings.saveToRegistry();
             } else if (cmd >= CMD_SKIN_DELETE_BASE && cmd < CMD_SKIN_DELETE_BASE + CMD_SKIN_RANGE && cmd - CMD_SKIN_DELETE_BASE < app.skins.skins.size()) {
@@ -2545,9 +2572,11 @@ void tickAndRender(AppState& app) {
     int h = std::max(1, (int)(wr.bottom - wr.top));
 
     const SkinSpec& curSkin = activeSkin(app);
+    bool isClassicBuiltIn = (curSkin.id == "builtin:0" || curSkin.id == "builtin:1" || curSkin.id == "builtin:2" || curSkin.id == "builtin:3");
     app.physics.step(dt, wr, app.input, app.settings,
                      curSkin.typingStyle == SkinTypingStyle::Douni,
-                     curSkin.renderStyle == SkinRenderStyle::Douni);
+                     curSkin.renderStyle == SkinRenderStyle::Douni,
+                     isClassicBuiltIn);
     if (!physicsLooksSane(app.physics)) {
         // A single non-finite value would otherwise make every later frame draw nothing (the cat
         // "vanishes" until restart). Rebuild the pose but keep the session statistics.
@@ -2593,23 +2622,35 @@ void tickAndRender(AppState& app) {
                 // In Green Screen mode (non-layered window), keep WS_EX_TRANSPARENT off unless fullClickThrough is active,
                 // so window capture tools never skip or misread the solid green-screen window.
                 bool altHeld = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
-                bool clickThrough = (app.settings.fullClickThrough && !altHeld)
-                                  || (app.settings.obsCaptureMode != 2 && zone == CatHitZone::None);
+                bool holdClickable = app.rButtonDown || app.pendingMenuAfterAlt;
+                bool clickThrough = !holdClickable && ((app.settings.fullClickThrough && !altHeld)
+                                  || (app.settings.obsCaptureMode != 2 && zone == CatHitZone::None));
                 setClickThrough(app.hwnd, clickThrough);
             }
         } else {
             app.hasLastHover = false;
             app.physics.updateTailHover(nullptr);
             bool altHeld = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
-            bool clickThrough = (app.settings.fullClickThrough && !altHeld) || (app.settings.obsCaptureMode != 2);
+            bool holdClickable = app.rButtonDown || app.pendingMenuAfterAlt;
+            bool clickThrough = !holdClickable && ((app.settings.fullClickThrough && !altHeld) || (app.settings.obsCaptureMode != 2));
             setClickThrough(app.hwnd, clickThrough);
         }
     }
 
-    if (app.pendingMenuAfterAlt && (GetAsyncKeyState(VK_MENU) & 0x8000) == 0) {
-        app.pendingMenuAfterAlt = false;
-        POINT pt = app.pendingMenuPt;
-        showContextMenu(app, pt);
+    if (app.pendingMenuAfterAlt) {
+        if ((GetAsyncKeyState(VK_MENU) & 0x8000) == 0) {
+            if (app.pendingMenuAltUpTime <= 0.0) {
+                app.pendingMenuAltUpTime = now;
+            }
+            if (now - app.pendingMenuAltUpTime >= 0.05) {
+                app.pendingMenuAfterAlt = false;
+                app.pendingMenuAltUpTime = 0.0;
+                POINT pt = app.pendingMenuPt;
+                showContextMenu(app, pt);
+            }
+        } else {
+            app.pendingMenuAltUpTime = 0.0;
+        }
     }
 
     // Render 32-bit Premultiplied ARGB frame directly into DIB and present via UpdateLayeredWindow
@@ -2931,6 +2972,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 bool altHeld = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
                 if (!app->settings.fullClickThrough || altHeld) {
                     app->rButtonDown = true;
+                    SetCapture(hwnd);
                 }
             }
             return 0;
@@ -2938,18 +2980,24 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_RBUTTONUP:
             if (app && hwnd == app->hwnd && app->rButtonDown) {
                 app->rButtonDown = false;
+                if (GetCapture() == hwnd) ReleaseCapture();
                 POINT pt = {};
                 GetCursorPos(&pt);
                 if ((GetAsyncKeyState(VK_MENU) & 0x8000) != 0) {
-                    // Defer opening the popup menu until Alt is released; otherwise
-                    // Windows' TrackPopupMenu modal loop cancels the menu on WM_SYSKEYUP(VK_MENU).
+                    // Defer opening the popup menu until shortly after Alt is released so Windows'
+                    // WM_SYSKEYUP/SC_KEYMENU finishes cleanly before TrackPopupMenu enters its modal loop.
                     app->pendingMenuAfterAlt = true;
+                    app->pendingMenuAltUpTime = 0.0;
                     app->pendingMenuPt = pt;
                 } else {
                     showContextMenu(*app, pt);
                 }
             }
             return 0;
+
+        case WM_SYSCOMMAND:
+            if ((wParam & 0xFFF0) == SC_KEYMENU) return 0;
+            break;
 
         case WM_CANCELMODE:
         case WM_CAPTURECHANGED:
@@ -3131,7 +3179,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 void CALLBACK onForegroundChanged(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD) {
     // A game just came to the front: many make themselves topmost right after showing, so
     // re-assert our own topmost state shortly afterwards instead of staying buried ("vanished").
-    if (g_app) g_app->pendingTopmostTime = nowSeconds() + 0.4;
+    if (g_app && !g_app->inContextMenu) g_app->pendingTopmostTime = nowSeconds() + 0.4;
 }
 
 /// Asks the already-running KuroCat to exit and waits for it. Builds <= 1.3.2 do not know
@@ -3343,14 +3391,15 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     RegisterClassExW(&trayWc);
 
     app.menuOwnerHwnd = CreateWindowExW(
-        WS_EX_TOOLWINDOW,
+        WS_EX_TOOLWINDOW | WS_EX_LAYERED,
         trayWc.lpszClassName,
         L"KuroCatTray",
         WS_POPUP,
-        0, 0, 0, 0,
+        0, 0, 1, 1,
         nullptr, nullptr, hInst, nullptr
     );
     if (app.menuOwnerHwnd) {
+        SetLayeredWindowAttributes(app.menuOwnerHwnd, 0, 0, LWA_ALPHA);
         SetPropW(app.menuOwnerHwnd, VERSION_PROP, (HANDLE)(INT_PTR)myVersion);
         // When elevated, UIPI would drop messages from the (non-elevated) taskbar and from a
         // re-launched KuroCat. Explicitly allow the few messages we rely on.

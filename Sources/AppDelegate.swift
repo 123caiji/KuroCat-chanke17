@@ -206,6 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 || physics.petHeadIntensity > 0.02 || physics.huntIntensity.value > 0.02
                 || physics.scruffDrag.value > 0.02 || physics.isChangingLie
                 || physics.angerIntensity.value > 0.02 || physics.dizzyIntensity.value > 0.02
+                || physics.scruffDizzyIntensity.value > 0.02 || physics.mousePressMiddle.value > 0.02
                 || wasYawning || physics.isYawning || (!isAsleep && (wasBlinking || physics.isBlinking))
             let ticksPerRedraw = isActive ? 1 : (isAsleep ? 3 : 2) // 60, 20, or 30 FPS on a 60 Hz tick.
             self.ticksSinceLastRedraw += 1
@@ -716,6 +717,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func selectCoatTheme(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
               let coat = CatCoatTheme(rawValue: raw) else { return }
+        CatSettings.shared.overrideSkinIris = false
         CatSettings.shared.customSkin = ""
         CatSettings.shared.coatTheme = coat
         // Auto-pair signature eye color (still freely overridable via 瞳色切换!)
@@ -777,6 +779,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func importSkin(from url: URL) {
         do {
             let id = try SkinLibrary.shared.importFile(url)
+            CatSettings.shared.overrideSkinIris = false
             CatSettings.shared.customSkin = id
             let skin = SkinLibrary.shared.skin(id: id)
             var message = "已换上「\(skin?.name ?? "新皮肤")」"
@@ -806,6 +809,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func selectCustomSkin(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
+        CatSettings.shared.overrideSkinIris = false
         CatSettings.shared.customSkin = id
         dressingRoom?.refresh()
         settingsWindow?.refresh()
@@ -961,7 +965,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func selectEyeTheme(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
               let theme = EyeColorTheme(rawValue: raw) else { return }
+        CatSettings.shared.overrideSkinIris = true
         CatSettings.shared.eyeTheme = theme
+        dressingRoom?.refresh()
+        settingsWindow?.refresh()
+        overlayWindow.catView.needsDisplay = true
     }
 
     @objc private func resetPosition() {
