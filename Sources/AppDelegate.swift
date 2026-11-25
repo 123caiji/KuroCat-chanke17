@@ -21,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var settingsWindow: SettingsWindowController?
 
     private var currentAppVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.4.2"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.4.3"
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

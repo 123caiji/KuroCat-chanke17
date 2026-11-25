@@ -2111,13 +2111,37 @@ private:
             return;
         }
 
-        // Mode 1: Happy closed glowing curved line eyes (petting head!)
+        auto colorLuma = [](const SkinColor& c) -> float {
+            return 0.299f * c.r + 0.587f * c.g + 0.114f * c.b;
+        };
+        float bodyLuma = colorLuma(skin.palette.body);
+        float pointsLuma = skin.palette.points.set ? colorLuma(skin.palette.points) : 1.0f;
+        float outlineLuma = skin.palette.outline.set ? colorLuma(skin.palette.outline) : 1.0f;
+        bool isDarkEyeArea = bodyLuma < 0.28f || (skin.colorpoint() && pointsLuma < 0.38f);
+        Color closedLidCol = isTabby(skin)
+            ? tabby::dark()
+            : (isDarkEyeArea
+                ? eyeCol
+                : (skin.palette.outline.set && outlineLuma < 0.42f ? withAlpha(skin.palette.outline, 230) : Color(224, 60, 50, 44)));
+
+        // Mode 1: Happy closed curved line eyes (petting head!)
         if (physics.isHappyClosedEyes()) {
             GraphicsPath hp;
             addQuadBezier(hp, {-11.5f, 1.0f}, {sign * 1.5f, 3.4f}, {11.5f, 1.0f});
-            Pen p(isTabby(skin) ? tabby::dark() : eyeCol, 2.6f);
+            Pen p(closedLidCol, 2.6f);
             p.SetStartCap(LineCapRound); p.SetEndCap(LineCapRound);
             g.DrawPath(&p, &hp);
+            g.Restore(st);
+            return;
+        }
+
+        // Mode 1b: Peaceful closed sleeping eyelids on light-faced cats so eyes never vanish into light fur!
+        if (!isDarkEyeArea && physics.sleepiness > 0.62f && scruffStartle < 0.15f) {
+            GraphicsPath sp;
+            addQuadBezier(sp, {-10.5f, 0.4f}, {0.0f, 5.2f}, {10.5f, 0.4f});
+            Pen p(closedLidCol, 2.5f);
+            p.SetStartCap(LineCapRound); p.SetEndCap(LineCapRound);
+            g.DrawPath(&p, &sp);
             g.Restore(st);
             return;
         }
@@ -2130,6 +2154,13 @@ private:
             sp.CloseFigure();
             SolidBrush sb(isTabby(skin) ? tabby::dark() : eyeCol);
             g.FillPath(&sb, &sp);
+            if (!isDarkEyeArea && !isTabby(skin)) {
+                GraphicsPath rimP;
+                addQuadBezier(rimP, {-11.2f, -0.5f}, {0.0f, 0.6f}, {11.2f, -0.5f});
+                Pen rp(closedLidCol, 1.6f);
+                rp.SetStartCap(LineCapRound); rp.SetEndCap(LineCapRound);
+                g.DrawPath(&rp, &rimP);
+            }
             g.Restore(st);
             return;
         }
@@ -5397,8 +5428,8 @@ private:
 
         float baseShiftX = physics.bodyShiftX.value - swingH * 11.0f;
         float liftY = -liftS * 12.0f + swingY * 7.5f + std::sin(physics.time * 3.8f) * 2.0f * (1.0f - startle);
-        Pt headCenter = { 146.0f + baseShiftX, lerpF(136.0f, 158.0f, startle) + liftY };
-        Pt backCenter = { 202.0f + baseShiftX, lerpF(146.0f, 172.0f, startle) + liftY };
+        Pt headCenter = { 112.0f + baseShiftX, lerpF(140.0f, 160.0f, startle) + liftY };
+        Pt backCenter = { 200.0f + baseShiftX, lerpF(152.0f, 176.0f, startle) + liftY };
         float cheekHalfW = bd.cheekHalfW * skin.shape.cheekFullness * hs;
         float crownY = bd.crownBaseY * hs;
         float cheekY = bd.cheekY * hs;
@@ -5410,34 +5441,35 @@ private:
             return { pivot.x + dx * c - dy * s, pivot.y + dx * s + dy * c };
         };
 
-        // 1. Scruff-lifted arched neck, back, and full rounded front chest (connects smoothly behind left cheek — zero gap!)
-        Pt scruffPeak = { 188.0f + baseShiftX, lerpF(88.0f, 124.0f, startle) + liftY };
-        Pt rumpRight  = { 246.0f + baseShiftX + (bw - 1.0f) * 12.0f, lerpF(150.0f, 186.0f, startle) + liftY };
-        Pt bellyRight = { 212.0f + baseShiftX, lerpF(188.0f, 212.0f, startle) + liftY };
-        Pt bellyLeft  = { 136.0f + baseShiftX, lerpF(182.0f, 206.0f, startle) + liftY };
-        Pt chestLeft  = { 116.0f + baseShiftX, lerpF(164.0f, 188.0f, startle) + liftY };
-        Pt neckFront  = { headCenter.x - cheekHalfW * 0.64f, headCenter.y + 8.0f * hs };
+        // 1. Smooth, plush dangling cat body: continuous gentle convex arch from upper nape to rump (no concave neck dent, BOTH ears clear!)
+        Pt neckNape   = { headCenter.x + cheekHalfW * 0.36f, headCenter.y - 18.0f * hs };
+        Pt scruffPeak = { 184.0f + baseShiftX, lerpF(108.0f, 134.0f, startle) + liftY };
+        Pt rumpRight  = { 270.0f + baseShiftX + (bw - 1.0f) * 10.0f, lerpF(154.0f, 186.0f, startle) + liftY };
+        Pt bellyRight = { 242.0f + baseShiftX, lerpF(188.0f, 212.0f, startle) + liftY };
+        Pt bellyLeft  = { 124.0f + baseShiftX, lerpF(186.0f, 206.0f, startle) + liftY };
+        Pt chestLeft  = { 100.0f + baseShiftX, lerpF(166.0f, 188.0f, startle) + liftY };
+        Pt neckFront  = { headCenter.x - cheekHalfW * 0.56f, headCenter.y + 10.0f * hs };
         GraphicsPath backPath;
         {
-            PointF p0(headCenter.x - 10.0f, headCenter.y - 16.0f * hs);
+            PointF p0(neckNape.x, neckNape.y);
             PointF p1(scruffPeak.x, scruffPeak.y);
             PointF p2(rumpRight.x, rumpRight.y);
             PointF p3(bellyRight.x, bellyRight.y);
             PointF p4(bellyLeft.x, bellyLeft.y);
             PointF p5(chestLeft.x, chestLeft.y);
             PointF p6(neckFront.x, neckFront.y);
-            backPath.AddBezier(p0, PointF(headCenter.x + 16.0f, headCenter.y - 34.0f * hs), PointF(scruffPeak.x - 16.0f, scruffPeak.y - 4.0f), p1);
-            backPath.AddBezier(p1, PointF(scruffPeak.x + 34.0f, scruffPeak.y + 4.0f), PointF(rumpRight.x + 4.0f, lerpF(108.0f, 148.0f, startle) + liftY), p2);
-            backPath.AddBezier(p2, PointF(rumpRight.x - 2.0f, lerpF(178.0f, 210.0f, startle) + liftY), PointF(bellyRight.x + 22.0f, bellyRight.y), p3);
-            backPath.AddBezier(p3, PointF(182.0f + baseShiftX, lerpF(190.0f, 214.0f, startle) + liftY), PointF(154.0f + baseShiftX, lerpF(188.0f, 212.0f, startle) + liftY), p4);
-            backPath.AddBezier(p4, PointF(122.0f + baseShiftX, lerpF(180.0f, 204.0f, startle) + liftY), PointF(114.0f + baseShiftX, lerpF(174.0f, 198.0f, startle) + liftY), p5);
-            backPath.AddBezier(p5, PointF(116.0f + baseShiftX, lerpF(156.0f, 178.0f, startle) + liftY), PointF(neckFront.x - 2.0f, neckFront.y + 10.0f), p6);
+            backPath.AddBezier(p0, PointF(headCenter.x + cheekHalfW * 0.86f, lerpF(116.0f, 140.0f, startle) + liftY), PointF(scruffPeak.x - 22.0f, scruffPeak.y - 1.0f), p1);
+            backPath.AddBezier(p1, PointF(scruffPeak.x + 42.0f, scruffPeak.y + 2.0f), PointF(rumpRight.x + 2.0f, lerpF(118.0f, 152.0f, startle) + liftY), p2);
+            backPath.AddBezier(p2, PointF(rumpRight.x - 2.0f, lerpF(178.0f, 208.0f, startle) + liftY), PointF(bellyRight.x + 22.0f, bellyRight.y), p3);
+            backPath.AddBezier(p3, PointF(208.0f + baseShiftX, lerpF(184.0f, 208.0f, startle) + liftY), PointF(162.0f + baseShiftX, lerpF(184.0f, 208.0f, startle) + liftY), p4);
+            backPath.AddBezier(p4, PointF(108.0f + baseShiftX, lerpF(182.0f, 204.0f, startle) + liftY), PointF(98.0f + baseShiftX, lerpF(176.0f, 198.0f, startle) + liftY), p5);
+            backPath.AddBezier(p5, PointF(100.0f + baseShiftX, lerpF(156.0f, 178.0f, startle) + liftY), PointF(neckFront.x - 2.0f, neckFront.y + 10.0f), p6);
             backPath.CloseFigure();
         }
 
         // 2. Expressive drooping/whipping tail embedded firmly inside rump, trailing & billowing with 2D drag velocity!
-        Pt tailPivot = { rumpRight.x - 10.0f, lerpF(148.0f, 180.0f, startle) + liftY };
-        float tailLen = 86.0f * skin.shape.tailLength * (1.0f + swingY * 0.15f);
+        Pt tailPivot = { rumpRight.x - 10.0f, lerpF(152.0f, 182.0f, startle) + liftY };
+        float tailLen = 84.0f * skin.shape.tailLength * (1.0f + swingY * 0.15f);
         float tailW = std::max(8.5f, bd.tailWidth * skin.shape.tailThickness * 1.12f);
         float rawTailAng = (tailSwing * (1.0f - startle * 0.25f) + idleSway * 1.4f) * 0.88f;
         float tailAng = std::clamp(rawTailAng, -1.12f, 0.56f);
@@ -5471,24 +5503,24 @@ private:
             return { r, t, w0, w1, dynBendX, isBehindBody };
         };
         DragLimb backLeftLimb = makeLimb(
-            { 196.0f + baseShiftX, 170.0f + liftY }, { 192.0f + baseShiftX, 208.0f + liftY },
-            { 174.0f + baseShiftX, 194.0f + liftY }, { 164.0f + baseShiftX, 222.0f + liftY },
+            { 220.0f + baseShiftX, 174.0f + liftY }, { 216.0f + baseShiftX, 218.0f + liftY },
+            { 204.0f + baseShiftX, 194.0f + liftY }, { 196.0f + baseShiftX, 222.0f + liftY },
             15.5f, 12.5f, -2.0f, 0.66f, -0.25f, true
         );
         DragLimb backRightLimb = makeLimb(
-            { 220.0f + baseShiftX, 162.0f + liftY }, { 218.0f + baseShiftX, 212.0f + liftY },
-            { 226.0f + baseShiftX, 186.0f + liftY }, { 238.0f + baseShiftX, 224.0f + liftY },
+            { 248.0f + baseShiftX, 166.0f + liftY }, { 247.0f + baseShiftX, 224.0f + liftY },
+            { 252.0f + baseShiftX, 188.0f + liftY }, { 262.0f + baseShiftX, 226.0f + liftY },
             20.5f, 15.5f, 4.0f, 0.78f, 1.0f
         );
         DragLimb frontLeftLimb = makeLimb(
-            { 132.0f + baseShiftX, 162.0f + liftY }, { 126.0f + baseShiftX, 214.0f + liftY },
-            { 129.0f + baseShiftX, 184.0f + liftY }, { 112.0f + baseShiftX, 222.0f + liftY },
-            20.0f, 15.5f, -3.5f, 0.72f, -1.0f
+            { 112.0f + baseShiftX, 168.0f + liftY }, { 105.0f + baseShiftX, 226.0f + liftY },
+            { 112.0f + baseShiftX, 188.0f + liftY }, { 98.0f + baseShiftX, 224.0f + liftY },
+            19.5f, 15.0f, -3.5f, 0.72f, -1.0f
         );
         DragLimb frontRightLimb = makeLimb(
-            { 165.0f + baseShiftX, 165.0f + liftY }, { 165.0f + baseShiftX, 220.0f + liftY },
-            { 174.0f + baseShiftX, 188.0f + liftY }, { 188.0f + baseShiftX, 224.0f + liftY },
-            20.5f, 16.0f, 3.0f, 0.76f, 0.35f
+            { 144.0f + baseShiftX, 170.0f + liftY }, { 142.0f + baseShiftX, 228.0f + liftY },
+            { 150.0f + baseShiftX, 190.0f + liftY }, { 162.0f + baseShiftX, 226.0f + liftY },
+            20.0f, 15.5f, 3.0f, 0.76f, 0.35f
         );
 
         auto buildLimbPaths = [](const DragLimb& limb, GraphicsPath& closed, GraphicsPath& rim, GraphicsPath& ink) {
@@ -5554,6 +5586,17 @@ private:
                 lg.TranslateTransform(-scruffPeak.x, -scruffPeak.y);
             }
 
+            auto colorDist3 = [](const SkinColor& a, const SkinColor& b) -> float {
+                return std::fabs(a.r - b.r) + std::fabs(a.g - b.g) + std::fabs(a.b - b.b);
+            };
+            bool isBicolorWhiteFront = !skin.colorpoint()
+                && colorDist3(pal.body, pal.earOuter) > 0.14f
+                && colorDist3(pal.earOuter, pal.tail) < 0.05f
+                && (!pal.belly.set || colorDist3(pal.body, pal.belly) < 0.04f);
+            const SkinColor& dorsalColor = isBicolorWhiteFront ? pal.earOuter : pal.body;
+            bool hasVentralBelly = isBicolorWhiteFront || (pal.belly.set && !pal.belly.sameAs(pal.body));
+            const SkinColor& ventralBelly = isBicolorWhiteFront ? pal.body : pal.belly;
+
             auto drawDragLimb = [&](const DragLimb& limb) {
                 GraphicsPath fillP, rimP, inkP;
                 buildLimbPaths(limb, fillP, rimP, inkP);
@@ -5562,8 +5605,8 @@ private:
                     Color cols[4] = { col(pal.body), col(pal.body), col(midC), col(pal.paws) };
                     REAL locs[4] = { 0.0f, 0.22f, 0.54f, 0.88f };
                     fillClampedLinearGradient(lg, &fillP, nullptr, PointF(limb.root.x, limb.root.y), PointF(limb.tip.x, limb.tip.y), cols, locs, 4);
-                } else if (!limb.isBehindBody && !pal.legs.sameAs(pal.body)) {
-                    Color shCol = col(pal.body);
+                } else if (!limb.isBehindBody && !pal.legs.sameAs(dorsalColor)) {
+                    Color shCol = col(dorsalColor);
                     Color cols[4] = { shCol, shCol, col(pal.legs), col(pal.paws) };
                     REAL locs[4] = { 0.0f, 0.12f, 0.38f, 0.80f };
                     fillClampedLinearGradient(lg, &fillP, nullptr, PointF(limb.root.x, limb.root.y), PointF(limb.tip.x, limb.tip.y), cols, locs, 4);
@@ -5633,6 +5676,20 @@ private:
                     tabby::drawTail(lg, tailPen, PointF(tailRoot.x, tailRoot.y), PointF(tailC1.x, tailC1.y), PointF(tailC2.x, tailC2.y), PointF(tailTip.x, tailTip.y));
                 } else {
                     lg.DrawPath(&tailPen, &tailCurvePath);
+                    if (pal.stripes.set && !isBlackRim && !skin.colorpoint()) {
+                        auto evalTailPt = [&](float t) -> PointF {
+                            float u = 1.0f - t;
+                            return PointF(
+                                u*u*u*tailRoot.x + 3*u*u*t*tailC1.x + 3*u*t*t*tailC2.x + t*t*t*tailTip.x,
+                                u*u*u*tailRoot.y + 3*u*u*t*tailC1.y + 3*u*t*t*tailC2.y + t*t*t*tailTip.y
+                            );
+                        };
+                        Pen ringPen(withAlpha(pal.stripes, 107), tailW * 0.88f);
+                        ringPen.SetStartCap(LineCapFlat); ringPen.SetEndCap(LineCapFlat);
+                        for (float t0 : { 0.24f, 0.50f, 0.74f }) {
+                            lg.DrawLine(&ringPen, evalTailPt(t0), evalTailPt(t0 + 0.09f));
+                        }
+                    }
                     if (pal.tailTip.set) {
                         Pen tipPen(col(pal.tailTip), tailW * 0.92f);
                         setRound(tipPen);
@@ -5655,7 +5712,7 @@ private:
 
             // 3. Arched scruff-lifted neck & back body dome with native coat shading, regions & marks
             {
-                SolidBrush bb(col(pal.body));
+                SolidBrush bb(col(dorsalColor));
                 lg.FillPath(&bb, &backPath);
                 GraphicsState bs = lg.Save();
                 lg.SetClip(&backPath, CombineModeIntersect);
@@ -5673,26 +5730,28 @@ private:
                                       PointF(scruffPeak.x - 8.0f + ox, scruffPeak.y + 42.0f + (float)i * 6.0f),
                                       PointF(scruffPeak.x - 16.0f + ox, scruffPeak.y + 58.0f + (float)i * 6.0f));
                     }
-                } else if (pal.bodyShade.set) {
-                    Color cols[2] = { col(pal.body), col(pal.bodyShade) };
+                } else if (pal.bodyShade.set && !isBicolorWhiteFront) {
+                    Color cols[2] = { col(dorsalColor), col(pal.bodyShade) };
                     REAL locs[2] = { 0.15f, 1.0f };
                     fillClampedLinearGradient(lg, &backPath, nullptr, PointF(backCenter.x, scruffPeak.y), PointF(backCenter.x, bellyRight.y), cols, locs, 2);
                 }
                 auto dragBodyMap = [&](SkinPoint pt) -> PointF {
-                    return PointF(backCenter.x + pt.x * bw * 0.95f, backCenter.y + (pt.y + 44.0f) * 0.72f);
+                    return PointF(backCenter.x + pt.x * bw * 1.15f, backCenter.y + (pt.y + 44.0f) * 0.68f);
                 };
                 auto isFrontBellyBib = [&](const SkinColor& c, float minX, float maxX, bool hasPts) -> bool {
-                    if (!hasPts || !pal.belly.set || pal.belly.sameAs(pal.body)) return false;
-                    float dist = std::fabs(c.r - pal.belly.r) + std::fabs(c.g - pal.belly.g) + std::fabs(c.b - pal.belly.b);
-                    if (dist >= 0.18f) return false;
+                    if (!hasPts || !hasVentralBelly) return false;
+                    if (colorDist3(c, ventralBelly) >= 0.18f) return false;
                     float span = maxX - minX;
                     return minX < -8.0f && maxX > 8.0f && std::fabs(minX + maxX) < span * 0.35f;
+                };
+                auto isRedundantDorsalPatch = [&](const SkinColor& c) -> bool {
+                    return isBicolorWhiteFront && colorDist3(c, dorsalColor) < 0.16f;
                 };
                 for (const SkinRegion& region : skin.regions) {
                     if (region.space != SkinSpace::Body) continue;
                     float minX = 1e9f, maxX = -1e9f;
                     for (const auto& a : region.anchors) { minX = std::min(minX, a.x); maxX = std::max(maxX, a.x); }
-                    if (isFrontBellyBib(region.fill, minX, maxX, !region.anchors.empty())) continue;
+                    if (isFrontBellyBib(region.fill, minX, maxX, !region.anchors.empty()) || isRedundantDorsalPatch(region.fill)) continue;
                     drawRegion(lg, region, dragBodyMap);
                 }
                 for (const SkinMark& mark : skin.marks) {
@@ -5700,22 +5759,34 @@ private:
                     if (mark.width <= 0.01f && !mark.points.empty()) {
                         float minX = 1e9f, maxX = -1e9f;
                         for (const auto& pt : mark.points) { minX = std::min(minX, pt.x); maxX = std::max(maxX, pt.x); }
-                        if (isFrontBellyBib(mark.color, minX, maxX, true)) continue;
+                        if (isFrontBellyBib(mark.color, minX, maxX, true) || isRedundantDorsalPatch(mark.color)) continue;
                     }
                     drawMark(lg, mark, dragBodyMap);
                 }
-                if (pal.belly.set && !pal.belly.sameAs(pal.body)) {
+                if (isBicolorWhiteFront && pal.stripes.set) {
+                    Pen stPen(withAlpha(pal.stripes, 87), 4.6f);
+                    setRound(stPen);
+                    for (int i = 0; i < 3; ++i) {
+                        float sx = scruffPeak.x + 8.0f + (float)i * 24.0f;
+                        float sy = scruffPeak.y + 6.0f + (float)i * 7.0f;
+                        GraphicsPath sp;
+                        addQuadBezier(sp, {sx, sy - 6.0f}, {sx + 6.0f, sy + 14.0f}, {sx - 2.0f, sy + 30.0f});
+                        lg.DrawPath(&stPen, &sp);
+                    }
+                }
+                if (hasVentralBelly) {
+                    float bellyLift = isBicolorWhiteFront ? -5.0f : 0.0f;
                     GraphicsPath bellyStrip;
-                    PointF bTopL(chestLeft.x + 2.0f, lerpF(168.0f, 192.0f, startle) + liftY);
-                    PointF bTopR(bellyRight.x + 12.0f, lerpF(176.0f, 200.0f, startle) + liftY);
+                    PointF bTopL(chestLeft.x + 2.0f, lerpF(170.0f, 192.0f, startle) + liftY + bellyLift);
+                    PointF bTopR(bellyRight.x + 12.0f, lerpF(176.0f, 198.0f, startle) + liftY + bellyLift + 2.0f);
                     bellyStrip.AddBezier(bTopL,
-                                         PointF(152.0f + baseShiftX, lerpF(172.0f, 196.0f, startle) + liftY),
-                                         PointF(192.0f + baseShiftX, lerpF(174.0f, 198.0f, startle) + liftY),
+                                         PointF(150.0f + baseShiftX, lerpF(166.0f, 190.0f, startle) + liftY + bellyLift),
+                                         PointF(208.0f + baseShiftX, lerpF(166.0f, 190.0f, startle) + liftY + bellyLift),
                                          bTopR);
                     bellyStrip.AddLine(bTopR, PointF(rumpRight.x + 4.0f, bellyRight.y + 18.0f));
                     bellyStrip.AddLine(PointF(rumpRight.x + 4.0f, bellyRight.y + 18.0f), PointF(chestLeft.x - 10.0f, bellyLeft.y + 18.0f));
                     bellyStrip.CloseFigure();
-                    SolidBrush bellyB(withAlpha(pal.belly, 245));
+                    SolidBrush bellyB(withAlpha(ventralBelly, 245));
                     lg.FillPath(&bellyB, &bellyStrip);
                 }
                 lg.Restore(bs);
