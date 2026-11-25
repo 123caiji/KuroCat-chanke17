@@ -74,7 +74,10 @@ final class InputEngine {
     private var permissionCheckTimer: Timer?
     private var workspaceObservers: [NSObjectProtocol] = []
     private var lastReconcileTime: CFTimeInterval = 0
+    private var lastPermissionCheckTime: CFTimeInterval = 0
     private var keyDownTimes: [PhysicalKey: CFTimeInterval] = [:]
+    private var cachedScreenFrames: [CGRect] = NSScreen.screens.map { $0.frame }
+    private var screenObserver: NSObjectProtocol?
 
     private static let keyToCGCodes: [PhysicalKey: [CGKeyCode]] = {
         var map: [PhysicalKey: [CGKeyCode]] = [:]
@@ -117,10 +120,23 @@ final class InputEngine {
     }
 
     var currentKPM: Int {
-        let now = CACurrentMediaTime()
-        let cutoff = now - 10.0
-        let count = recentKeyTimes.filter { $0 >= cutoff }.count
+        guard !recentKeyTimes.isEmpty else { return 0 }
+        let cutoff = CACurrentMediaTime() - 10.0
+        var count = 0
+        for t in recentKeyTimes.reversed() {
+            if t >= cutoff { count += 1 }
+            else { break }
+        }
         return count * 6
+    }
+
+    func screenFrame(containing point: CGPoint) -> CGRect {
+        if cachedScreenFrames.isEmpty {
+            cachedScreenFrames = NSScreen.screens.map { $0.frame }
+        }
+        return cachedScreenFrames.first { $0.contains(point) }
+            ?? cachedScreenFrames.first
+            ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
     }
 
     private init() {
@@ -148,10 +164,24 @@ final class InputEngine {
             workspaceObservers.append(obs)
         }
 
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.cachedScreenFrames = NSScreen.screens.map { $0.frame }
+        }
+
         // Periodically check if the user just granted Input Monitoring permission
         permissionCheckTimer?.invalidate()
+        lastPermissionCheckTime = CACurrentMediaTime()
         let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
             guard let self else { return }
+            let now = CACurrentMediaTime()
+            if self.isHIDActive && self.isTapActive && (now - self.lastPermissionCheckTime < 4.5) {
+                return
+            }
+            self.lastPermissionCheckTime = now
             let prevStatus = self.status
             self.refreshPermissions()
             if !self.inputMonitoringAllowed && self.isHIDActive {
@@ -178,6 +208,7 @@ final class InputEngine {
                 self.notifyStatus()
             }
         }
+        timer.tolerance = 0.5
         RunLoop.main.add(timer, forMode: .common)
         permissionCheckTimer = timer
     }
@@ -185,6 +216,10 @@ final class InputEngine {
     func stop() {
         permissionCheckTimer?.invalidate()
         permissionCheckTimer = nil
+        if let obs = screenObserver {
+            NotificationCenter.default.removeObserver(obs)
+            screenObserver = nil
+        }
         let wsCenter = NSWorkspace.shared.notificationCenter
         for obs in workspaceObservers {
             wsCenter.removeObserver(obs)
@@ -214,26 +249,32 @@ final class InputEngine {
         }
     }
 
-    /// Called at 60fps from the render loop to sample global cursor motion (requires zero permissions).
-    func pollMouse(dt: CGFloat) {
+    /// Called from the render loop to sample global cursor motion (requires zero permissions).
+    func pollMouse(dt: CGFloat, now: CFTimeInterval = CACurrentMediaTime()) {
         let loc = NSEvent.mouseLocation
         let dx = loc.x - lastMouseLocation.x
         let dy = loc.y - lastMouseLocation.y
-        let dist = hypot(dx, dy)
-        if dist > 0.4 {
-            lastMouseMoveTime = CACurrentMediaTime()
+        if dx * dx + dy * dy > 0.16 {
+            lastMouseMoveTime = now
             if dt > 0.001 {
                 mouseVelocity = CGVector(dx: dx / dt, dy: dy / dt)
             }
-        } else {
-            mouseVelocity = CGVector(dx: mouseVelocity.dx * 0.82, dy: mouseVelocity.dy * 0.82)
+        } else if mouseVelocity.dx != 0 || mouseVelocity.dy != 0 {
+            let decay = pow(0.82, max(1.0, dt * 60.0))
+            let nx = mouseVelocity.dx * decay
+            let ny = mouseVelocity.dy * decay
+            mouseVelocity = (abs(nx) < 0.5 && abs(ny) < 0.5) ? .zero : CGVector(dx: nx, dy: ny)
         }
         lastMouseLocation = loc
 
-        // Keep KPM sliding window clean
-        let now = CACurrentMediaTime()
-        if recentKeyTimes.count > 120 {
-            recentKeyTimes.removeAll { now - $0 > 12.0 }
+        // Keep KPM sliding window clean without leaking stale entries when idle
+        if let oldest = recentKeyTimes.first, now - oldest > 12.0 {
+            let cutoff = now - 12.0
+            if let keepFrom = recentKeyTimes.firstIndex(where: { $0 >= cutoff }) {
+                recentKeyTimes.removeFirst(keepFrom)
+            } else {
+                recentKeyTimes.removeAll(keepingCapacity: true)
+            }
         }
         reconcileStuckKeys(now: now)
     }

@@ -2,14 +2,43 @@ import Foundation
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    private enum RenderCadence {
+        case paused
+        case fullscreenHidden // 2 Hz check while hidden behind a fullscreen app
+        case asleep           // 15 Hz adaptive cadence while sleeping
+        case idle             // 30 Hz adaptive cadence while awake at rest
+        case active           // 60 Hz full cadence during input or motion
+
+        var interval: TimeInterval {
+            switch self {
+            case .paused:           return 0
+            case .fullscreenHidden: return 0.5
+            case .asleep:           return 1.0 / 15.0
+            case .idle:             return 1.0 / 30.0
+            case .active:           return 1.0 / 60.0
+            }
+        }
+
+        var tolerance: TimeInterval {
+            switch self {
+            case .paused:           return 0
+            case .fullscreenHidden: return 0.15
+            case .asleep:           return 0.012
+            case .idle:             return 0.004
+            case .active:           return 0.002
+            }
+        }
+    }
+
     private var statusItem: NSStatusItem!
     private var overlayWindow: OverlayWindow!
     private var renderTimer: Timer?
+    private var renderCadence: RenderCadence = .paused
     private var windowWatchdogTimer: Timer?
     private var lastFrameTime: CFTimeInterval = CACurrentMediaTime()
     private var lastFullscreenCheckTime: CFTimeInterval = 0
     private var hiddenByFullscreen = false
-    private var ticksSinceLastRedraw = 0
+    private var screensAsleep = false
     private var lastDemoKeyTime: CFTimeInterval = 0
     private var isPetVisible = true
     private var availableUpdateVersion: String?
@@ -41,8 +70,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         catView.onRightClickMenu = { [weak self] event in
             guard let self else { return }
+            self.wakeToActive()
             let menu = self.buildMenu()
             NSMenu.popUpContextMenu(menu, with: event, for: self.overlayWindow.catView)
+        }
+        catView.onUserInteraction = { [weak self] in
+            self?.wakeToActive()
         }
         catView.onDropSkinFiles = { [weak self] urls in
             for url in urls { self?.importDroppedFile(from: url) }
@@ -52,12 +85,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let engine = InputEngine.shared
         engine.onKeyDown = { [weak self] key in
             DispatchQueue.main.async {
-                self?.overlayWindow.catView.physics.triggerKeyDown(key)
+                guard let self else { return }
+                self.overlayWindow.catView.physics.triggerKeyDown(key)
+                self.wakeToActive()
             }
         }
         engine.onMouseClick = { [weak self] button, isDown in
             DispatchQueue.main.async {
-                self?.overlayWindow.catView.physics.triggerMouseClick(button: button, isDown: isDown)
+                guard let self else { return }
+                self.overlayWindow.catView.physics.triggerMouseClick(button: button, isDown: isDown)
+                self.wakeToActive()
             }
         }
         engine.start()
@@ -67,6 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // Keep LaunchAgent path updated if user moved KuroCat.app into /Applications
             _ = setAutoStartEnabled(true)
         }
+        observePowerNotifications()
         startRenderLoop()
         startWindowWatchdog()
         startHourlyAnnouncement()
@@ -81,6 +119,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Quitting during launch because a newer copy is running: leave its stats alone.
         if isHandingOverToNewerCopy { return }
         renderTimer?.invalidate()
+        renderTimer = nil
+        renderCadence = .paused
         windowWatchdogTimer?.invalidate()
         minuteTimer?.invalidate()
         NSWorkspace.shared.notificationCenter.removeObserver(self)
@@ -163,70 +203,148 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Adaptive Redraw
 
+    private func observePowerNotifications() {
+        let nc = NSWorkspace.shared.notificationCenter
+        nc.addObserver(self, selector: #selector(handleScreenOrSystemSleep),
+                       name: NSWorkspace.screensDidSleepNotification, object: nil)
+        nc.addObserver(self, selector: #selector(handleScreenOrSystemWake),
+                       name: NSWorkspace.screensDidWakeNotification, object: nil)
+        nc.addObserver(self, selector: #selector(handleScreenOrSystemSleep),
+                       name: NSWorkspace.willSleepNotification, object: nil)
+        nc.addObserver(self, selector: #selector(handleScreenOrSystemWake),
+                       name: NSWorkspace.didWakeNotification, object: nil)
+    }
+
+    @objc private func handleScreenOrSystemSleep() {
+        screensAsleep = true
+        configureRenderTimer(for: .paused)
+    }
+
+    @objc private func handleScreenOrSystemWake() {
+        screensAsleep = false
+        lastFrameTime = CACurrentMediaTime()
+        wakeToActive(immediateRedraw: true)
+    }
+
     private func startRenderLoop() {
         lastFrameTime = CACurrentMediaTime()
-        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            guard let self, self.isPetVisible else { return }
-            let now = CACurrentMediaTime()
-            let dt = CGFloat(now - self.lastFrameTime)
-            self.lastFrameTime = now
+        wakeToActive()
+    }
 
-            // Fullscreen auto-hide check (~2Hz)
-            if now - self.lastFullscreenCheckTime > 0.5 {
-                self.lastFullscreenCheckTime = now
-                let s = CatSettings.shared
-                let obsBg = (s.obsCaptureMode > 0 && s.obsHideDesktop)
-                if s.autoHideFullscreen && !obsBg {
-                    let fs = Self.isOtherAppFullscreen()
-                    if fs != self.hiddenByFullscreen {
-                        self.hiddenByFullscreen = fs
-                        self.overlayWindow.alphaValue = fs ? 0.0 : 1.0
-                        if fs { self.overlayWindow.ignoresMouseEvents = true }
-                    }
-                } else if self.hiddenByFullscreen {
-                    self.hiddenByFullscreen = false
-                    self.overlayWindow.alphaValue = 1.0
-                }
-            }
-
-            let view = self.overlayWindow.catView
-            let physics = view.physics
-            let input = InputEngine.shared
-            let windowFrame = self.overlayWindow.frame
-            let physicsFrame = self.overlayWindow.physicsFrameInScreen
-            let previousMouseMoveTime = input.lastMouseMoveTime
-            let wasBlinking = physics.isBlinking
-            let wasYawning = physics.isYawning
-            physics.step(dt: dt, windowFrameInScreen: physicsFrame)
-            view.updateHoverAndClickThrough()
-            view.tickToast(dt: dt)
-
-            // Track the mouse at 60 Hz. Ordinary movement away from the pet can share the idle redraw cadence.
-            let lastDirectInput = max(input.lastKeyActivityTime, input.lastMouseClickTime, self.lastDemoKeyTime)
-            let mouseMoving = now - input.lastMouseMoveTime < 0.12
-            let mouseStartedMoving = mouseMoving && now - previousMouseMoveTime >= 0.12
-            let mouseNearPet = mouseMoving && windowFrame.insetBy(dx: -24, dy: -24).contains(input.lastMouseLocation)
-            let isAsleep = physics.sleepiness >= 0.95
-            let isActive = now - lastDirectInput < 0.8 || !input.activeKeys.isEmpty
-                || mouseStartedMoving || mouseNearPet
-                || input.leftMouseDown || input.rightMouseDown || input.otherMouseDown || view.isDraggingOrResizing
-                || !physics.keyGlow.isEmpty || !physics.floatingKeycaps.isEmpty
-                || physics.petHeadIntensity > 0.02 || physics.huntIntensity.value > 0.02
-                || physics.scruffDrag.value > 0.02 || physics.isChangingLie
-                || physics.angerIntensity.value > 0.02 || physics.dizzyIntensity.value > 0.02
-                || wasYawning || physics.isYawning || (!isAsleep && (wasBlinking || physics.isBlinking))
-                || view.toastActive  // hourly toast animates at full rate
-            let ticksPerRedraw = isActive ? 1 : (isAsleep ? 3 : 2) // 60, 20, or 30 FPS on a 60 Hz tick.
-            self.ticksSinceLastRedraw += 1
-            // Give small idle movements time to accumulate, but refresh at least every 100 ms.
-            if self.ticksSinceLastRedraw >= ticksPerRedraw &&
-                (isActive || self.ticksSinceLastRedraw >= 6 || view.poseNeedsDisplay()) {
-                self.ticksSinceLastRedraw = 0
-                view.needsDisplay = true
-            }
+    private func wakeToActive(immediateRedraw: Bool = false) {
+        guard isPetVisible, !screensAsleep else { return }
+        if !hiddenByFullscreen && renderCadence != .active {
+            configureRenderTimer(for: .active)
         }
+        if immediateRedraw && !hiddenByFullscreen {
+            overlayWindow?.catView.needsDisplay = true
+        }
+    }
+
+    private func configureRenderTimer(for cadence: RenderCadence) {
+        guard cadence != renderCadence || (cadence != .paused && renderTimer == nil) else { return }
+        renderTimer?.invalidate()
+        renderTimer = nil
+        renderCadence = cadence
+        guard cadence != .paused else { return }
+        let timer = Timer(timeInterval: cadence.interval, repeats: true) { [weak self] _ in
+            self?.renderTick()
+        }
+        timer.tolerance = cadence.tolerance
         RunLoop.main.add(timer, forMode: .common)
         renderTimer = timer
+    }
+
+    private func updateFullscreenAutoHide(now: CFTimeInterval) -> Bool {
+        if now - lastFullscreenCheckTime <= 0.5 {
+            return hiddenByFullscreen
+        }
+        lastFullscreenCheckTime = now
+        let s = CatSettings.shared
+        let obsBg = (s.obsCaptureMode > 0 && s.obsHideDesktop)
+        if s.autoHideFullscreen && !obsBg {
+            let fs = Self.isOtherAppFullscreen()
+            if fs != hiddenByFullscreen {
+                hiddenByFullscreen = fs
+                overlayWindow.alphaValue = fs ? 0.0 : 1.0
+                if fs {
+                    overlayWindow.ignoresMouseEvents = true
+                } else {
+                    lastFrameTime = now
+                    overlayWindow.catView.needsDisplay = true
+                }
+            }
+        } else if hiddenByFullscreen {
+            hiddenByFullscreen = false
+            overlayWindow.alphaValue = 1.0
+            lastFrameTime = now
+            overlayWindow.catView.needsDisplay = true
+        }
+        return hiddenByFullscreen
+    }
+
+    private func renderTick() {
+        guard isPetVisible, !screensAsleep else {
+            configureRenderTimer(for: .paused)
+            return
+        }
+        let now = CACurrentMediaTime()
+        if updateFullscreenAutoHide(now: now) {
+            configureRenderTimer(for: .fullscreenHidden)
+            return
+        }
+
+        let dt = CGFloat(now - lastFrameTime)
+        lastFrameTime = now
+
+        let view = overlayWindow.catView
+        let physics = view.physics
+        let input = InputEngine.shared
+        let windowFrame = overlayWindow.frame
+        let physicsFrame = overlayWindow.physicsFrameInScreen
+        let previousMouseMoveTime = input.lastMouseMoveTime
+        let wasBlinking = physics.isBlinking
+        let wasYawning = physics.isYawning
+        let wasToastActive = view.toastActive
+        physics.step(dt: dt, windowFrameInScreen: physicsFrame)
+        view.updateHoverAndClickThrough()
+        view.tickToast(dt: dt)
+
+        let lastDirectInput = max(input.lastKeyActivityTime, input.lastMouseClickTime, lastDemoKeyTime)
+        let mouseMoving = now - input.lastMouseMoveTime < 0.12
+        let mouseStartedMoving = mouseMoving && now - previousMouseMoveTime >= 0.12
+        let mouseNearPet = mouseMoving && windowFrame.insetBy(dx: -24, dy: -24).contains(input.lastMouseLocation)
+        let isAsleep = physics.sleepiness >= 0.95
+        let hasActiveSparkles = physics.sparkles.contains { !$0.isSleepZ }
+        let hasMotion = hasActiveSparkles || !physics.floatingKeycaps.isEmpty
+            || !physics.keyGlow.isEmpty || !physics.tabletTrail.isEmpty
+            || physics.kbSparkTimer > 0.005
+            || physics.petHeadIntensity > 0.02 || physics.petBodyIntensity > 0.02
+            || physics.huntIntensity.value > 0.02
+            || physics.scruffDrag.value > 0.02 || physics.isChangingLie
+            || abs(physics.scruffSwing.value) > 0.01 || abs(physics.scruffSwingY.value) > 0.01
+            || abs(physics.scruffTailSwing.value) > 0.01
+            || (physics.douniLoafBlend.value > 0.005 && physics.douniLoafBlend.value < 0.995)
+            || abs(physics.douniLoafBlend.velocity) > 0.02
+            || abs(physics.douniLeftRaise.velocity) > 0.05 || abs(physics.douniRightRaise.velocity) > 0.05
+            || abs(physics.douniMouseBlend.velocity) > 0.05
+            || abs(physics.kbImpactY.value) > 0.01 || abs(physics.kbImpactTilt.value) > 0.01
+            || physics.angerIntensity.value > 0.02 || physics.dizzyIntensity.value > 0.02
+            || wasYawning || physics.isYawning
+            || (!isAsleep && (wasBlinking || physics.isBlinking))
+        let isActive = now - lastDirectInput < 0.8 || !input.activeKeys.isEmpty
+            || mouseStartedMoving || mouseNearPet
+            || input.leftMouseDown || input.rightMouseDown || input.otherMouseDown
+            || view.isDraggingOrResizing || hasMotion
+            || wasToastActive || view.toastActive  // hourly toast animates at full rate
+
+        let desiredCadence: RenderCadence = isActive ? .active : (isAsleep ? .asleep : .idle)
+        if desiredCadence != renderCadence {
+            configureRenderTimer(for: desiredCadence)
+        }
+        if isActive || view.poseNeedsDisplay() {
+            view.needsDisplay = true
+        }
     }
 
     // MARK: - Menu Bar Icon & Menu
@@ -451,16 +569,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if settingsWindow == nil {
             let ctrl = SettingsWindowController()
             ctrl.onSettingsChanged = { [weak self] in
-                self?.overlayWindow.catView.needsDisplay = true
+                self?.wakeToActive(immediateRedraw: true)
                 self?.dressingRoom?.refresh()
             }
             ctrl.onScaleChanged = { [weak self] newScale in
                 self?.overlayWindow.applyScale(newScale)
+                self?.wakeToActive()
             }
             ctrl.onResetPoseAndPosition = { [weak self] in
                 self?.overlayWindow.applyScale(1.0)
                 self?.overlayWindow.resetPosition()
-                self?.overlayWindow.catView.needsDisplay = true
+                self?.wakeToActive(immediateRedraw: true)
             }
             ctrl.onOpenDressingRoom = { [weak self] in
                 self?.showDressingRoom()
@@ -480,12 +599,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             ctrl.onApplyOBSMode = { [weak self] in
                 self?.overlayWindow.applyOBSMode()
+                self?.wakeToActive(immediateRedraw: true)
             }
             ctrl.onAutoHideChanged = { [weak self] in
                 guard let self else { return }
                 if !CatSettings.shared.autoHideFullscreen && self.hiddenByFullscreen {
                     self.hiddenByFullscreen = false
                     self.overlayWindow.alphaValue = 1.0
+                    self.wakeToActive(immediateRedraw: true)
                 }
             }
             ctrl.getAutoStart = { [weak self] in
@@ -495,7 +616,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 _ = self?.setAutoStartEnabled(on)
             }
             ctrl.onLanguageChanged = { [weak self] in
-                self?.overlayWindow.catView.needsDisplay = true
+                self?.wakeToActive(immediateRedraw: true)
             }
             settingsWindow = ctrl
         }
@@ -527,10 +648,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         isPetVisible.toggle()
         if isPetVisible {
             lastFrameTime = CACurrentMediaTime()
-            ticksSinceLastRedraw = 0
-            overlayWindow.catView.needsDisplay = true
             overlayWindow.orderFrontRegardless()
+            wakeToActive(immediateRedraw: true)
         } else {
+            configureRenderTimer(for: .paused)
             overlayWindow.orderOut(nil)
         }
     }
@@ -538,7 +659,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func selectTabletMode(_ sender: NSMenuItem) {
         if let mode = sender.representedObject as? Int {
             CatSettings.shared.tabletMode = mode
-            overlayWindow.catView.needsDisplay = true
+            wakeToActive(immediateRedraw: true)
         }
     }
 
@@ -565,6 +686,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             self?.syncWindowTopmost()
         }
+        timer.tolerance = 0.4
         RunLoop.main.add(timer, forMode: .common)
         windowWatchdogTimer = timer
     }
@@ -574,7 +696,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func syncWindowTopmost() {
-        guard let overlayWindow, isPetVisible, !hiddenByFullscreen else { return }
+        guard let overlayWindow, isPetVisible, !hiddenByFullscreen, !screensAsleep else { return }
         let s = CatSettings.shared
         let obsBg = (s.obsCaptureMode > 0 && s.obsHideDesktop)
         if obsBg { return }
@@ -653,11 +775,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleKeyboardMarquee() {
         CatSettings.shared.keyboardMarquee.toggle()
+        wakeToActive(immediateRedraw: true)
     }
 
     @objc private func toggleLevelKeyboard() {
         CatSettings.shared.levelKeyboard.toggle()
-        overlayWindow.catView.needsDisplay = true
+        wakeToActive(immediateRedraw: true)
         settingsWindow?.refresh()
     }
 
@@ -672,11 +795,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             CatSettings.shared.obsHideDesktop = false
         }
         overlayWindow.applyOBSMode()
+        wakeToActive(immediateRedraw: true)
     }
 
     @objc private func toggleOBSHideDesktop() {
         CatSettings.shared.obsHideDesktop.toggle()
         overlayWindow.applyOBSMode()
+        wakeToActive(immediateRedraw: true)
     }
 
     @objc private func toggleAutoHideFullscreen() {
@@ -684,6 +809,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !CatSettings.shared.autoHideFullscreen && hiddenByFullscreen {
             hiddenByFullscreen = false
             overlayWindow.alphaValue = 1.0
+            wakeToActive(immediateRedraw: true)
         }
     }
 
@@ -713,18 +839,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleEditMode() {
         CatSettings.shared.isEditMode.toggle()
-        overlayWindow.catView.needsDisplay = true
+        wakeToActive(immediateRedraw: true)
     }
 
     @objc private func selectLanguage(_ sender: NSMenuItem) {
         guard let code = sender.representedObject as? String else { return }
         CatSettings.shared.language = code
-        overlayWindow.catView.needsDisplay = true
+        wakeToActive(immediateRedraw: true)
     }
 
     @objc private func selectScale(_ sender: NSMenuItem) {
         guard let num = sender.representedObject as? NSNumber else { return }
         overlayWindow.applyScale(CGFloat(num.doubleValue))
+        wakeToActive()
     }
 
     @objc private func selectCoatTheme(_ sender: NSMenuItem) {
@@ -743,6 +870,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .orangeWhite:
             CatSettings.shared.eyeTheme = .warmAmber
         }
+        wakeToActive(immediateRedraw: true)
         dressingRoom?.refresh()
         settingsWindow?.refresh()
     }
@@ -984,12 +1112,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func runDemoBurst() {
         let keys: [PhysicalKey] = [.w, .a, .s, .d, .f, .j, .o, .e, .space, .leftShift]
+        wakeToActive()
         for (idx, k) in keys.enumerated() {
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(idx) * 0.13) { [weak self] in
                 guard let self else { return }
                 let now = CACurrentMediaTime()
                 self.lastDemoKeyTime = now
                 self.overlayWindow.catView.physics.triggerKeyDown(k, at: now)
+                self.wakeToActive()
             }
         }
     }
@@ -1376,5 +1506,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let text = "🕐 \(period) \(displayHour) 点整"
         overlayWindow.catView.showToast(text: text)
+        wakeToActive(immediateRedraw: true)
     }
 }

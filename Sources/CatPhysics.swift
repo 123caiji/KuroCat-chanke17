@@ -150,9 +150,25 @@ final class CatSettings {
     var customSkin: String {
         didSet { UserDefaults.standard.set(customSkin, forKey: "KuroCat.CustomSkin") }
     }
+    private var cachedSkinKey: String = ""
+    private var cachedSkinRev: Int = -1
+    private var cachedSkinValue: SkinSpec?
+    private var cachedKBKey: String = ""
+    private var cachedKBRev: Int = -1
+    private var cachedKBValue: KeyboardSkinSpec?
+
     /// The skin the renderer draws: the imported one while its file still exists, else the built-in coat.
     var activeSkin: SkinSpec {
-        SkinLibrary.shared.skin(id: customSkin) ?? SkinSpec.builtIn(coatTheme)
+        let lib = SkinLibrary.shared
+        let key = customSkin.isEmpty ? "coat:\(coatTheme.rawValue)" : "custom:\(customSkin)"
+        if key == cachedSkinKey && lib.revision == cachedSkinRev, let cached = cachedSkinValue {
+            return cached
+        }
+        let resolved = lib.skin(id: customSkin) ?? SkinSpec.builtIn(coatTheme)
+        cachedSkinKey = key
+        cachedSkinRev = lib.revision
+        cachedSkinValue = resolved
+        return resolved
     }
     /// Content id of the imported .kurokb / keyboard.json skin in use; empty = the built-in keyboardTheme.
     var customKeyboard: String {
@@ -160,7 +176,16 @@ final class CatSettings {
     }
     /// The keyboard/mouse skin the renderer draws: the imported one while its file still exists, else built-in.
     var activeKeyboardSkin: KeyboardSkinSpec {
-        KeyboardSkinLibrary.shared.skin(id: customKeyboard) ?? KeyboardSkinSpec.builtIn(keyboardTheme)
+        let lib = KeyboardSkinLibrary.shared
+        let key = customKeyboard.isEmpty ? "kb:\(keyboardTheme.rawValue)" : "custom:\(customKeyboard)"
+        if key == cachedKBKey && lib.revision == cachedKBRev, let cached = cachedKBValue {
+            return cached
+        }
+        let resolved = lib.skin(id: customKeyboard) ?? KeyboardSkinSpec.builtIn(keyboardTheme)
+        cachedKBKey = key
+        cachedKBRev = lib.revision
+        cachedKBValue = resolved
+        return resolved
     }
 
     private init() {
@@ -211,10 +236,15 @@ struct Spring1D {
     }
 
     mutating func step(dt: CGFloat, stiffness: CGFloat = 260, damping: CGFloat = 22) {
+        if value == target && velocity == 0 { return }
         let force = (target - value) * stiffness
         let damp = velocity * damping
         velocity += (force - damp) * dt
         value += velocity * dt
+        if abs(target - value) < 1e-5 && abs(velocity) < 1e-4 {
+            value = target
+            velocity = 0
+        }
     }
 }
 
@@ -731,15 +761,25 @@ final class CatPhysics {
     // MARK: - 60 FPS Simulation Step
 
     func step(dt rawDt: CGFloat, windowFrameInScreen: CGRect, scripted: ScriptedFrameInput? = nil) {
-        let dt = min(rawDt, 1.0 / 25.0)
+        let engine = InputEngine.shared
+        let totalDt = max(0, min(rawDt, 0.15))
+        let now = scripted?.now ?? CACurrentMediaTime()
+        if scripted == nil {
+            engine.pollMouse(dt: totalDt, now: now)
+        }
+        let subSteps = totalDt > (1.0 / 28.0) ? min(4, Int(ceil(totalDt / (1.0 / 30.0)))) : 1
+        let dt = totalDt / CGFloat(subSteps)
+        for _ in 0..<subSteps {
+            stepSingle(dt: dt, now: now, windowFrameInScreen: windowFrameInScreen, scripted: scripted)
+        }
+    }
+
+    private func stepSingle(dt: CGFloat, now: CFTimeInterval, windowFrameInScreen: CGRect, scripted: ScriptedFrameInput?) {
         time += dt
 
         let engine = InputEngine.shared
-        if scripted == nil {
-            engine.pollMouse(dt: dt)
-        }
-
-        let now = scripted?.now ?? CACurrentMediaTime()
+        let kpm = CGFloat(engine.currentKPM)
+        let activeSkin = CatSettings.shared.activeSkin
         let activeKeys = scripted?.activeKeys ?? engine.activeKeys
         let orderedKeys = scripted?.orderedKeys ?? engine.pressedOrder
         let curMouseVel = scripted?.mouseVelocity ?? engine.mouseVelocity
@@ -899,7 +939,6 @@ final class CatPhysics {
 
         // Low-frequency episodic anger: ~3.2s of brisk typing (>= 260 KPM) triggers a brief ~4.2s grumpy burst,
         // followed by a ~28s cooldown so fast typists get occasional cute anger without staying angry non-stop!
-        let kpm = CGFloat(engine.currentKPM)
         if !CatSettings.shared.enableAnger || isScruffDragging || dizzyTimer > 0 {
             fastTypeAccum = 0
             angerBurstTimer = 0
@@ -996,8 +1035,7 @@ final class CatPhysics {
         let tMode = CatSettings.shared.tabletMode
         isTabletActive = (tMode == 1) || (tMode == 0 && engine.isTabletConnected)
         if isTabletActive {
-            let screenFrame = (NSScreen.screens.first { $0.frame.contains(curMouseLoc) } ?? NSScreen.main)?.frame
-                ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+            let screenFrame = engine.screenFrame(containing: curMouseLoc)
             let nx = max(0, min(1, (curMouseLoc.x - screenFrame.minX) / max(1, screenFrame.width)))
             let ny = max(0, min(1, 1.0 - (curMouseLoc.y - screenFrame.minY) / max(1, screenFrame.height)))
             tabletNib.target = CatPhysics.tabletQuadPoint(u: 0.25 + nx * 0.64, v: 0.16 + ny * 0.68)
@@ -1016,8 +1054,8 @@ final class CatPhysics {
             if tabletTrail[i].age >= 0.72 { tabletTrail.remove(at: i) }
         }
 
-        let isDouniTyping = CatSettings.shared.activeSkin.typingStyle == .douni
-        let isDouniSkin = CatSettings.shared.activeSkin.renderStyle == .douni
+        let isDouniTyping = activeSkin.typingStyle == .douni
+        let isDouniSkin = activeSkin.renderStyle == .douni
         if isDouniTyping {
             douniSlapTimer = max(0, douniSlapTimer - dt)
             let leftHeldNow = activeKeys.contains { $0.prefersLeftPaw }
@@ -1310,7 +1348,7 @@ final class CatPhysics {
         }
 
         // 7. Tail wag speed reacts organically to energy / petting / hunting tension!
-        let kpmBoost = min(2.4, CGFloat(engine.currentKPM) / 160.0)
+        let kpmBoost = min(2.4, kpm / 160.0)
         let petBoost = max(petHeadIntensity, petBodyIntensity) * 1.4
         let huntBoost = hunt * 2.8
         let agilityBoost = max(0, min(1, tailAgility.value)) * 3.2
@@ -1319,18 +1357,20 @@ final class CatPhysics {
         tailPhase += dt * tailSpeed
 
         // 8. Update per-keycap glows
-        let visualActive = Set(activeKeys.map { $0.visualKey })
-        for (k, v) in keyGlow {
-            if visualActive.contains(k) {
-                keyGlow[k] = 1.0
-            } else {
-                let next = v - dt * 4.5
-                if next <= 0.01 { keyGlow.removeValue(forKey: k) }
-                else { keyGlow[k] = next }
+        if !activeKeys.isEmpty || !keyGlow.isEmpty {
+            let visualActive = Set(activeKeys.map { $0.visualKey })
+            for (k, v) in keyGlow {
+                if visualActive.contains(k) {
+                    keyGlow[k] = 1.0
+                } else {
+                    let next = v - dt * 4.5
+                    if next <= 0.01 { keyGlow.removeValue(forKey: k) }
+                    else { keyGlow[k] = next }
+                }
             }
-        }
-        for vk in visualActive {
-            keyGlow[vk] = 1.0
+            for vk in visualActive {
+                keyGlow[vk] = 1.0
+            }
         }
 
         // 9. Update floating keycaps
@@ -1361,7 +1401,7 @@ final class CatPhysics {
 // Mirrors shared/SkinSpec.hpp (Windows/Linux); the format is documented in docs/skin-format.md.
 // Kept in this file because build.sh compiles an explicit list of Swift sources.
 
-struct SkinColor: Equatable {
+struct SkinColor: Hashable {
     var r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat
 
     static func rgba(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, _ a: CGFloat = 1) -> SkinColor {
@@ -1403,7 +1443,7 @@ struct SkinMark {
     var clipToBib: Bool = false
 }
 
-struct SkinShape {
+struct SkinShape: Hashable {
     var build: SkinBuild = .standard
     var bodyWidth: CGFloat = 1, headScale: CGFloat = 1, earSize: CGFloat = 1, earBaseWidth: CGFloat = 1, earPointiness: CGFloat = 1, earSpacing: CGFloat = 1
     var tailLength: CGFloat = 1, tailThickness: CGFloat = 1, tailRootY: CGFloat = 0
@@ -1412,7 +1452,7 @@ struct SkinShape {
     var hindLegRootX: CGFloat = 0, hindLegRootY: CGFloat = 0, hindLegWidth: CGFloat = 1, hindLegReach: CGFloat = 1
 }
 
-struct SkinPartGradient {
+struct SkinPartGradient: Hashable {
     var from: SkinColor
     var to: SkinColor
     var angle: CGFloat = 90
@@ -1425,7 +1465,7 @@ struct SkinDecoration {
     var offsetX: CGFloat = 0, offsetY: CGFloat = 0, scale: CGFloat = 1, rotation: CGFloat = 0 // degrees
 }
 
-struct SkinPalette {
+struct SkinPalette: Hashable {
     var body = SkinColor.rgba(0, 0, 0)
     var headBody: SkinColor?
     var bodyShade: SkinColor?, belly: SkinColor?
@@ -1796,9 +1836,10 @@ struct SkinSpec {
                 if png.count > 1024 * 1024 { throw fail("\(f).png 超过 1 MB") }
                 guard let size = pngSize(png), size.0 <= 1024, size.1 <= 1024,
                       let provider = CGDataProvider(data: png as CFData),
-                      let image = CGImage(pngDataProviderSource: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent) else {
+                      let rawImage = CGImage(pngDataProviderSource: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent) else {
                     throw fail("\(f).png 不是有效的 PNG（或尺寸超过 1024×1024）")
                 }
+                let image = predecodeCGImage(rawImage)
                 guard let anchorName = d["anchor"] as? String, !anchorName.isEmpty else {
                     throw fail("\(f).anchor 必须是 headTop / face / neck / tailTip 之一")
                 }
@@ -1823,6 +1864,18 @@ struct SkinSpec {
         return spec
     }
 
+    private static func predecodeCGImage(_ image: CGImage) -> CGImage {
+        let w = image.width, h = image.height
+        guard w > 0, h > 0,
+              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            return image
+        }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return ctx.makeImage() ?? image
+    }
+
     private static func decodeBase64PNG(_ s: String) -> Data? {
         let prefix = "data:image/png;base64,"
         let body = s.hasPrefix(prefix) ? String(s.dropFirst(prefix.count)) : s
@@ -1844,6 +1897,7 @@ struct SkinSpec {
 final class SkinLibrary {
     static let shared = SkinLibrary()
     private(set) var skins: [SkinSpec] = []   // sorted by name
+    private(set) var revision: Int = 0
 
     private init() { reload() }
 
@@ -1859,6 +1913,7 @@ final class SkinLibrary {
         skins = files.filter { $0.pathExtension == "kurocat" }
             .compactMap { try? SkinSpec.load(contentsOf: $0) }
             .sorted { $0.name < $1.name }
+        revision += 1
     }
 
     func skin(id: String) -> SkinSpec? {
@@ -2092,6 +2147,7 @@ struct KeyboardSkinSpec: Equatable {
 final class KeyboardSkinLibrary {
     static let shared = KeyboardSkinLibrary()
     private(set) var skins: [KeyboardSkinSpec] = []
+    private(set) var revision: Int = 0
 
     private init() { reload() }
 
@@ -2107,6 +2163,7 @@ final class KeyboardSkinLibrary {
         skins = files.filter { ["kurokb", "json"].contains($0.pathExtension.lowercased()) }
             .compactMap { try? KeyboardSkinSpec.load(contentsOf: $0) }
             .sorted { $0.name < $1.name }
+        revision += 1
     }
 
     func skin(id: String) -> KeyboardSkinSpec? {
