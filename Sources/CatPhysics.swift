@@ -120,6 +120,10 @@ final class CatSettings {
     var fullScreenOverlay: Bool {
         didSet { UserDefaults.standard.set(fullScreenOverlay, forKey: "KuroCat.FullScreenOverlay") }
     }
+    /// Show a toast pill above the cat's head at every whole hour (HH:00)
+    var hourlyAnnouncement: Bool {
+        didSet { UserDefaults.standard.set(hourlyAnnouncement, forKey: "KuroCat.HourlyAnnouncement") }
+    }
     var scale: CGFloat {
         didSet { UserDefaults.standard.set(Double(scale), forKey: "KuroCat.Scale") }
     }
@@ -169,6 +173,7 @@ final class CatSettings {
         petInteraction = d.object(forKey: "KuroCat.PetInteraction") as? Bool ?? true
         fullClickThrough = d.object(forKey: "KuroCat.FullClickThrough") as? Bool ?? false
         fullScreenOverlay = d.object(forKey: "KuroCat.FullScreenOverlay") as? Bool ?? true
+        hourlyAnnouncement = d.object(forKey: "KuroCat.HourlyAnnouncement") as? Bool ?? true
         let savedScale = d.double(forKey: "KuroCat.Scale")
         scale = savedScale > 0.3 ? CGFloat(savedScale) : 1.0
         coatTheme = CatCoatTheme(rawValue: d.string(forKey: "KuroCat.CoatTheme") ?? "") ?? .classicBlack

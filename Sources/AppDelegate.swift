@@ -20,6 +20,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var dressingRoom: DressingRoomWindowController?
     private var settingsWindow: SettingsWindowController?
 
+    // MARK: - Hourly Announcement
+    private var minuteTimer: Timer?
+    private var lastAnnouncedHour: Int = -1
+
     private var currentAppVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.4.3"
     }
@@ -65,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         startRenderLoop()
         startWindowWatchdog()
+        startHourlyAnnouncement()
 
         // Auto-check GitHub Releases for updates shortly after launch
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
@@ -77,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if isHandingOverToNewerCopy { return }
         renderTimer?.invalidate()
         windowWatchdogTimer?.invalidate()
+        minuteTimer?.invalidate()
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         InputEngine.shared.flushStats()
         InputEngine.shared.stop()
@@ -187,11 +193,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let physics = view.physics
             let input = InputEngine.shared
             let windowFrame = self.overlayWindow.frame
+            let physicsFrame = self.overlayWindow.physicsFrameInScreen
             let previousMouseMoveTime = input.lastMouseMoveTime
             let wasBlinking = physics.isBlinking
             let wasYawning = physics.isYawning
-            physics.step(dt: dt, windowFrameInScreen: windowFrame)
+            physics.step(dt: dt, windowFrameInScreen: physicsFrame)
             view.updateHoverAndClickThrough()
+            view.tickToast(dt: dt)
 
             // Track the mouse at 60 Hz. Ordinary movement away from the pet can share the idle redraw cadence.
             let lastDirectInput = max(input.lastKeyActivityTime, input.lastMouseClickTime, self.lastDemoKeyTime)
@@ -207,6 +215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 || physics.scruffDrag.value > 0.02 || physics.isChangingLie
                 || physics.angerIntensity.value > 0.02 || physics.dizzyIntensity.value > 0.02
                 || wasYawning || physics.isYawning || (!isAsleep && (wasBlinking || physics.isBlinking))
+                || view.toastActive  // hourly toast animates at full rate
             let ticksPerRedraw = isActive ? 1 : (isAsleep ? 3 : 2) // 60, 20, or 30 FPS on a 60 Hz tick.
             self.ticksSinceLastRedraw += 1
             // Give small idle movements time to accumulate, but refresh at least every 100 ms.
@@ -390,6 +399,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             checkItem.target = self
             menu.addItem(checkItem)
         }
+
+        menu.addItem(.separator())
+        let testToastItem = NSMenuItem(title: "🕒 测试整点报时弹窗", action: #selector(testHourlyToast), keyEquivalent: "")
+        testToastItem.target = self
+        menu.addItem(testToastItem)
 
         let relaunchItem = NSMenuItem(title: tr("重启 KuroCat", "Restart KuroCat"), action: #selector(relaunchApp), keyEquivalent: "")
         relaunchItem.target = self
@@ -888,6 +902,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    @objc private func testHourlyToast() {
+        let cal = Calendar.current
+        let now = Date()
+        let hour = cal.component(.hour, from: now)
+        showHourlyToast(hour: hour)
+    }
+
     @objc private func relaunchApp() {
         let bundleURL = Bundle.main.bundleURL
         let config = NSWorkspace.OpenConfiguration()
@@ -1212,5 +1233,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         img.isTemplate = true
         return img
+    }
+
+    // MARK: - Hourly Announcement
+
+    private func startHourlyAnnouncement() {
+        let calendar = Calendar.current
+        let now = Date()
+        let components = calendar.dateComponents([.second], from: now)
+        let secondsUntilNextMinute = Double(60 - (components.second ?? 0))
+        DispatchQueue.main.asyncAfter(deadline: .now() + secondsUntilNextMinute) { [weak self] in
+            guard let self else { return }
+            self.checkAndAnnounceHourly()
+            self.minuteTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+                self?.checkAndAnnounceHourly()
+            }
+            RunLoop.main.add(self.minuteTimer!, forMode: .common)
+        }
+    }
+
+    private func checkAndAnnounceHourly() {
+        guard CatSettings.shared.hourlyAnnouncement else { return }
+        let cal = Calendar.current
+        let now = Date()
+        let hour = cal.component(.hour, from: now)
+        let minute = cal.component(.minute, from: now)
+        let second = cal.component(.second, from: now)
+        if minute == 0 && second < 5 && hour != lastAnnouncedHour {
+            lastAnnouncedHour = hour
+            showHourlyToast(hour: hour)
+        }
+    }
+
+    private func showHourlyToast(hour: Int) {
+        let period: String
+        let displayHour: Int
+        if hour == 0 {
+            period = "凌晨"; displayHour = 12
+        } else if hour < 6 {
+            period = "凌晨"; displayHour = hour
+        } else if hour == 12 {
+            period = "中午"; displayHour = 12
+        } else if hour < 12 {
+            period = "上午"; displayHour = hour
+        } else {
+            period = hour < 18 ? "下午" : "晚上"
+            displayHour = hour - 12
+        }
+        let text = "🕐 \(period) \(displayHour) 点整"
+        overlayWindow.catView.showToast(text: text)
     }
 }
