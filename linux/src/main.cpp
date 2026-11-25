@@ -114,6 +114,10 @@ struct LinuxApp {
 
     bool hasLastHover = false;
     Pt lastHoverCanvas = { 0.0f, 0.0f };
+    std::string statsDay;
+    int lastSavedPetSessions = 0;
+    float pinchStartScale = 1.0f;
+    GtkGesture* zoomGesture = nullptr;
     double lastTickTime = 0.0;
 
     bool demoActive = false;
@@ -2086,6 +2090,22 @@ static gboolean onButtonRelease(GtkWidget*, GdkEventButton* evt, gpointer) {
     return FALSE;
 }
 
+static gboolean onScrollEvent(GtkWidget*, GdkEventScroll* evt, gpointer) {
+    if (!g_app) return FALSE;
+    bool altHeld = (evt->state & GDK_MOD1_MASK) != 0;
+    if (g_app->settings.fullClickThrough && !altHeld) return FALSE;
+    double step = 0.0;
+    if (evt->direction == GDK_SCROLL_UP) step = 0.06;
+    else if (evt->direction == GDK_SCROLL_DOWN) step = -0.06;
+    else if (evt->direction == GDK_SCROLL_SMOOTH) step = -evt->delta_y * 0.06;
+    if (std::fabs(step) < 0.0005) return FALSE;
+    float factor = 1.0f + std::clamp((float)step, -0.25f, 0.25f);
+    g_app->settings.scale = std::clamp(g_app->settings.scale * factor, 0.45f, 2.50f);
+    applyWindowScaleAndPos(*g_app, true);
+    refreshSettingsWindow(*g_app);
+    return TRUE;
+}
+
 static void refreshWindowGeometry(LinuxApp& app) {
     if (!app.window) return;
     gtk_window_get_position(GTK_WINDOW(app.window), &app.winX, &app.winY);
@@ -2245,6 +2265,10 @@ static gboolean onFrameTick(gpointer) {
                     float d = std::hypot(cp.x - g_app->lastHoverCanvas.x, cp.y - g_app->lastHoverCanvas.y);
                     if (d > 1.2f && d < 80.0f) {
                         g_app->physics.registerPetStroke(cp, d, true, g_app->settings);
+                        if (g_app->physics.totalPetSessions != g_app->lastSavedPetSessions) {
+                            g_app->lastSavedPetSessions = g_app->physics.totalPetSessions;
+                            CatSettings::saveStats(g_app->statsDay, g_app->input.totalKeystrokesToday, g_app->physics.totalPetSessions);
+                        }
                     }
                 }
                 g_app->lastHoverCanvas = cp;
@@ -2327,6 +2351,8 @@ int main(int argc, char** argv) {
     }
 
     app.settings.load();
+    CatSettings::loadStats(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
+    app.lastSavedPetSessions = app.physics.totalPetSessions;
     app.skins.reload();
     app.kbLibrary.reload();
     for (int i = 1; i < argc; ++i) {
@@ -2341,7 +2367,17 @@ int main(int argc, char** argv) {
         setAutoStartEnabled(true);
     }
 
-    app.input.onKeyDown = [&](PhysicalKey k) { app.physics.triggerKeyDown(k, app.settings, activeSkin(app).typingStyle, &app.input); };
+    app.input.onKeyDown = [&](PhysicalKey k) {
+        std::string today = CatSettings::todayDateString();
+        if (today != app.statsDay) {
+            app.statsDay = today;
+            app.input.totalKeystrokesToday = 1;
+            CatSettings::saveStats(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
+        } else if (app.input.totalKeystrokesToday % 10 == 0) {
+            CatSettings::saveStats(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
+        }
+        app.physics.triggerKeyDown(k, app.settings, activeSkin(app).typingStyle, &app.input);
+    };
     app.input.onMouseClick = [&](int btn, bool down) { app.physics.triggerMouseClick(btn, down, app.settings, activeSkin(app).renderStyle); };
     app.input.start();
 
@@ -2363,11 +2399,22 @@ int main(int argc, char** argv) {
     app.drawArea = gtk_drawing_area_new();
     gtk_container_add(GTK_CONTAINER(app.window), app.drawArea);
 
-    gtk_widget_add_events(app.window, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_POINTER_MOTION_MASK | GDK_STRUCTURE_MASK);
+    gtk_widget_add_events(app.window, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_POINTER_MOTION_MASK | GDK_STRUCTURE_MASK | GDK_SCROLL_MASK | GDK_SMOOTH_SCROLL_MASK | GDK_TOUCHPAD_GESTURE_MASK);
     g_signal_connect(app.drawArea, "draw", G_CALLBACK(onDraw), nullptr);
     g_signal_connect(app.window, "button-press-event", G_CALLBACK(onButtonPress), nullptr);
     g_signal_connect(app.window, "motion-notify-event", G_CALLBACK(onMotionNotify), nullptr);
     g_signal_connect(app.window, "button-release-event", G_CALLBACK(onButtonRelease), nullptr);
+    g_signal_connect(app.window, "scroll-event", G_CALLBACK(onScrollEvent), nullptr);
+    app.zoomGesture = gtk_gesture_zoom_new(app.window);
+    g_signal_connect(app.zoomGesture, "begin", G_CALLBACK(+[](GtkGesture*, GdkEventSequence*, gpointer) {
+        if (g_app) g_app->pinchStartScale = g_app->settings.scale;
+    }), nullptr);
+    g_signal_connect(app.zoomGesture, "scale-changed", G_CALLBACK(+[](GtkGestureZoom*, gdouble zoomScale, gpointer) {
+        if (!g_app || g_app->settings.fullClickThrough) return;
+        g_app->settings.scale = std::clamp(g_app->pinchStartScale * (float)zoomScale, 0.45f, 2.50f);
+        applyWindowScaleAndPos(*g_app, true);
+        refreshSettingsWindow(*g_app);
+    }), nullptr);
     g_signal_connect(app.window, "configure-event", G_CALLBACK(+[](GtkWidget*, GdkEventConfigure*, gpointer) -> gboolean {
         if (g_app) refreshWindowGeometry(*g_app);
         return FALSE;
@@ -2409,6 +2456,7 @@ int main(int argc, char** argv) {
     startAsyncUpdateCheck(false, 2500);
 
     gtk_main();
+    CatSettings::saveStats(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
     app.input.stop();
     releaseSingleInstance();
     g_app = nullptr;

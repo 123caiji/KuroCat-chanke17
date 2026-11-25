@@ -1120,6 +1120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 try osa.run()
                 osa.waitUntilExit()
                 if osa.terminationStatus == 0 {
+                    InputEngine.shared.flushStats()
                     let relaunch = Process()
                     relaunch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
                     relaunch.arguments = ["-n", currentAppURL.path]
@@ -1149,6 +1150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         proc.executableURL = URL(fileURLWithPath: "/bin/sh")
         proc.arguments = ["-c", script]
         do {
+            InputEngine.shared.flushStats()
             try proc.run()
             NSApp.terminate(nil)
         } catch {

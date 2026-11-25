@@ -417,6 +417,28 @@ final class CatCanvasView: NSView {
         onRightClickMenu?(event)
     }
 
+    override func scrollWheel(with event: NSEvent) {
+        let optionHeld = NSEvent.modifierFlags.contains(.option)
+        if CatSettings.shared.fullClickThrough && !optionHeld { return }
+        if event.momentumPhase != [] { return }
+        let raw = event.scrollingDeltaY
+        guard abs(raw) > 0.01 else { return }
+        let delta: CGFloat = event.hasPreciseScrollingDeltas
+            ? max(-0.18, min(0.18, raw * 0.0045))
+            : max(-0.20, min(0.20, raw * 0.06))
+        guard abs(delta) > 0.0005 else { return }
+        let newScale = max(0.45, min(2.50, CatSettings.shared.scale * (1.0 + delta)))
+        (window as? OverlayWindow)?.applyScale(newScale)
+    }
+
+    override func magnify(with event: NSEvent) {
+        let optionHeld = NSEvent.modifierFlags.contains(.option)
+        if CatSettings.shared.fullClickThrough && !optionHeld { return }
+        let factor = max(0.5, min(1.5, 1.0 + event.magnification))
+        let newScale = max(0.45, min(2.50, CatSettings.shared.scale * factor))
+        (window as? OverlayWindow)?.applyScale(newScale)
+    }
+
     // MARK: Drag & drop of .kurocat skins onto the cat
 
     override func viewDidMoveToWindow() {

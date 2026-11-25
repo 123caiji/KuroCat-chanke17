@@ -99,7 +99,7 @@ struct CatSettings {
         fullClickThrough = readDword(L"FullClickThrough", 0) != 0;
         alwaysOnTop      = readDword(L"AlwaysOnTop", 1) != 0;
         runAsAdmin       = readDword(L"RunAsAdmin", 0) != 0;
-        scale            = std::clamp((float)readDword(L"ScalePct", 100) / 100.0f, 0.5f, 2.0f);
+        scale            = std::clamp((float)readDword(L"ScalePct", 100) / 100.0f, 0.45f, 2.50f);
         coatTheme        = (CatCoatTheme)std::clamp((int)readDword(L"CoatTheme", 0), 0, static_cast<int>(CatCoatTheme::Tabby));
         keyboardTheme    = (KeyboardTheme)std::clamp((int)readDword(L"KeyboardTheme", 0), 0, 2);
         eyeTheme         = (EyeColorTheme)std::clamp((int)readDword(L"EyeTheme", 0), 0, (int)EyeColorTheme::OliveGold);
@@ -180,6 +180,51 @@ struct CatSettings {
             writeDword(L"PosX", (DWORD)posX);
             writeDword(L"PosY", (DWORD)posY);
         }
+        RegCloseKey(hKey);
+    }
+
+    static std::string todayDateString() {
+        SYSTEMTIME st = {};
+        GetLocalTime(&st);
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "%04u-%02u-%02u", st.wYear, st.wMonth, st.wDay);
+        return buf;
+    }
+
+    static void loadStatsFromRegistry(std::string& day, int& todayKeys, int& petCount) {
+        day = todayDateString();
+        todayKeys = 0;
+        petCount = 0;
+        HKEY hKey = nullptr;
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\KuroCat", 0, KEY_READ, &hKey) != ERROR_SUCCESS) return;
+        DWORD val = 0, sz = sizeof(val);
+        if (RegQueryValueExW(hKey, L"PetCount", nullptr, nullptr, (LPBYTE)&val, &sz) == ERROR_SUCCESS) {
+            petCount = (int)val;
+        }
+        wchar_t dayBuf[32] = {0};
+        DWORD type = 0, dsz = sizeof(dayBuf) - sizeof(wchar_t);
+        std::string savedDay;
+        if (RegQueryValueExW(hKey, L"StatsDay", nullptr, &type, (LPBYTE)dayBuf, &dsz) == ERROR_SUCCESS && type == REG_SZ) {
+            for (int i = 0; dayBuf[i] && i < 16; ++i) savedDay += (char)dayBuf[i];
+        }
+        if (savedDay == day) {
+            sz = sizeof(val);
+            if (RegQueryValueExW(hKey, L"TodayKeys", nullptr, nullptr, (LPBYTE)&val, &sz) == ERROR_SUCCESS) {
+                todayKeys = (int)val;
+            }
+        }
+        RegCloseKey(hKey);
+    }
+
+    static void saveStatsToRegistry(const std::string& day, int todayKeys, int petCount) {
+        HKEY hKey = nullptr;
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\KuroCat", 0, nullptr, 0, KEY_WRITE, nullptr, &hKey, nullptr) != ERROR_SUCCESS) return;
+        DWORD kVal = (DWORD)std::max(0, todayKeys);
+        DWORD pVal = (DWORD)std::max(0, petCount);
+        RegSetValueExW(hKey, L"TodayKeys", 0, REG_DWORD, (const BYTE*)&kVal, sizeof(kVal));
+        RegSetValueExW(hKey, L"PetCount", 0, REG_DWORD, (const BYTE*)&pVal, sizeof(pVal));
+        std::wstring wday(day.begin(), day.end());
+        RegSetValueExW(hKey, L"StatsDay", 0, REG_SZ, (const BYTE*)wday.c_str(), (DWORD)((wday.size() + 1) * sizeof(wchar_t)));
         RegCloseKey(hKey);
     }
 };

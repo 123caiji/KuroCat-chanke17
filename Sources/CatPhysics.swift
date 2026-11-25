@@ -678,6 +678,7 @@ final class CatPhysics {
             isCurrentlyPetting = true
             totalPetSessions += 1
             UserDefaults.standard.set(totalPetSessions, forKey: "KuroCat.PetCount")
+            UserDefaults.standard.synchronize()
         }
 
         // Gentle nuzzle toward cursor

@@ -7,6 +7,8 @@
 #include <fstream>
 #include <sstream>
 #include <cstdlib>
+#include <ctime>
+#include <cstdio>
 #include <sys/stat.h>
 #include "KeyMap.hpp"
 #include "InputEngine.hpp"
@@ -110,7 +112,7 @@ struct CatSettings {
                 else if (k == "fullClickThrough") fullClickThrough = (std::stoi(v) != 0);
                 else if (k == "alwaysOnTop") alwaysOnTop = (std::stoi(v) != 0);
                 else if (k == "highFrameRate") highFrameRate = (std::stoi(v) != 0);
-                else if (k == "scale") scale = std::clamp(std::stof(v), 0.5f, 2.0f);
+                else if (k == "scale") scale = std::clamp(std::stof(v), 0.45f, 2.50f);
                 else if (k == "coatTheme") coatTheme = (CatCoatTheme)std::clamp(std::stoi(v), 0, 3);
                 else if (k == "keyboardTheme") keyboardTheme = (KeyboardTheme)std::clamp(std::stoi(v), 0, 2);
                 else if (k == "eyeTheme") eyeTheme = (EyeColorTheme)std::clamp(std::stoi(v), 0, 5);
@@ -158,6 +160,50 @@ struct CatSettings {
         if (posX != -99999 && posY != -99999) {
             f << "posX=" << posX << "\nposY=" << posY << "\n";
         }
+    }
+
+    static std::string todayDateString() {
+        std::time_t t = std::time(nullptr);
+        std::tm lt = {};
+        localtime_r(&t, &lt);
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d", lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday);
+        return buf;
+    }
+
+    static void loadStats(std::string& day, int& todayKeys, int& petCount) {
+        day = todayDateString();
+        todayKeys = 0;
+        petCount = 0;
+        std::ifstream f(configPath() + "/stats.ini");
+        if (!f.is_open()) return;
+        std::string savedDay;
+        int savedKeys = 0;
+        std::string line;
+        while (std::getline(f, line)) {
+            auto eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            std::string k = line.substr(0, eq);
+            std::string v = line.substr(eq + 1);
+            try {
+                if (k == "statsDay") savedDay = v;
+                else if (k == "todayKeys") savedKeys = std::max(0, std::stoi(v));
+                else if (k == "petCount") petCount = std::max(0, std::stoi(v));
+            } catch (...) {}
+        }
+        if (savedDay == day) todayKeys = savedKeys;
+    }
+
+    static void saveStats(const std::string& day, int todayKeys, int petCount) {
+        std::string dir = configPath();
+        std::string parent = dir.substr(0, dir.find_last_of('/'));
+        mkdir(parent.c_str(), 0755);
+        mkdir(dir.c_str(), 0755);
+        std::ofstream f(dir + "/stats.ini");
+        if (!f.is_open()) return;
+        f << "statsDay=" << day << "\n"
+          << "todayKeys=" << std::max(0, todayKeys) << "\n"
+          << "petCount=" << std::max(0, petCount) << "\n";
     }
 };
 

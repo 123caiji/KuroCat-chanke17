@@ -174,6 +174,8 @@ struct AppState {
     POINT dragStartWinOrigin = {};
     bool hasLastHover = false;
     Pt lastHoverCanvas = {};
+    std::string statsDay;
+    int lastSavedPetSessions = 0;
 
     // Reusable 32-bit premultiplied DIB backing buffer
     HDC memDC = nullptr;
@@ -2366,6 +2368,10 @@ void tickAndRender(AppState& app) {
                         float d = std::hypot(cp.x - app.lastHoverCanvas.x, cp.y - app.lastHoverCanvas.y);
                         if (d > 1.2f && d < 80.0f) {
                             app.physics.registerPetStroke(cp, d, true, app.settings);
+                            if (app.physics.totalPetSessions != app.lastSavedPetSessions) {
+                                app.lastSavedPetSessions = app.physics.totalPetSessions;
+                                CatSettings::saveStatsToRegistry(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
+                            }
                         }
                     }
                     app.lastHoverCanvas = cp;
@@ -2691,6 +2697,24 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 refreshSettingsWindow(*app);
             }
             return 0;
+
+        case WM_MOUSEWHEEL:
+            if (app && hwnd == app->hwnd) {
+                bool altHeld = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+                if (!app->settings.fullClickThrough || altHeld) {
+                    short wheelDelta = GET_WHEEL_DELTA_WPARAM(wParam);
+                    if (wheelDelta != 0) {
+                        float steps = (float)wheelDelta / (float)WHEEL_DELTA;
+                        float stepFactor = ((GET_KEYSTATE_WPARAM(wParam) & MK_CONTROL) != 0) ? 0.08f : 0.06f;
+                        float factor = 1.0f + std::clamp(steps * stepFactor, -0.25f, 0.25f);
+                        app->settings.scale = std::clamp(app->settings.scale * factor, 0.45f, 2.50f);
+                        applyWindowScaleAndPosition(*app, true, true);
+                        refreshSettingsWindow(*app);
+                    }
+                }
+                return 0;
+            }
+            break;
 
         case WM_RBUTTONDOWN:
             if (app && hwnd == app->hwnd) {
@@ -3046,6 +3070,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     AppState app;
     g_app = &app;
     app.settings.loadFromRegistry();
+    CatSettings::loadStatsFromRegistry(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
+    app.lastSavedPetSessions = app.physics.totalPetSessions;
     app.skins.reload();
     app.kbLibrary.reload();
     app.isElevated = isCurrentProcessElevated();
@@ -3055,7 +3081,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     if (app.settings.runAsAdmin && !app.isElevated && !noElevate) {
         if (hMutex) { CloseHandle(hMutex); hMutex = nullptr; }
         if (relaunchSelfElevated(L"--takeover --no-elevate")) {
-            g_app = nullptr;
+            CatSettings::saveStatsToRegistry(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
+    g_app = nullptr;
             return 0;
         }
         hMutex = CreateMutexW(nullptr, FALSE, kMutexName);
@@ -3073,6 +3100,14 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     }
 
     app.input.onKeyDown = [&](PhysicalKey k) {
+        std::string today = CatSettings::todayDateString();
+        if (today != app.statsDay) {
+            app.statsDay = today;
+            app.input.totalKeystrokesToday = 1;
+            CatSettings::saveStatsToRegistry(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
+        } else if (app.input.totalKeystrokesToday % 10 == 0) {
+            CatSettings::saveStatsToRegistry(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
+        }
         app.physics.triggerKeyDown(k, app.settings, activeSkin(app).typingStyle == SkinTypingStyle::Douni, &app.input.activeKeys);
     };
     app.input.onMouseClick = [&](int btn, bool down) {
@@ -3200,6 +3235,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         housekeeping(app);
     }
 
+    CatSettings::saveStatsToRegistry(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
     g_app = nullptr;
     Gdiplus::GdiplusShutdown(gdipToken);
     if (hMutex) CloseHandle(hMutex);

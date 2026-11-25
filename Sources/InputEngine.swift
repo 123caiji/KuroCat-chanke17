@@ -870,5 +870,6 @@ final class InputEngine {
     func flushStats() {
         UserDefaults.standard.set(statsDayString, forKey: "KuroCat.StatsDay")
         UserDefaults.standard.set(totalKeystrokesToday, forKey: "KuroCat.TodayKeys")
+        UserDefaults.standard.synchronize()
     }
 }
