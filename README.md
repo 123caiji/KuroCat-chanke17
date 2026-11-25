@@ -1,7 +1,10 @@
 # 🐱 KuroCat — 全状态键盘鼠标桌面萌猫 (macOS / Windows / Linux / 统信 UOS)
 
 <p align="center">
-  <b>简体中文</b> | <a href="README.en.md">English</a>
+  <b>简体中文</b> | <a href="README.en.md">English</a> ·
+  <a href="https://chanke17.github.io/KuroCat/">🌐 官方首页（网页直接试玩桌宠）</a> ·
+  <a href="https://kurocat-download.app.workbuddy.host/?sharecode=JVAABIVZ7L">⚡ 国内高速下载</a> ·
+  <a href="https://chanke17.github.io/KuroCat-Workshop/">🎨 皮肤工坊与广场</a>
 </p>
 
 <p align="center">

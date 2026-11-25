@@ -1,7 +1,10 @@
 # 🐱 KuroCat — Full-State Keyboard & Mouse Desktop Cat Pet (macOS / Windows / Linux / UOS)
 
 <p align="center">
-  <a href="README.md">简体中文</a> | <b>English</b>
+  <a href="README.md">简体中文</a> | <b>English</b> ·
+  <a href="https://chanke17.github.io/KuroCat/">🌐 Official Homepage (Play Live in Browser)</a> ·
+  <a href="https://chanke17.github.io/KuroCat-Workshop/">🎨 Skin Workshop &amp; Plaza</a> ·
+  <a href="https://github.com/chanke17/KuroCat/releases/latest">⬇️ Download Latest</a>
 </p>
 
 <p align="center">
