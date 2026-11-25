@@ -1815,10 +1815,20 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
         g_signal_connect(importItem, "activate", G_CALLBACK(+[](GtkMenuItem*, gpointer) { showDressingRoom(); }), nullptr);
         gtk_menu_shell_append(GTK_MENU_SHELL(sub), importItem);
 
+        GtkWidget* subWorkshopItem = gtk_menu_item_new_with_label(tr("打开皮肤工坊…", "Open Skin Workshop…"));
+        g_signal_connect(subWorkshopItem, "activate", G_CALLBACK(+[](GtkMenuItem*, gpointer) {
+            openUrlInBrowser("https://chanke17.github.io/KuroCat-Workshop/");
+        }), nullptr);
+        gtk_menu_shell_append(GTK_MENU_SHELL(sub), subWorkshopItem);
+
         GtkWidget* parent = gtk_menu_item_new_with_label(tr("猫咪皮肤 🐱", "Cat Skin 🐱"));
         gtk_menu_item_set_submenu(GTK_MENU_ITEM(parent), sub);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), parent);
     }
+
+    addAction(tr("🎨 皮肤工坊（制作皮肤）…", "🎨 Skin Workshop (Create Skins)…"), G_CALLBACK(+[](GtkMenuItem*, gpointer) {
+        openUrlInBrowser("https://chanke17.github.io/KuroCat-Workshop/");
+    }));
 
     addAction(tr("⚙️ 设置…", "⚙️ Settings…"), G_CALLBACK(+[](GtkMenuItem*, gpointer) {
         showSettingsWindow();

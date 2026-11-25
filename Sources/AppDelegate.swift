@@ -359,6 +359,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         coatParent.submenu = coatMenu
         menu.addItem(coatParent)
 
+        let topWorkshopItem = NSMenuItem(
+            title: tr("🎨 皮肤工坊（制作皮肤）…", "🎨 Skin Workshop (Create Skins)…"),
+            action: #selector(openSkinWorkshop),
+            keyEquivalent: ""
+        )
+        topWorkshopItem.target = self
+        menu.addItem(topWorkshopItem)
+
         let settingsItem = NSMenuItem(title: tr("⚙️ 设置…", "⚙️ Settings…"), action: #selector(openSettingsWindow), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)

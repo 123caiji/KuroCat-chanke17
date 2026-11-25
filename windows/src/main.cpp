@@ -625,8 +625,35 @@ void startAsyncUpdateCheck(HWND notifyHwnd, bool manual, int delayMs = 0) {
 
 struct UpdateDownloadResult {
     bool ok = false;
-    std::wstring batPath;
+    std::wstring newExePath;
+    std::wstring targetExePath;
 };
+
+bool launchProcessArgs(const std::wstring& exePath, const std::wstring& args) {
+    std::wstring cmdLine = L"\"" + exePath + L"\"";
+    if (!args.empty()) {
+        cmdLine += L" ";
+        cmdLine += args;
+    }
+    std::vector<wchar_t> cmdBuf(cmdLine.begin(), cmdLine.end());
+    cmdBuf.push_back(L'\0');
+    STARTUPINFOW si = {};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi = {};
+    BOOL ok = CreateProcessW(
+        exePath.c_str(),
+        cmdBuf.data(),
+        nullptr, nullptr, FALSE,
+        0, nullptr, nullptr,
+        &si, &pi
+    );
+    if (ok) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return true;
+    }
+    return false;
+}
 
 DWORD WINAPI updateDownloadThreadProc(LPVOID param) {
     HWND notifyHwnd = reinterpret_cast<HWND>(param);
@@ -635,112 +662,46 @@ DWORD WINAPI updateDownloadThreadProc(LPVOID param) {
 
     std::wstring ua = std::wstring(L"KuroCat/") + APP_VERSION;
     HINTERNET hSession = openWinHttpSession(ua);
-        if (hSession) {
-            WinHttpSetTimeouts(hSession, 10000, 10000, 30000, 60000);
-            HINTERNET hConnect = WinHttpConnect(hSession, L"kurocat-download.app.workbuddy.host", INTERNET_DEFAULT_HTTPS_PORT, 0);
-            if (hConnect) {
-                exeBytes = fetchWorkBuddyPath(hConnect, UPDATE_WIN_EXE_PATH);
-                WinHttpCloseHandle(hConnect);
-            }
-            WinHttpCloseHandle(hSession);
+    if (hSession) {
+        WinHttpSetTimeouts(hSession, 10000, 10000, 30000, 60000);
+        HINTERNET hConnect = WinHttpConnect(hSession, L"kurocat-download.app.workbuddy.host", INTERNET_DEFAULT_HTTPS_PORT, 0);
+        if (hConnect) {
+            exeBytes = fetchWorkBuddyPath(hConnect, UPDATE_WIN_EXE_PATH);
+            WinHttpCloseHandle(hConnect);
         }
+        WinHttpCloseHandle(hSession);
+    }
 
-        if (exeBytes.size() > 50000 && exeBytes[0] == 'M' && exeBytes[1] == 'Z') {
-            wchar_t curExe[MAX_PATH] = {};
-            GetModuleFileNameW(nullptr, curExe, MAX_PATH);
-            wchar_t tempDir[MAX_PATH] = {};
-            GetTempPathW(MAX_PATH, tempDir);
+    if (exeBytes.size() > 50000 && exeBytes[0] == 'M' && exeBytes[1] == 'Z') {
+        wchar_t curExe[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, curExe, MAX_PATH);
+        wchar_t tempDir[MAX_PATH] = {};
+        GetTempPathW(MAX_PATH, tempDir);
 
-            // Keep a real .exe extension so the fallback below can launch it directly.
-            std::wstring curExeStr(curExe);
-            std::wstring newExePath = (curExeStr.size() > 4 && _wcsicmp(curExeStr.c_str() + curExeStr.size() - 4, L".exe") == 0)
-                ? curExeStr.substr(0, curExeStr.size() - 4) + L".update.exe"
-                : curExeStr + L".update.exe";
-            HANDLE hNew = CreateFileW(newExePath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (hNew == INVALID_HANDLE_VALUE) {
-                newExePath = std::wstring(tempDir) + L"KuroCat_update.exe";
-                hNew = CreateFileW(newExePath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-            }
-            if (hNew != INVALID_HANDLE_VALUE) {
-                DWORD written = 0;
-                BOOL okWrite = WriteFile(hNew, exeBytes.data(), (DWORD)exeBytes.size(), &written, nullptr);
-                CloseHandle(hNew);
-                if (okWrite && written == (DWORD)exeBytes.size()) {
-                    std::wstring batPath = std::wstring(tempDir) + L"kurocat_update.bat";
-                    DWORD pid = GetCurrentProcessId();
-                    std::string batUtf8 = "@echo off\r\n:wait\r\n"
-                        "tasklist /FI \"PID eq " + std::to_string(pid) + "\" 2>nul | find \"" + std::to_string(pid) + "\" >nul\r\n"
-                        "if not errorlevel 1 (\r\n"
-                        "  ping -n 2 127.0.0.1 >nul\r\n"
-                        "  goto wait\r\n"
-                        ")\r\n";
-
-                    auto wideToUtf8 = [](const std::wstring& w) -> std::string {
-                        if (w.empty()) return "";
-                        int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
-                        std::string s(n, '\0');
-                        WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), &s[0], n, nullptr, nullptr);
-                        return s;
-                    };
-                    // Use local ANSI codepage for cmd.exe .bat compatibility
-                    auto wideToAcp = [](const std::wstring& w) -> std::string {
-                        if (w.empty()) return "";
-                        int n = WideCharToMultiByte(CP_ACP, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
-                        std::string s(n, '\0');
-                        WideCharToMultiByte(CP_ACP, 0, w.c_str(), (int)w.size(), &s[0], n, nullptr, nullptr);
-                        return s;
-                    };
-                    (void)wideToUtf8;
-                    std::string srcAcp = wideToAcp(newExePath);
-                    std::string dstAcp = wideToAcp(curExe);
-
-                    // Per-user fallback location (no admin rights needed) for when the old exe cannot be
-                    // overwritten (read-only folder, antivirus lock...). Previously the move failed silently,
-                    // the OLD exe was restarted and users kept being told a new version was available.
-                    wchar_t localAppData[MAX_PATH] = {};
-                    GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH);
-                    std::wstring fallbackDirW = localAppData[0] ? (std::wstring(localAppData) + L"\\Programs\\KuroCat")
-                                                                : (std::wstring(tempDir) + L"KuroCat");
-                    std::string fbDirAcp = wideToAcp(fallbackDirW);
-                    std::string fbExeAcp = fbDirAcp + "\\KuroCat.exe";
-
-                    batUtf8 += "set /a tries=0\r\n"
-                               ":retry\r\n"
-                               "move /y \"" + srcAcp + "\" \"" + dstAcp + "\" >nul 2>&1\r\n"
-                               "if not errorlevel 1 goto launch\r\n"
-                               "set /a tries+=1\r\n"
-                               "if %tries% lss 15 (\r\n"
-                               "  ping -n 2 127.0.0.1 >nul\r\n"
-                               "  goto retry\r\n"
-                               ")\r\n"
-                               "if not exist \"" + fbDirAcp + "\" mkdir \"" + fbDirAcp + "\"\r\n"
-                               "copy /y \"" + srcAcp + "\" \"" + fbExeAcp + "\" >nul 2>&1\r\n"
-                               "if errorlevel 1 goto launch\r\n"
-                               "del /q \"" + srcAcp + "\" >nul 2>&1\r\n"
-                               "start \"\" \"" + fbExeAcp + "\"\r\n"
-                               "goto done\r\n"
-                               ":launch\r\n"
-                               "start \"\" \"" + dstAcp + "\"\r\n"
-                               ":done\r\n"
-                               "del \"%~f0\"\r\n";
-
-                    HANDLE hBat = CreateFileW(batPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-                    if (hBat != INVALID_HANDLE_VALUE) {
-                        DWORD bw = 0;
-                        BOOL okBat = WriteFile(hBat, batUtf8.data(), (DWORD)batUtf8.size(), &bw, nullptr);
-                        CloseHandle(hBat);
-                        if (okBat && bw == (DWORD)batUtf8.size()) {
-                            res->ok = true;
-                            res->batPath = batPath;
-                        }
-                    }
-                }
+        std::wstring curExeStr(curExe);
+        std::wstring newExePath = (curExeStr.size() > 4 && _wcsicmp(curExeStr.c_str() + curExeStr.size() - 4, L".exe") == 0)
+            ? curExeStr.substr(0, curExeStr.size() - 4) + L".update.exe"
+            : curExeStr + L".update.exe";
+        HANDLE hNew = CreateFileW(newExePath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hNew == INVALID_HANDLE_VALUE) {
+            newExePath = std::wstring(tempDir) + L"KuroCat_update.exe";
+            hNew = CreateFileW(newExePath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        }
+        if (hNew != INVALID_HANDLE_VALUE) {
+            DWORD written = 0;
+            BOOL okWrite = WriteFile(hNew, exeBytes.data(), (DWORD)exeBytes.size(), &written, nullptr);
+            CloseHandle(hNew);
+            if (okWrite && written == (DWORD)exeBytes.size()) {
+                res->ok = true;
+                res->newExePath = newExePath;
+                res->targetExePath = curExeStr;
             }
         }
+    }
 
-        if (!PostMessageW(notifyHwnd, WM_UPDATE_DOWNLOAD_DONE, 0, reinterpret_cast<LPARAM>(res))) {
-            delete res;
-        }
+    if (!PostMessageW(notifyHwnd, WM_UPDATE_DOWNLOAD_DONE, 0, reinterpret_cast<LPARAM>(res))) {
+        delete res;
+    }
     return 0;
 }
 
@@ -2025,7 +1986,13 @@ void showContextMenu(AppState& app, POINT screenPt) {
     }
     AppendMenuW(coatMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(coatMenu, MF_STRING, CMD_IMPORT_SKIN, tr(L"\u5BFC\u5165\u76AE\u80A4 / \u6362\u88C5\u95F4\u2026", L"Import Skin / Wardrobe..."));
+    AppendMenuW(coatMenu, MF_STRING, CMD_OPEN_WORKSHOP, tr(L"\u6253\u5F00\u76AE\u80A4\u5DE5\u574A\u2026", L"Open Skin Workshop..."));
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)coatMenu, tr(L"\u732B\u54AA\u76AE\u80A4 \U0001F431", L"Cat Skin \U0001F431"));
+
+    // Skin Workshop (Create custom skins) right on the top-level menu
+    AppendMenuW(menu, MF_STRING, CMD_OPEN_WORKSHOP,
+        tr(L"\U0001F3A8 \u76AE\u80A4\u5DE5\u574A\uFF08\u5236\u4F5C\u76AE\u80A4\uFF09\u2026",
+           L"\U0001F3A8 Skin Workshop (Create Skins)..."));
 
     // Unified Settings window
     AppendMenuW(menu, MF_STRING, CMD_OPEN_SETTINGS, tr(L"\u2699\uFE0F \u8BBE\u7F6E\u2026", L"\u2699\uFE0F Settings..."));
@@ -2789,8 +2756,13 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             auto* res = reinterpret_cast<UpdateDownloadResult*>(lParam);
             if (res) {
                 if (app) app->isUpdating = false;
-                if (res->ok && !res->batPath.empty()) {
-                    ShellExecuteW(nullptr, L"open", res->batPath.c_str(), nullptr, nullptr, SW_HIDE);
+                bool launched = false;
+                if (res->ok && !res->newExePath.empty() && !res->targetExePath.empty()) {
+                    std::wstring args = L"--apply-update " + std::to_wstring(GetCurrentProcessId())
+                                      + L" \"" + res->targetExePath + L"\"";
+                    launched = launchProcessArgs(res->newExePath, args);
+                }
+                if (launched) {
                     PostQuitMessage(0);
                 } else {
                     if (MessageBoxW(nullptr,
@@ -2874,11 +2846,93 @@ bool shutDownRunningInstance(HWND owner, DWORD timeoutMs) {
     return gone;
 }
 
+/// Native Win32 self-update handler (no .bat scripts or hidden cmd.exe).
+/// Returns true if this process was invoked solely to apply an update and should now exit.
+bool handleNativeSelfUpdateIfRequested() {
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (!argv) return false;
+
+    DWORD oldPid = 0;
+    std::wstring targetPath;
+    std::wstring cleanupPath;
+    for (int i = 1; i < argc; ++i) {
+        if (_wcsicmp(argv[i], L"--apply-update") == 0 && i + 2 < argc) {
+            oldPid = (DWORD)wcstoul(argv[i + 1], nullptr, 10);
+            targetPath = argv[i + 2];
+            i += 2;
+        } else if (_wcsicmp(argv[i], L"--cleanup-update") == 0 && i + 1 < argc) {
+            cleanupPath = argv[i + 1];
+            i += 1;
+        }
+    }
+    LocalFree(argv);
+
+    if (!cleanupPath.empty()) {
+        for (int attempt = 0; attempt < 10; ++attempt) {
+            if (DeleteFileW(cleanupPath.c_str()) || GetLastError() == ERROR_FILE_NOT_FOUND) break;
+            Sleep(150);
+        }
+    }
+
+    if (targetPath.empty()) return false;
+
+    if (oldPid != 0 && oldPid != GetCurrentProcessId()) {
+        HANDLE hOld = OpenProcess(SYNCHRONIZE, FALSE, oldPid);
+        if (hOld) {
+            WaitForSingleObject(hOld, 12000);
+            CloseHandle(hOld);
+        }
+    }
+
+    wchar_t myPath[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, myPath, MAX_PATH);
+    std::wstring myPathStr(myPath);
+
+    std::wstring launchPath = targetPath;
+    bool copied = false;
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        if (CopyFileW(myPathStr.c_str(), targetPath.c_str(), FALSE)) {
+            copied = true;
+            break;
+        }
+        Sleep(250);
+    }
+
+    // Per-user fallback folder if the original directory is read-only or locked
+    if (!copied) {
+        wchar_t localAppData[MAX_PATH] = {};
+        GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH);
+        if (localAppData[0]) {
+            std::wstring fbDir = std::wstring(localAppData) + L"\\Programs";
+            CreateDirectoryW(fbDir.c_str(), nullptr);
+            fbDir += L"\\KuroCat";
+            CreateDirectoryW(fbDir.c_str(), nullptr);
+            std::wstring fbExe = fbDir + L"\\KuroCat.exe";
+            if (CopyFileW(myPathStr.c_str(), fbExe.c_str(), FALSE)) {
+                launchPath = fbExe;
+                copied = true;
+            }
+        }
+    }
+
+    if (copied) {
+        launchProcessArgs(launchPath, L"--takeover --cleanup-update \"" + myPathStr + L"\"");
+        return true;
+    }
+    // If both copies failed, simply continue running from the downloaded exe itself
+    return false;
+}
+
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     // Enable best available DPI awareness (Per-Monitor V2 on Win10/11, Per-Monitor on Win8.1, System DPI on Win7)
     enableBestDpiAwareness();
+
+    if (handleNativeSelfUpdateIfRequested()) {
+        return 0;
+    }
 
     const int myVersion = versionToNumber(APP_VERSION);
     const bool forceTakeover = commandLineHasFlag(L"--takeover");   // admin relaunch
