@@ -143,9 +143,18 @@ KuroCat/
 
 ---
 
-## 🔒 隐私说明
+## 🔒 隐私说明 / Privacy Policy
 
 KuroCat 的所有键盘与鼠标硬件信号**仅在本地内存实时驱动桌宠动画与计数**，**绝不记录按键内容、绝不写日志**；除启动或手动点击「检查更新」时请求官方下载站获取最新版本号外无任何其他联网行为，全部源码完全开源可审计。
+
+KuroCat processes all keyboard and mouse input strictly locally in memory to animate the desktop pet. It does not log keystrokes, collect telemetry, or send personal data to any server.
+
+## 🔏 Code Signing Policy
+
+Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+- **Committers & Reviewers**: Project maintainers of `chanke17/KuroCat` (source code changes are reviewed and built reproducibly via GitHub Actions).
+- **Approvers**: Repository owner (`chanke17`).
 
 ## 📄 License
 
