@@ -13,6 +13,67 @@ enum CatRenderer {
     static let catBlack = NSColor(calibratedRed: 0.085, green: 0.085, blue: 0.095, alpha: 1.0)
     private static let blackOutlineWidth: CGFloat = 1.8
     private static let blackOutlineColor = NSColor(calibratedWhite: 1.0, alpha: 0.96)
+    private static let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
+
+    private static let hazelRingColors: [CGColor] = (0...24).map { i in
+        let t = CGFloat(i) / 24.0
+        let mix = t * t * (3.0 - 2.0 * t)
+        return NSColor(calibratedRed: (218.0 - 77.0 * mix) / 255.0,
+                       green: (178.0 - 33.0 * mix) / 255.0,
+                       blue: (87.0 + 41.0 * mix) / 255.0,
+                       alpha: 1.0).cgColor
+    }
+
+    private static let siameseIrisGradient: CGGradient? = {
+        let cols = [
+            NSColor(calibratedRed: 0.56, green: 0.77, blue: 0.90, alpha: 1.0).cgColor,
+            NSColor(calibratedRed: 0.71, green: 0.87, blue: 0.96, alpha: 1.0).cgColor,
+            NSColor(calibratedRed: 0.86, green: 0.945, blue: 0.99, alpha: 1.0).cgColor
+        ] as CFArray
+        return CGGradient(colorsSpace: rgbColorSpace, colors: cols, locations: [0.0, 0.55, 1.0])
+    }()
+
+    private static let radialGlowMask: CGImage? = {
+        let size = 128
+        var pixels = [UInt8](repeating: 0, count: size * size)
+        let center = CGFloat(size - 1) * 0.5
+        let invR = 1.0 / (CGFloat(size) * 0.5)
+        for y in 0..<size {
+            let dy = (CGFloat(y) - center) * invR
+            for x in 0..<size {
+                let dx = (CGFloat(x) - center) * invR
+                let dist = sqrt(dx * dx + dy * dy)
+                let a = max(0.0, min(1.0, 1.0 - dist))
+                pixels[y * size + x] = UInt8((a * 255.0).rounded())
+            }
+        }
+        let data = Data(pixels) as CFData
+        guard let provider = CGDataProvider(data: data) else { return nil }
+        return CGImage(
+            width: size,
+            height: size,
+            bitsPerComponent: 8,
+            bitsPerPixel: 8,
+            bytesPerRow: size,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.alphaOnly.rawValue),
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: true,
+            intent: .defaultIntent
+        )
+    }()
+
+    static func marqueeSteps(asleep: Bool) -> Int {
+        asleep ? 24 : 48
+    }
+
+    static func marqueeBucket(phase: CGFloat, asleep: Bool) -> Int {
+        let steps = marqueeSteps(asleep: asleep)
+        var p = phase.truncatingRemainder(dividingBy: 1.0)
+        if p < 0 { p += 1.0 }
+        return Int((p * CGFloat(steps)).rounded()) % steps
+    }
 
     private static func rgb(_ hex: Int, _ alpha: CGFloat = 1) -> NSColor {
         NSColor(calibratedRed: CGFloat((hex >> 16) & 255) / 255,
@@ -170,6 +231,93 @@ enum CatRenderer {
         return .none
     }
 
+    static func canSplitLayers(physics: CatPhysics, skin: SkinSpec) -> Bool {
+        skin.renderStyle != .douni && physics.scruffDrag.value <= 0.005
+    }
+
+    /// Backdrop only (optional green screen + mouse/tablet + keyboard) for split-layer marquee caching.
+    static func drawBackdrop(in ctx: CGContext, physics: CatPhysics, isPreview: Bool = false) {
+        ctx.saveGState()
+        ctx.setAllowsAntialiasing(true)
+        ctx.setShouldAntialias(true)
+
+        let settings = CatSettings.shared
+        if !isPreview && settings.obsCaptureMode == 2 {
+            ctx.setFillColor(NSColor(calibratedRed: 0.0, green: 1.0, blue: 0.0, alpha: 1.0).cgColor)
+            ctx.fill(CGRect(origin: .zero, size: CatPhysics.canvasSize))
+        }
+        let flipped = isPreview ? false : settings.flipHorizontal
+        let rotationDeg: CGFloat = isPreview ? 0.0 : settings.rotationDeg
+        let hasCanvasTransform = flipped || abs(rotationDeg) > 0.05
+        if hasCanvasTransform {
+            applyCanvasTransform(in: ctx, flipped: flipped, rotationDeg: rotationDeg)
+        }
+        let kbSkin = settings.activeKeyboardSkin
+        let scruff = max(0, min(1, physics.scruffDrag.value))
+        let lie = max(0, min(1, physics.lieIntensity.value))
+        let dizzy = max(0, min(1, physics.dizzyIntensity.value))
+        if physics.isTabletActive {
+            drawTablet(in: ctx, physics: physics, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme)
+            if !physics.leftPawOnMouse || scruff > 0.25 || dizzy > 0.35 || lie > 0.45 {
+                drawParkedStylus(in: ctx, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme)
+            }
+        } else {
+            drawMouse(in: ctx, physics: physics, kbSkin: kbSkin)
+        }
+        drawKeyboard(in: ctx, physics: physics, kbSkin: kbSkin, eyeTheme: settings.eyeTheme,
+                     showLegends: settings.showKeyLegends, flipped: flipped, marquee: settings.keyboardMarquee)
+        ctx.restoreGState()
+    }
+
+    /// Foreground cat + floating badges + sparkles (for split-layer marquee caching).
+    static func drawForeground(in ctx: CGContext, physics: CatPhysics, isPreview: Bool = false) {
+        ctx.saveGState()
+        ctx.setAllowsAntialiasing(true)
+        ctx.setShouldAntialias(true)
+
+        let settings = CatSettings.shared
+        let flipped = isPreview ? false : settings.flipHorizontal
+        let rotationDeg: CGFloat = isPreview ? 0.0 : settings.rotationDeg
+        let hasCanvasTransform = flipped || abs(rotationDeg) > 0.05
+        if hasCanvasTransform {
+            applyCanvasTransform(in: ctx, flipped: flipped, rotationDeg: rotationDeg)
+        }
+        drawStandardCatAndEffects(in: ctx, physics: physics, skin: settings.activeSkin,
+                                  eyeTheme: settings.eyeTheme, keyboardTheme: settings.keyboardTheme,
+                                  whiteOutline: settings.whiteOutline)
+        ctx.restoreGState()
+    }
+
+    static func drawOverlays(in ctx: CGContext, showPermissionPill: Bool,
+                             permissionPillText: String = "点击开启全局/游戏键盘监听 🔑",
+                             isPreview: Bool = false) {
+        let settings = CatSettings.shared
+        let flipped = isPreview ? false : settings.flipHorizontal
+        let rotationDeg: CGFloat = isPreview ? 0.0 : settings.rotationDeg
+        let showEdit = !isPreview && settings.isEditMode
+        if showEdit {
+            drawEditOverlay(in: ctx, isEnglish: settings.isEnglish, scale: settings.scale, rotationDeg: rotationDeg, flipped: flipped)
+        }
+        if showPermissionPill {
+            drawPermissionPill(in: ctx, text: permissionPillText)
+        }
+    }
+
+    private static func applyCanvasTransform(in ctx: CGContext, flipped: Bool, rotationDeg: CGFloat) {
+        if abs(rotationDeg) > 0.05 {
+            let rad = rotationDeg * .pi / 180.0
+            let fitScale = 1.0 - abs(sin(rad)) * 0.14
+            ctx.translateBy(x: 180.0, y: 160.0)
+            ctx.rotate(by: rad)
+            ctx.scaleBy(x: fitScale, y: fitScale)
+            ctx.translateBy(x: -180.0, y: -160.0)
+        }
+        if flipped {
+            ctx.translateBy(x: CatPhysics.canvasSize.width, y: 0)
+            ctx.scaleBy(x: -1, y: 1)
+        }
+    }
+
     /// Main 60fps draw routine in flipped 360x320 logical coordinate space.
     static func draw(in ctx: CGContext, physics: CatPhysics, showPermissionPill: Bool,
                      permissionPillText: String = "点击开启全局/游戏键盘监听 🔑",
@@ -189,32 +337,12 @@ enum CatRenderer {
         let hasCanvasTransform = flipped || abs(rotationDeg) > 0.05
         if hasCanvasTransform {
             ctx.saveGState()
-            if abs(rotationDeg) > 0.05 {
-                let rad = rotationDeg * .pi / 180.0
-                let fitScale = 1.0 - abs(sin(rad)) * 0.14
-                ctx.translateBy(x: 180.0, y: 160.0)
-                ctx.rotate(by: rad)
-                ctx.scaleBy(x: fitScale, y: fitScale)
-                ctx.translateBy(x: -180.0, y: -160.0)
-            }
-            if flipped {
-                ctx.translateBy(x: CatPhysics.canvasSize.width, y: 0)
-                ctx.scaleBy(x: -1, y: 1)
-            }
+            applyCanvasTransform(in: ctx, flipped: flipped, rotationDeg: rotationDeg)
         }
         let skin = settings.activeSkin
-        let breath = physics.breathingOffset
         let scruff = max(0, min(1, physics.scruffDrag.value))
         let lie = max(0, min(1, physics.lieIntensity.value))
         let dizzy = max(0, min(1, physics.dizzyIntensity.value))
-        let lieS = lie * lie * (3.0 - 2.0 * lie)
-        // Dizzy has 2 stages: [0.12..0.50] upright stars + spiral eyes + wobble; [0.50..1.0] smooth sideways collapse onto keyboard!
-        let dizzyFallRaw = max(0, min(1, (dizzy - 0.50) / 0.50))
-        let dizzyFall = dizzyFallRaw * dizzyFallRaw * (3.0 - 2.0 * dizzyFallRaw)
-        let preWobble = max(0, min(1, (dizzy - 0.12) / 0.38)) * (1.0 - dizzyFall)
-
-        let seatX = CatPhysics.seatAnchor.x + physics.bodyShiftX.value
-        let seatY = CatPhysics.seatAnchor.y - scruff * 22.0 + lieS * 10.0
         let kbSkin = settings.activeKeyboardSkin
 
         if skin.renderStyle == .douni {
@@ -285,6 +413,41 @@ enum CatRenderer {
         // 2. Mini Angled 65% Mechanical Keyboard + Dynamic Keycap Glow
         drawKeyboard(in: ctx, physics: physics, kbSkin: kbSkin, eyeTheme: settings.eyeTheme, showLegends: settings.showKeyLegends, flipped: flipped, marquee: settings.keyboardMarquee)
 
+        drawStandardCatAndEffects(in: ctx, physics: physics, skin: skin,
+                                  eyeTheme: settings.eyeTheme, keyboardTheme: settings.keyboardTheme,
+                                  whiteOutline: settings.whiteOutline)
+
+        if hasCanvasTransform {
+            ctx.restoreGState()
+        }
+
+        // 10. Clean Transparent Resize & Rotation Edit Box (no blue tint, no flip/done buttons)
+        if showEdit {
+            drawEditOverlay(in: ctx, isEnglish: settings.isEnglish, scale: settings.scale, rotationDeg: rotationDeg, flipped: flipped)
+        }
+
+        // 11. Optional non-intrusive Permission Pill if global monitoring not yet granted
+        if showPermissionPill {
+            drawPermissionPill(in: ctx, text: permissionPillText)
+        }
+
+        ctx.restoreGState()
+    }
+
+    private static func drawStandardCatAndEffects(in ctx: CGContext, physics: CatPhysics,
+                                                  skin: SkinSpec, eyeTheme: EyeColorTheme,
+                                                  keyboardTheme: KeyboardTheme, whiteOutline: Bool) {
+        let breath = physics.breathingOffset
+        let scruff = max(0, min(1, physics.scruffDrag.value))
+        let lie = max(0, min(1, physics.lieIntensity.value))
+        let dizzy = max(0, min(1, physics.dizzyIntensity.value))
+        let lieS = lie * lie * (3.0 - 2.0 * lie)
+        let dizzyFallRaw = max(0, min(1, (dizzy - 0.50) / 0.50))
+        let dizzyFall = dizzyFallRaw * dizzyFallRaw * (3.0 - 2.0 * dizzyFallRaw)
+        let preWobble = max(0, min(1, (dizzy - 0.12) / 0.38)) * (1.0 - dizzyFall)
+        let seatX = CatPhysics.seatAnchor.x + physics.bodyShiftX.value
+        let seatY = CatPhysics.seatAnchor.y - scruff * 22.0 + lieS * 10.0
+
         // Rigid-body wobble (pre-dizzy) -> natural sideways collapse onto the keyboard (dizzy >= 0.5)
         let fallAngle: CGFloat = -dizzyFall * 1.46 + sin(physics.time * 9.5) * 0.16 * preWobble
         let fallShiftX: CGFloat = dizzyFall * 56.0
@@ -300,7 +463,7 @@ enum CatRenderer {
             ctx.translateBy(x: -seatX, y: -seatY)
         }
 
-        let showWhiteOutline = settings.whiteOutline
+        let showWhiteOutline = whiteOutline
         // Pass 1: optional unified sticker-style outer white outline for ALL cat skins
         if showWhiteOutline {
             // Outline connected parts before any fills so the tail root has no white seam.
@@ -353,7 +516,7 @@ enum CatRenderer {
 
         // 7b. Held Stylus gripped cleanly in the cat's paw when drawing on the graphics tablet!
         if physics.isTabletActive && physics.leftPawOnMouse && scruff <= 0.25 && dizzy <= 0.35 && lie <= 0.45 {
-            drawHeldStylus(in: ctx, physics: physics, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme)
+            drawHeldStylus(in: ctx, physics: physics, theme: keyboardTheme, eyeTheme: eyeTheme)
         }
 
         // 7c. Neck stickers (collar/scarf/bowtie) over chest & arm roots, cleanly behind head features
@@ -362,7 +525,7 @@ enum CatRenderer {
         }
 
         // 8. 2.5D Turning Head Features: Luminous Eyes & Whiskers (+ optional nose/mouth)
-        drawHeadFeatures(in: ctx, center: localHeadCenter, physics: physics, eyeTheme: settings.eyeTheme, skin: skin)
+        drawHeadFeatures(in: ctx, center: localHeadCenter, physics: physics, eyeTheme: eyeTheme, skin: skin)
 
         // 8b. Face & head-top stickers cleanly above eyes, ears & features
         if !skin.decorations.isEmpty {
@@ -418,23 +581,9 @@ enum CatRenderer {
         }
 
         // 9. Subtle Petting Sparkles / Sleep Z
-        drawSparkles(in: ctx, physics: physics, eyeTheme: settings.eyeTheme)
-
-        if hasCanvasTransform {
-            ctx.restoreGState()
+        if !physics.sparkles.isEmpty {
+            drawSparkles(in: ctx, physics: physics, eyeTheme: eyeTheme)
         }
-
-        // 10. Clean Transparent Resize & Rotation Edit Box (no blue tint, no flip/done buttons)
-        if showEdit {
-            drawEditOverlay(in: ctx, isEnglish: settings.isEnglish, scale: settings.scale, rotationDeg: rotationDeg, flipped: flipped)
-        }
-
-        // 11. Optional non-intrusive Permission Pill if global monitoring not yet granted
-        if showPermissionPill {
-            drawPermissionPill(in: ctx, text: permissionPillText)
-        }
-
-        ctx.restoreGState()
     }
 
     private static func drawEditOverlay(in ctx: CGContext, isEnglish: Bool, scale: CGFloat, rotationDeg: CGFloat = 0, flipped: Bool = false) {
@@ -529,6 +678,19 @@ enum CatRenderer {
 
     // MARK: - Mini White Mouse
 
+    private struct MouseCacheKey: Equatable {
+        let kbSkin: KeyboardSkinSpec
+        let scale: CGSize
+    }
+    private static var cachedIdleMouse: (key: MouseCacheKey, bitmap: KeyboardBitmap)?
+
+    private static func currentRasterScale(in ctx: CGContext) -> CGSize {
+        let transform = ctx.userSpaceToDeviceSpaceTransform
+        func rasterScale(_ value: CGFloat) -> CGFloat { min(4, max(1, (value * 4).rounded(.up) / 4)) }
+        return CGSize(width: rasterScale(hypot(transform.a, transform.b)),
+                      height: rasterScale(hypot(transform.c, transform.d)))
+    }
+
     private static func drawMouse(in ctx: CGContext, physics: CatPhysics, kbSkin: KeyboardSkinSpec) {
         let center = CGPoint(
             x: CatPhysics.mouseBaseCenter.x + physics.mouseOffset.point.x,
@@ -540,6 +702,28 @@ enum CatRenderer {
         ctx.translateBy(x: center.x, y: center.y + pressShift)
         ctx.rotate(by: 0.22) // angled naturally for the cat's right paw (facing the cat!)
 
+        let isPressed = physics.mousePressLeft.value > 0.05 || physics.mousePressRight.value > 0.05
+        if !isPressed {
+            let scale = currentRasterScale(in: ctx)
+            let key = MouseCacheKey(kbSkin: kbSkin, scale: scale)
+            if cachedIdleMouse?.key != key {
+                let bmp = KeyboardBitmap(bounds: CGRect(x: -16, y: -19, width: 32, height: 39), scale: scale) { mctx in
+                    drawMouseVector(in: mctx, pressLeft: 0, pressRight: 0, kbSkin: kbSkin)
+                }
+                if let bmp { cachedIdleMouse = (key, bmp) }
+            }
+            if let bmp = cachedIdleMouse?.bitmap {
+                bmp.draw(in: ctx)
+                ctx.restoreGState()
+                return
+            }
+        }
+
+        drawMouseVector(in: ctx, pressLeft: physics.mousePressLeft.value, pressRight: physics.mousePressRight.value, kbSkin: kbSkin)
+        ctx.restoreGState()
+    }
+
+    private static func drawMouseVector(in ctx: CGContext, pressLeft: CGFloat, pressRight: CGFloat, kbSkin: KeyboardSkinSpec) {
         // Soft underside shadow
         ctx.saveGState()
         ctx.setFillColor(NSColor(calibratedWhite: 0.0, alpha: 0.24).cgColor)
@@ -556,19 +740,19 @@ enum CatRenderer {
         ctx.fillEllipse(in: bodyRect)
 
         // Subtle click flash highlight (cat-facing: left button = inner right side, right button = outer left side!)
-        if physics.mousePressLeft.value > 0.05 {
+        if pressLeft > 0.05 {
             ctx.saveGState()
             ctx.addEllipse(in: bodyRect)
             ctx.clip()
-            ctx.setFillColor(NSColor(calibratedRed: 0.79, green: 0.95, blue: 0.25, alpha: 0.38 * physics.mousePressLeft.value).cgColor)
+            ctx.setFillColor(NSColor(calibratedRed: 0.79, green: 0.95, blue: 0.25, alpha: 0.38 * pressLeft).cgColor)
             ctx.fill(CGRect(x: 0, y: 0, width: 14, height: 17))
             ctx.restoreGState()
         }
-        if physics.mousePressRight.value > 0.05 {
+        if pressRight > 0.05 {
             ctx.saveGState()
             ctx.addEllipse(in: bodyRect)
             ctx.clip()
-            ctx.setFillColor(NSColor(calibratedRed: 0.79, green: 0.95, blue: 0.25, alpha: 0.38 * physics.mousePressRight.value).cgColor)
+            ctx.setFillColor(NSColor(calibratedRed: 0.79, green: 0.95, blue: 0.25, alpha: 0.38 * pressRight).cgColor)
             ctx.fill(CGRect(x: -14, y: 0, width: 14, height: 17))
             ctx.restoreGState()
         }
@@ -591,152 +775,164 @@ enum CatRenderer {
         ctx.setStrokeColor(borderColor.cgColor)
         ctx.setLineWidth(1.7)
         ctx.strokeEllipse(in: bodyRect)
-
-        ctx.restoreGState()
     }
 
     // MARK: - Mini 2.5D Graphics Tablet & Stylus (数位板与触控笔)
 
-    private static func drawTablet(in ctx: CGContext, physics: CatPhysics, theme: KeyboardTheme, eyeTheme: EyeColorTheme) {
-        let tl = CatPhysics.tabletQuadPoint(u: 0, v: 0)
-        let tr = CatPhysics.tabletQuadPoint(u: 1, v: 0)
-        let bl = CatPhysics.tabletQuadPoint(u: 0, v: 1)
-        let br = CatPhysics.tabletQuadPoint(u: 1, v: 1)
-        let depth: CGFloat = 3.6
+    private struct TabletCacheKey: Equatable {
+        let theme: KeyboardTheme
+        let scale: CGSize
+    }
+    private static var cachedTabletBase: (key: TabletCacheKey, bitmap: KeyboardBitmap, padPath: CGPath)?
+    private static var cachedParkedStylus: (key: TabletCacheKey, bitmap: KeyboardBitmap)?
 
-        let baseColor: NSColor
-        let bodyColor: NSColor
-        let padColor: NSColor
-        let keyColor: NSColor
+    private static func drawTablet(in ctx: CGContext, physics: CatPhysics, theme: KeyboardTheme, eyeTheme: EyeColorTheme) {
         let accentColor: NSColor
         switch theme {
         case .classicMilk:
-            baseColor = NSColor(calibratedRed: 0.10, green: 0.10, blue: 0.12, alpha: 1.0)
-            bodyColor = NSColor(calibratedRed: 0.17, green: 0.18, blue: 0.21, alpha: 1.0)
-            padColor  = NSColor(calibratedRed: 0.23, green: 0.24, blue: 0.28, alpha: 1.0)
-            keyColor  = NSColor(calibratedRed: 0.30, green: 0.32, blue: 0.37, alpha: 1.0)
             accentColor = NSColor(calibratedRed: 0.96, green: 0.69, blue: 0.16, alpha: 1.0)
         case .midnightHacker:
-            baseColor = NSColor(calibratedRed: 0.05, green: 0.05, blue: 0.07, alpha: 1.0)
-            bodyColor = NSColor(calibratedRed: 0.11, green: 0.12, blue: 0.15, alpha: 1.0)
-            padColor  = NSColor(calibratedRed: 0.16, green: 0.17, blue: 0.21, alpha: 1.0)
-            keyColor  = NSColor(calibratedRed: 0.24, green: 0.25, blue: 0.30, alpha: 1.0)
             accentColor = NSColor(calibratedRed: 0.78, green: 0.95, blue: 0.25, alpha: 1.0)
         case .retroCream:
-            baseColor = NSColor(calibratedRed: 0.22, green: 0.21, blue: 0.19, alpha: 1.0)
-            bodyColor = NSColor(calibratedRed: 0.33, green: 0.31, blue: 0.28, alpha: 1.0)
-            padColor  = NSColor(calibratedRed: 0.42, green: 0.39, blue: 0.35, alpha: 1.0)
-            keyColor  = NSColor(calibratedRed: 0.54, green: 0.50, blue: 0.45, alpha: 1.0)
             accentColor = NSColor(calibratedRed: 0.88, green: 0.42, blue: 0.24, alpha: 1.0)
         }
 
-        // Ambient drop shadow beneath tablet
-        ctx.saveGState()
-        let shadowPath = roundedQuadPath(
-            tl: CGPoint(x: tl.x, y: tl.y + depth + 2.0),
-            tr: CGPoint(x: tr.x, y: tr.y + depth + 2.0),
-            br: CGPoint(x: br.x, y: br.y + depth + 2.6),
-            bl: CGPoint(x: bl.x, y: bl.y + depth + 2.6),
-            radius: 5.5
-        )
-        ctx.setFillColor(NSColor(calibratedWhite: 0, alpha: 0.22).cgColor)
-        ctx.addPath(shadowPath)
-        ctx.fillPath()
-        ctx.restoreGState()
-
-        // 3D lower slab lip
-        let lowerPath = roundedQuadPath(
-            tl: CGPoint(x: tl.x, y: tl.y + depth),
-            tr: CGPoint(x: tr.x, y: tr.y + depth),
-            br: CGPoint(x: br.x, y: br.y + depth),
-            bl: CGPoint(x: bl.x, y: bl.y + depth),
-            radius: 5.0
-        )
-        ctx.setFillColor(baseColor.cgColor)
-        ctx.addPath(lowerPath)
-        ctx.fillPath()
-
-        // Main slate tablet deck
-        let topPath = roundedQuadPath(tl: tl, tr: tr, br: br, bl: bl, radius: 4.5)
-        ctx.setFillColor(bodyColor.cgColor)
-        ctx.addPath(topPath)
-        ctx.fillPath()
-
-        // Crisp subtle bezel rim
-        ctx.setStrokeColor(NSColor(calibratedWhite: 1.0, alpha: 0.14).cgColor)
-        ctx.setLineWidth(0.9)
-        ctx.addPath(topPath)
-        ctx.strokePath()
-
-        // Active drawing surface recessed pad
-        let pTL = CatPhysics.tabletQuadPoint(u: 0.21, v: 0.11)
-        let pTR = CatPhysics.tabletQuadPoint(u: 0.94, v: 0.11)
-        let pBR = CatPhysics.tabletQuadPoint(u: 0.94, v: 0.89)
-        let pBL = CatPhysics.tabletQuadPoint(u: 0.21, v: 0.89)
-        let padPath = roundedQuadPath(tl: pTL, tr: pTR, br: pBR, bl: pBL, radius: 2.6)
-        ctx.setFillColor(padColor.cgColor)
-        ctx.addPath(padPath)
-        ctx.fillPath()
-
-        // Minimalist active-area corner L-brackets ([ ])
-        ctx.saveGState()
-        ctx.setStrokeColor(NSColor(calibratedWhite: 1.0, alpha: 0.34).cgColor)
-        ctx.setLineWidth(0.95)
-        ctx.setLineCap(.round)
-        let corners: [(CGFloat, CGFloat, CGFloat, CGFloat)] = [
-            (0.24, 0.15,  0.07,  0.11),
-            (0.91, 0.15, -0.07,  0.11),
-            (0.24, 0.85,  0.07, -0.11),
-            (0.91, 0.85, -0.07, -0.11)
-        ]
-        for (cu, cv, du, dv) in corners {
-            let c = CatPhysics.tabletQuadPoint(u: cu, v: cv)
-            let h = CatPhysics.tabletQuadPoint(u: cu + du, v: cv)
-            let v = CatPhysics.tabletQuadPoint(u: cu, v: cv + dv)
-            ctx.move(to: h); ctx.addLine(to: c); ctx.addLine(to: v)
-        }
-        ctx.strokePath()
-        ctx.restoreGState()
-
-        // 4 miniature ExpressKeys along outer-left bezel + status LED
-        let ledPt = CatPhysics.tabletQuadPoint(u: 0.105, v: 0.14)
-        let ledCol = physics.tabletPenPress.value > 0.15 ? eyeTheme.primaryColor : accentColor
-        drawRadialGlow(in: ctx, center: ledPt, radius: 4.5, color: ledCol.withAlphaComponent(0.55))
-        ctx.setFillColor(ledCol.cgColor)
-        ctx.fillEllipse(in: CGRect(x: ledPt.x - 1.35, y: ledPt.y - 1.35, width: 2.7, height: 2.7))
-
-        for kv: CGFloat in [0.28, 0.44, 0.60, 0.76] {
-            let kTL = CatPhysics.tabletQuadPoint(u: 0.06, v: kv - 0.05)
-            let kTR = CatPhysics.tabletQuadPoint(u: 0.15, v: kv - 0.05)
-            let kBR = CatPhysics.tabletQuadPoint(u: 0.15, v: kv + 0.05)
-            let kBL = CatPhysics.tabletQuadPoint(u: 0.06, v: kv + 0.05)
-            let kp = roundedQuadPath(tl: kTL, tr: kTR, br: kBR, bl: kBL, radius: 1.2)
-            ctx.setFillColor(keyColor.cgColor)
-            ctx.addPath(kp)
-            ctx.fillPath()
-        }
-
-        // Live fading glowing ink trail on the active drawing surface!
-        if physics.tabletTrail.count >= 2 {
-            ctx.saveGState()
-            ctx.addPath(padPath)
-            ctx.clip()
-            ctx.setLineCap(.round)
-            ctx.setLineJoin(.round)
-            let inkCol = eyeTheme.primaryColor
-            for i in 1..<physics.tabletTrail.count {
-                let a = physics.tabletTrail[i - 1]
-                let b = physics.tabletTrail[i]
-                if hypot(b.point.x - a.point.x, b.point.y - a.point.y) > 22.0 { continue }
-                let life = max(0.0, 1.0 - b.age / 0.72)
-                if life <= 0.01 { continue }
-                ctx.setStrokeColor(inkCol.withAlphaComponent(life * 0.88).cgColor)
-                ctx.setLineWidth(1.2 + life * 1.4)
-                ctx.move(to: a.point)
-                ctx.addLine(to: b.point)
-                ctx.strokePath()
+        let scale = currentRasterScale(in: ctx)
+        let key = TabletCacheKey(theme: theme, scale: scale)
+        if cachedTabletBase?.key != key {
+            let tl = CatPhysics.tabletQuadPoint(u: 0, v: 0)
+            let tr = CatPhysics.tabletQuadPoint(u: 1, v: 0)
+            let bl = CatPhysics.tabletQuadPoint(u: 0, v: 1)
+            let br = CatPhysics.tabletQuadPoint(u: 1, v: 1)
+            let depth: CGFloat = 3.6
+            let baseColor: NSColor
+            let bodyColor: NSColor
+            let padColor: NSColor
+            let keyColor: NSColor
+            switch theme {
+            case .classicMilk:
+                baseColor = NSColor(calibratedRed: 0.10, green: 0.10, blue: 0.12, alpha: 1.0)
+                bodyColor = NSColor(calibratedRed: 0.17, green: 0.18, blue: 0.21, alpha: 1.0)
+                padColor  = NSColor(calibratedRed: 0.23, green: 0.24, blue: 0.28, alpha: 1.0)
+                keyColor  = NSColor(calibratedRed: 0.30, green: 0.32, blue: 0.37, alpha: 1.0)
+            case .midnightHacker:
+                baseColor = NSColor(calibratedRed: 0.05, green: 0.05, blue: 0.07, alpha: 1.0)
+                bodyColor = NSColor(calibratedRed: 0.11, green: 0.12, blue: 0.15, alpha: 1.0)
+                padColor  = NSColor(calibratedRed: 0.16, green: 0.17, blue: 0.21, alpha: 1.0)
+                keyColor  = NSColor(calibratedRed: 0.24, green: 0.25, blue: 0.30, alpha: 1.0)
+            case .retroCream:
+                baseColor = NSColor(calibratedRed: 0.22, green: 0.21, blue: 0.19, alpha: 1.0)
+                bodyColor = NSColor(calibratedRed: 0.33, green: 0.31, blue: 0.28, alpha: 1.0)
+                padColor  = NSColor(calibratedRed: 0.42, green: 0.39, blue: 0.35, alpha: 1.0)
+                keyColor  = NSColor(calibratedRed: 0.54, green: 0.50, blue: 0.45, alpha: 1.0)
             }
-            ctx.restoreGState()
+            let pTL = CatPhysics.tabletQuadPoint(u: 0.21, v: 0.11)
+            let pTR = CatPhysics.tabletQuadPoint(u: 0.94, v: 0.11)
+            let pBR = CatPhysics.tabletQuadPoint(u: 0.94, v: 0.89)
+            let pBL = CatPhysics.tabletQuadPoint(u: 0.21, v: 0.89)
+            let padPath = roundedQuadPath(tl: pTL, tr: pTR, br: pBR, bl: pBL, radius: 2.6)
+            let shadowPath = roundedQuadPath(
+                tl: CGPoint(x: tl.x, y: tl.y + depth + 2.0),
+                tr: CGPoint(x: tr.x, y: tr.y + depth + 2.0),
+                br: CGPoint(x: br.x, y: br.y + depth + 2.6),
+                bl: CGPoint(x: bl.x, y: bl.y + depth + 2.6),
+                radius: 5.5
+            )
+            let lowerPath = roundedQuadPath(
+                tl: CGPoint(x: tl.x, y: tl.y + depth),
+                tr: CGPoint(x: tr.x, y: tr.y + depth),
+                br: CGPoint(x: br.x, y: br.y + depth),
+                bl: CGPoint(x: bl.x, y: bl.y + depth),
+                radius: 5.0
+            )
+            let topPath = roundedQuadPath(tl: tl, tr: tr, br: br, bl: bl, radius: 4.5)
+            let bounds = shadowPath.boundingBoxOfPath.union(topPath.boundingBoxOfPath).insetBy(dx: -4, dy: -4)
+            if let bmp = KeyboardBitmap(bounds: bounds, scale: scale, draw: { tctx in
+                tctx.setFillColor(NSColor(calibratedWhite: 0, alpha: 0.22).cgColor)
+                tctx.addPath(shadowPath)
+                tctx.fillPath()
+
+                tctx.setFillColor(baseColor.cgColor)
+                tctx.addPath(lowerPath)
+                tctx.fillPath()
+
+                tctx.setFillColor(bodyColor.cgColor)
+                tctx.addPath(topPath)
+                tctx.fillPath()
+
+                tctx.setStrokeColor(NSColor(calibratedWhite: 1.0, alpha: 0.14).cgColor)
+                tctx.setLineWidth(0.9)
+                tctx.addPath(topPath)
+                tctx.strokePath()
+
+                tctx.setFillColor(padColor.cgColor)
+                tctx.addPath(padPath)
+                tctx.fillPath()
+
+                tctx.saveGState()
+                tctx.setStrokeColor(NSColor(calibratedWhite: 1.0, alpha: 0.34).cgColor)
+                tctx.setLineWidth(0.95)
+                tctx.setLineCap(.round)
+                let corners: [(CGFloat, CGFloat, CGFloat, CGFloat)] = [
+                    (0.24, 0.15,  0.07,  0.11),
+                    (0.91, 0.15, -0.07,  0.11),
+                    (0.24, 0.85,  0.07, -0.11),
+                    (0.91, 0.85, -0.07, -0.11)
+                ]
+                for (cu, cv, du, dv) in corners {
+                    let c = CatPhysics.tabletQuadPoint(u: cu, v: cv)
+                    let h = CatPhysics.tabletQuadPoint(u: cu + du, v: cv)
+                    let v = CatPhysics.tabletQuadPoint(u: cu, v: cv + dv)
+                    tctx.move(to: h); tctx.addLine(to: c); tctx.addLine(to: v)
+                }
+                tctx.strokePath()
+                tctx.restoreGState()
+
+                for kv: CGFloat in [0.28, 0.44, 0.60, 0.76] {
+                    let kTL = CatPhysics.tabletQuadPoint(u: 0.06, v: kv - 0.05)
+                    let kTR = CatPhysics.tabletQuadPoint(u: 0.15, v: kv - 0.05)
+                    let kBR = CatPhysics.tabletQuadPoint(u: 0.15, v: kv + 0.05)
+                    let kBL = CatPhysics.tabletQuadPoint(u: 0.06, v: kv + 0.05)
+                    let kp = roundedQuadPath(tl: kTL, tr: kTR, br: kBR, bl: kBL, radius: 1.2)
+                    tctx.setFillColor(keyColor.cgColor)
+                    tctx.addPath(kp)
+                    tctx.fillPath()
+                }
+            }) {
+                cachedTabletBase = (key, bmp, padPath)
+            }
+        }
+
+        if let base = cachedTabletBase {
+            base.bitmap.draw(in: ctx)
+            let ledPt = CatPhysics.tabletQuadPoint(u: 0.105, v: 0.14)
+            let ledCol = physics.tabletPenPress.value > 0.15 ? eyeTheme.primaryColor : accentColor
+            drawRadialGlow(in: ctx, center: ledPt, radius: 4.5, color: ledCol.withAlphaComponent(0.55))
+            ctx.setFillColor(ledCol.cgColor)
+            ctx.fillEllipse(in: CGRect(x: ledPt.x - 1.35, y: ledPt.y - 1.35, width: 2.7, height: 2.7))
+
+            // Live fading glowing ink trail on the active drawing surface!
+            if physics.tabletTrail.count >= 2 {
+                ctx.saveGState()
+                ctx.addPath(base.padPath)
+                ctx.clip()
+                ctx.setLineCap(.round)
+                ctx.setLineJoin(.round)
+                let inkCol = eyeTheme.primaryColor
+                for i in 1..<physics.tabletTrail.count {
+                    let a = physics.tabletTrail[i - 1]
+                    let b = physics.tabletTrail[i]
+                    if hypot(b.point.x - a.point.x, b.point.y - a.point.y) > 22.0 { continue }
+                    let life = max(0.0, 1.0 - b.age / 0.72)
+                    if life <= 0.01 { continue }
+                    ctx.setStrokeColor(inkCol.withAlphaComponent(life * 0.88).cgColor)
+                    ctx.setLineWidth(1.2 + life * 1.4)
+                    ctx.move(to: a.point)
+                    ctx.addLine(to: b.point)
+                    ctx.strokePath()
+                }
+                ctx.restoreGState()
+            }
         }
 
         // Subtle glowing nib contact halo when drawing on the pad
@@ -820,14 +1016,46 @@ enum CatRenderer {
     }
 
     private static func drawParkedStylus(in ctx: CGContext, theme: KeyboardTheme, eyeTheme: EyeColorTheme) {
-        // Neatly parked horizontally along the top bezel of the graphics tablet while typing/sleeping
+        let scale = currentRasterScale(in: ctx)
+        let key = TabletCacheKey(theme: theme, scale: scale)
+        if cachedParkedStylus?.key != key {
+            let nib = CatPhysics.tabletQuadPoint(u: 0.88, v: -0.02)
+            let tail = CatPhysics.tabletQuadPoint(u: 0.18, v: -0.02)
+            let ang = atan2(tail.y - nib.y, tail.x - nib.x)
+            let len = hypot(tail.x - nib.x, tail.y - nib.y)
+            let minX = min(nib.x, tail.x) - 6
+            let maxX = max(nib.x, tail.x) + 6
+            let minY = min(nib.y, tail.y) - 6
+            let maxY = max(nib.y, tail.y) + 8
+            let bounds = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+            if let bmp = KeyboardBitmap(bounds: bounds, scale: scale, draw: { sctx in
+                sctx.saveGState()
+                sctx.saveGState()
+                sctx.translateBy(x: nib.x, y: nib.y + 2.2)
+                sctx.rotate(by: ang)
+                sctx.setFillColor(NSColor(calibratedWhite: 0, alpha: 0.22).cgColor)
+                sctx.fill(CGRect(x: 2, y: -2.0, width: len - 4, height: 4.5))
+                sctx.restoreGState()
+
+                sctx.translateBy(x: nib.x, y: nib.y)
+                sctx.rotate(by: ang)
+                drawStylusBody(in: sctx, length: len, theme: theme, eyeTheme: eyeTheme, pressed: 0)
+                sctx.restoreGState()
+            }) {
+                cachedParkedStylus = (key, bmp)
+            }
+        }
+        if let bmp = cachedParkedStylus?.bitmap {
+            bmp.draw(in: ctx)
+            return
+        }
+        // Fallback
         let nib = CatPhysics.tabletQuadPoint(u: 0.88, v: -0.02)
         let tail = CatPhysics.tabletQuadPoint(u: 0.18, v: -0.02)
         let ang = atan2(tail.y - nib.y, tail.x - nib.x)
         let len = hypot(tail.x - nib.x, tail.y - nib.y)
 
         ctx.saveGState()
-        // Subtle resting shadow
         ctx.saveGState()
         ctx.translateBy(x: nib.x, y: nib.y + 2.2)
         ctx.rotate(by: ang)
@@ -866,7 +1094,7 @@ enum CatRenderer {
             let pixels = CGRect(x: bounds.minX * scale.width, y: bounds.minY * scale.height,
                                 width: bounds.width * scale.width, height: bounds.height * scale.height).integral
             guard let ctx = CGContext(data: nil, width: Int(pixels.width), height: Int(pixels.height),
-                                      bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitsPerComponent: 8, bytesPerRow: 0, space: rgbColorSpace,
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
             ctx.translateBy(x: -pixels.minX, y: pixels.maxY)
             ctx.scaleBy(x: scale.width, y: -scale.height)
@@ -896,11 +1124,37 @@ enum CatRenderer {
         let scale: CGSize
     }
 
+    private struct RGBAColor: Equatable {
+        let r, g, b, a: CGFloat
+        init(_ ns: NSColor) {
+            let c = ns.usingColorSpace(.deviceRGB) ?? ns
+            r = c.redComponent; g = c.greenComponent; b = c.blueComponent; a = c.alphaComponent
+        }
+        init(r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat) {
+            self.r = r; self.g = g; self.b = b; self.a = a
+        }
+        func blended(with other: RGBAColor, t: CGFloat) -> RGBAColor {
+            let k = max(0, min(1, t))
+            return RGBAColor(
+                r: r + (other.r - r) * k,
+                g: g + (other.g - g) * k,
+                b: b + (other.b - b) * k,
+                a: a + (other.a - a) * k
+            )
+        }
+        var cg: CGColor {
+            CGColor(colorSpace: rgbColorSpace, components: [r, g, b, a]) ?? NSColor(calibratedRed: r, green: g, blue: b, alpha: a).cgColor
+        }
+    }
+
     private struct KeyboardArtwork {
         let style: KeyboardStyle
+        let bounds: CGRect
         let chassis: KeyboardBitmap?
         let idle: KeyboardBitmap?
+        let legends: KeyboardBitmap?
         let keys: [KeyboardKeyArtwork]
+        let keyByKey: [PhysicalKey: KeyboardKeyArtwork]
         let deckPath: CGPath
         let deckStart: CGPoint
         let deckEnd: CGPoint
@@ -910,14 +1164,25 @@ enum CatRenderer {
         let key: PhysicalKey
         let center: CGPoint
         let path: CGPath
+        let erasePath: CGPath
         let fill: NSColor
+        let fillRGBA: RGBAColor
         let border: CGColor
+        let projectionT: CGFloat
         let legend: KeyboardBitmap?
         let resting: KeyboardBitmap?
     }
 
+    private struct MarqueeCycleKey: Equatable {
+        let style: KeyboardStyle
+        let glowColor: RGBAColor
+        let steps: Int
+    }
+
     // Keep only the currently displayed keyboard. Retina scale can change when the window moves screens.
     private static var keyboardArtwork: KeyboardArtwork?
+    private static var marqueeCycleCache: (key: MarqueeCycleKey, bitmaps: [Int: KeyboardBitmap])?
+    private static let marqueeStops: [CGFloat] = (0..<24).map { CGFloat($0) / 23.0 }
 
     private static func drawKeyboard(
         in ctx: CGContext,
@@ -928,21 +1193,55 @@ enum CatRenderer {
         flipped: Bool,
         marquee: Bool
     ) {
-        let transform = ctx.userSpaceToDeviceSpaceTransform
-        // Round up in quarter steps so dragging a resize handle does not rebuild the cache every tick.
-        func rasterScale(_ value: CGFloat) -> CGFloat { min(4, max(1, (value * 4).rounded(.up) / 4)) }
-        let scale = CGSize(width: rasterScale(hypot(transform.a, transform.b)),
-                           height: rasterScale(hypot(transform.c, transform.d)))
+        let scale = currentRasterScale(in: ctx)
         let style = KeyboardStyle(kbSkin: kbSkin, showLegends: showLegends, flipped: flipped,
                                   levelKeyboard: KeyboardLayout.levelKeyboard, scale: scale)
         if keyboardArtwork?.style != style {
             keyboardArtwork = makeKeyboardArtwork(style: style)
+            marqueeCycleCache = nil
         }
         guard let artwork = keyboardArtwork else { return }
 
         let glowBaseColor = eyeTheme.glowColor
         if !marquee, physics.keyGlow.isEmpty, let idle = artwork.idle {
             idle.draw(in: ctx)
+            return
+        }
+
+        let glowRGBA = RGBAColor(glowBaseColor)
+        if marquee && physics.keyGlow.isEmpty {
+            let asleep = physics.sleepiness >= 0.95
+            let steps = marqueeSteps(asleep: asleep)
+            let bucket = marqueeBucket(phase: physics.marqueePhase, asleep: asleep)
+            let cKey = MarqueeCycleKey(style: style, glowColor: glowRGBA, steps: steps)
+            if marqueeCycleCache?.key != cKey {
+                marqueeCycleCache = (cKey, Dictionary(minimumCapacity: steps))
+            }
+            if let cached = marqueeCycleCache?.bitmaps[bucket] {
+                cached.draw(in: ctx)
+                return
+            }
+            let qPhase = CGFloat(bucket) / CGFloat(steps)
+            if let bmp = KeyboardBitmap(bounds: artwork.bounds, scale: style.scale, draw: { mctx in
+                renderMarqueeKeyboard(in: mctx, artwork: artwork, phase: qPhase, glowBaseColor: glowBaseColor)
+            }) {
+                marqueeCycleCache?.bitmaps[bucket] = bmp
+                bmp.draw(in: ctx)
+                return
+            }
+        }
+
+        if !marquee, !physics.keyGlow.isEmpty, let idle = artwork.idle {
+            idle.draw(in: ctx)
+            for (k, glow) in physics.keyGlow where glow > 0.01 {
+                guard let keyArt = artwork.keyByKey[k] else { continue }
+                ctx.saveGState()
+                ctx.addPath(keyArt.erasePath)
+                ctx.clip()
+                artwork.chassis?.draw(in: ctx)
+                ctx.restoreGState()
+                drawKeyboardKey(keyArt, in: ctx, glow: glow, glowRGBA: glowRGBA, backlight: nil, drawLegend: true)
+            }
         } else {
             artwork.chassis?.draw(in: ctx)
             let phase = physics.marqueePhase.truncatingRemainder(dividingBy: 1)
@@ -951,9 +1250,13 @@ enum CatRenderer {
                                   start: artwork.deckStart, end: artwork.deckEnd)
                 : nil
             if let backlight { drawMarquee(backlight, in: ctx, clippedTo: artwork.deckPath) }
+            let batchLegends = physics.keyGlow.isEmpty && artwork.legends != nil
             for key in artwork.keys {
                 drawKeyboardKey(key, in: ctx, glow: physics.keyGlow[key.key] ?? 0,
-                                glowColor: glowBaseColor, backlight: backlight)
+                                glowRGBA: glowRGBA, backlight: backlight, drawLegend: !batchLegends)
+            }
+            if batchLegends {
+                artwork.legends?.draw(in: ctx)
             }
         }
 
@@ -962,6 +1265,26 @@ enum CatRenderer {
             let center = KeyboardLayout.canvasPoint(for: key)
             drawRadialGlow(in: ctx, center: center, radius: 17.0 + glow * 6.0,
                            color: glowBaseColor.withAlphaComponent(0.36 * glow))
+        }
+    }
+
+    private static func renderMarqueeKeyboard(
+        in ctx: CGContext,
+        artwork: KeyboardArtwork,
+        phase: CGFloat,
+        glowBaseColor: NSColor
+    ) {
+        artwork.chassis?.draw(in: ctx)
+        let backlight = KeyboardMarquee(phase: phase, color: hsvColor(hue: phase + 0.52, saturation: 0.55, value: 1),
+                                        start: artwork.deckStart, end: artwork.deckEnd)
+        drawMarquee(backlight, in: ctx, clippedTo: artwork.deckPath)
+        let glowRGBA = RGBAColor(glowBaseColor)
+        let batchLegends = artwork.legends != nil
+        for key in artwork.keys {
+            drawKeyboardKey(key, in: ctx, glow: 0, glowRGBA: glowRGBA, backlight: backlight, drawLegend: !batchLegends)
+        }
+        if batchLegends {
+            artwork.legends?.draw(in: ctx)
         }
     }
 
@@ -1011,12 +1334,16 @@ enum CatRenderer {
             ctx.fillPath()
         }
 
+        let deckDX = br.x - tl.x
+        let deckDY = br.y - tl.y
+        let deckLenSq = max(0.001, deckDX * deckDX + deckDY * deckDY)
+
         // Individual keycaps — tight clean mechanical spacing matching the reference video
         let padU: CGFloat = 0.0028
         let padV: CGFloat = 0.014
         let border = keyBorderColor.cgColor
 
-        let keys = KeyboardLayout.keycaps.map { cap in
+        let keys = KeyboardLayout.keycaps.map { cap -> KeyboardKeyArtwork in
             // 180° rotated to face the cat: su = 1 - u, sv = 1 - v
             let su0 = (1.0 - (cap.xUnits + cap.widthUnits)) + padU
             let su1 = (1.0 - cap.xUnits) - padU
@@ -1029,6 +1356,13 @@ enum CatRenderer {
             let kBL = KeyboardLayout.screenQuadPoint(su: su0, sv: sv1)
 
             let kPath = roundedQuadPath(tl: kTL, tr: kTR, br: kBR, bl: kBL, radius: 1.6)
+            let erasePath = roundedQuadPath(
+                tl: KeyboardLayout.screenQuadPoint(su: su0 - padU * 0.55, sv: sv0 - padV * 0.45),
+                tr: KeyboardLayout.screenQuadPoint(su: su1 + padU * 0.55, sv: sv0 - padV * 0.45),
+                br: KeyboardLayout.screenQuadPoint(su: su1 + padU * 0.55, sv: sv1 + padV * 0.45),
+                bl: KeyboardLayout.screenQuadPoint(su: su0 - padU * 0.55, sv: sv1 + padV * 0.45),
+                radius: 1.8
+            )
             let center = CGPoint(x: (kTL.x + kTR.x + kBR.x + kBL.x) * 0.25,
                                  y: (kTL.y + kTR.y + kBR.y + kBL.y) * 0.25)
             let fill = cap.isAmberAccent ? accentColor : keyColor
@@ -1083,47 +1417,67 @@ enum CatRenderer {
                 drawKeycap(in: ctx, path: kPath, fill: fill.cgColor, border: border)
                 legendBitmap?.draw(in: ctx)
             }
-            return KeyboardKeyArtwork(key: cap.key, center: center, path: kPath, fill: fill, border: border,
-                                      legend: legendBitmap, resting: resting)
+            let projT = max(0, min(1, ((center.x - tl.x) * deckDX + (center.y - tl.y) * deckDY) / deckLenSq))
+            return KeyboardKeyArtwork(key: cap.key, center: center, path: kPath, erasePath: erasePath,
+                                      fill: fill, fillRGBA: RGBAColor(fill), border: border,
+                                      projectionT: projT, legend: legendBitmap, resting: resting)
         }
 
+        let legends: KeyboardBitmap? = style.showLegends
+            ? KeyboardBitmap(bounds: bounds, scale: style.scale) { ctx in
+                for key in keys { key.legend?.draw(in: ctx) }
+            }
+            : nil
+
+        let glowRGBA = RGBAColor(accentColor)
         let idle = KeyboardBitmap(bounds: bounds, scale: style.scale) { ctx in
             chassis?.draw(in: ctx)
             for key in keys {
-                drawKeyboardKey(key, in: ctx, glow: 0, glowColor: accentColor)
+                drawKeyboardKey(key, in: ctx, glow: 0, glowRGBA: glowRGBA, backlight: nil, drawLegend: true)
             }
         }
-        return KeyboardArtwork(style: style, chassis: chassis, idle: idle, keys: keys,
-                               deckPath: topChassis, deckStart: tl, deckEnd: br)
+        var keyByKey: [PhysicalKey: KeyboardKeyArtwork] = [:]
+        keyByKey.reserveCapacity(keys.count)
+        for k in keys { keyByKey[k.key] = k }
+        return KeyboardArtwork(style: style, bounds: bounds, chassis: chassis, idle: idle, legends: legends,
+                               keys: keys, keyByKey: keyByKey, deckPath: topChassis, deckStart: tl, deckEnd: br)
     }
 
     private static func drawKeyboardKey(_ key: KeyboardKeyArtwork, in ctx: CGContext, glow: CGFloat,
-                                        glowColor: NSColor, backlight: KeyboardMarquee? = nil) {
+                                        glowRGBA: RGBAColor, backlight: KeyboardMarquee? = nil,
+                                        drawLegend: Bool = true) {
         if backlight == nil, glow == 0, let resting = key.resting {
             resting.draw(in: ctx)
             return
         }
 
         let pressDepth = glow * 1.9
-        let center = CGPoint(x: key.center.x, y: key.center.y + pressDepth)
-        let illumination = backlight?.illumination(at: center) ?? 0
-        var color = key.fill
+        let illumination = backlight?.wave(at: key.projectionT) ?? 0
+        var rgba = key.fillRGBA
         if let backlight, illumination > 0.015 {
-            let lit = blendColor(backlight.color, .white, t: illumination * illumination * 0.5)
-            color = blendColor(color, lit, t: illumination * 0.88)
+            let lit = backlight.rgba.blended(with: RGBAColor(r: 1, g: 1, b: 1, a: 1), t: illumination * illumination * 0.5)
+            rgba = rgba.blended(with: lit, t: illumination * 0.88)
         }
         if glow > 0.02 {
-            color = blendColor(color, glowColor, t: glow * 0.55)
+            rgba = rgba.blended(with: glowRGBA, t: glow * 0.55)
         }
 
         ctx.saveGState()
-        ctx.translateBy(x: 0, y: pressDepth)
-        if let backlight, illumination > 0.10 {
-            let border = backlight.color.withAlphaComponent(illumination * 215.0 / 255.0).cgColor
-            drawKeycap(in: ctx, path: key.path, fill: color.cgColor, border: border, borderWidth: 1.0)
-        } else {
-            drawKeycap(in: ctx, path: key.path, fill: color.cgColor, border: key.border)
+        if pressDepth != 0 {
+            ctx.translateBy(x: 0, y: pressDepth)
         }
+        ctx.setFillColor(red: rgba.r, green: rgba.g, blue: rgba.b, alpha: rgba.a)
+        if let backlight, illumination > 0.10 {
+            let bAlpha = illumination * 215.0 / 255.0
+            ctx.setStrokeColor(red: backlight.rgba.r, green: backlight.rgba.g, blue: backlight.rgba.b, alpha: bAlpha)
+            ctx.setLineWidth(1.0)
+        } else {
+            ctx.setStrokeColor(key.border)
+            ctx.setLineWidth(0.65)
+        }
+        ctx.addPath(key.path)
+        ctx.drawPath(using: .fillStroke)
+
         if let backlight, illumination > 0.45 {
             ctx.saveGState()
             ctx.translateBy(x: key.center.x, y: key.center.y)
@@ -1133,7 +1487,9 @@ enum CatRenderer {
                            color: backlight.color.withAlphaComponent(bloom * 135.0 / 255.0))
             ctx.restoreGState()
         }
-        key.legend?.draw(in: ctx)
+        if drawLegend {
+            key.legend?.draw(in: ctx)
+        }
         ctx.restoreGState()
     }
 
@@ -1149,6 +1505,7 @@ enum CatRenderer {
     private struct KeyboardMarquee {
         let phase: CGFloat
         let color: NSColor
+        let rgba: RGBAColor
         let start: CGPoint
         let end: CGPoint
         let dx: CGFloat
@@ -1158,6 +1515,7 @@ enum CatRenderer {
         init(phase: CGFloat, color: NSColor, start: CGPoint, end: CGPoint) {
             self.phase = phase
             self.color = color
+            self.rgba = RGBAColor(color)
             self.start = start
             self.end = end
             dx = end.x - start.x
@@ -1180,11 +1538,10 @@ enum CatRenderer {
         ctx.saveGState()
         ctx.addPath(deck)
         ctx.clip()
-        let stops = (0..<24).map { CGFloat($0) / 23 }
-        let colors = stops.map { stop in
+        let colors = marqueeStops.map { stop in
             light.color.withAlphaComponent(light.wave(at: stop) * 200.0 / 255.0).cgColor
         }
-        if let band = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: stops) {
+        if let band = CGGradient(colorsSpace: rgbColorSpace, colors: colors as CFArray, locations: marqueeStops) {
             ctx.drawLinearGradient(band, start: light.start, end: light.end,
                                    options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
         }
@@ -1194,11 +1551,330 @@ enum CatRenderer {
         ctx.restoreGState()
     }
 
-    // MARK: - Skin part mapping helpers
+    // MARK: - Skin part mapping & geometry caches
+
+    private struct HeadTransform {
+        let cy: CGFloat, sy: CGFloat, cp: CGFloat, sp: CGFloat
+        let cTilt: CGFloat, sTilt: CGFloat
+        let headScale: CGFloat
+        let isDome: Bool
+
+        init(yaw: CGFloat, pitch: CGFloat, tilt: CGFloat, headScale: CGFloat, isDome: Bool) {
+            let yawRad = yaw * 0.50
+            let pitchRad = pitch * 0.36
+            self.cy = cos(yawRad)
+            self.sy = sin(yawRad)
+            self.cp = cos(pitchRad)
+            self.sp = sin(pitchRad)
+            self.cTilt = cos(tilt)
+            self.sTilt = sin(tilt)
+            self.headScale = headScale
+            self.isDome = isDome
+        }
+
+        func mapRelative(_ p: CGPoint, skull: Bool, whiteSurface: Bool = false) -> CGPoint {
+            let projected: CGPoint
+            if skull {
+                projected = p
+            } else {
+                let depth: CGFloat
+                if isDome {
+                    let rx = p.x / 46.0
+                    let ry = p.y / 40.0
+                    let radius = max(0.0, 1.0 - rx * rx - ry * ry)
+                    let surface = whiteSurface ? radius * radius * (3.0 - 2.0 * radius) : sqrt(radius)
+                    depth = 29.6 * surface
+                } else {
+                    depth = 27.5
+                }
+                let x1 = p.x * cy + depth * sy
+                let z1 = -p.x * sy + depth * cy
+                let y2 = p.y * cp + z1 * sp
+                projected = CGPoint(x: x1, y: y2)
+            }
+            let px = projected.x * headScale
+            let py = projected.y * headScale
+            return CGPoint(x: px * cTilt - py * sTilt,
+                           y: px * sTilt + py * cTilt)
+        }
+    }
+
+    private struct BodyTransform {
+        let sxTotal: CGFloat, sy: CGFloat
+        let c: CGFloat, s: CGFloat
+
+        init(bodyWidth: CGFloat, bodySquash: CGFloat, lieIntensity: CGFloat, bodyTilt: CGFloat) {
+            let lie = max(0.0, min(1.0, lieIntensity))
+            let lieS = lie * lie * (3.0 - 2.0 * lie)
+            self.sy = bodySquash * (1.0 - lieS * 0.42)
+            let sx = (1.0 + (1.0 - bodySquash) * 0.55) * (1.0 + lieS * 0.03)
+            self.sxTotal = bodyWidth * sx
+            self.c = cos(bodyTilt)
+            self.s = sin(bodyTilt)
+        }
+
+        func mapRelative(_ p: CGPoint) -> CGPoint {
+            let rx = p.x * sxTotal
+            let ry = p.y * sy
+            return CGPoint(x: rx * c - ry * s,
+                           y: rx * s + ry * c)
+        }
+    }
+
+    private struct ColorPairKey: Hashable {
+        let first: SkinColor
+        let second: SkinColor
+    }
+
+    private struct PointsGradients {
+        let mask: CGGradient?
+        let muzzle: CGGradient?
+    }
+
+    private struct HeadGeometryKey: Hashable {
+        let skinId: String
+        let headScale: CGFloat
+        let cheekFullness: CGFloat
+        let isDome: Bool
+        let regionCount: Int
+        let markCount: Int
+        let yaw: CGFloat
+        let pitch: CGFloat
+        let tilt: CGFloat
+        let coverage: CGFloat
+    }
+
+    private struct HeadGeometryEntry {
+        let jawBodyPath: CGPath?
+        let jawHeadPath: CGPath?
+        let bibPathNormal: CGPath?
+        let bibPathWhite: CGPath?
+        let headRegions: [(path: CGPath, color: CGColor)]
+        let markPaths: [CGPath?]
+        let markColors: [CGColor?]
+    }
+
+    private struct BodyGeometryKey: Hashable {
+        let skinId: String
+        let bodyWidth: CGFloat
+        let regionCount: Int
+        let markCount: Int
+        let bodySquash: CGFloat
+        let lieIntensity: CGFloat
+        let bodyTilt: CGFloat
+    }
+
+    private struct BodyGeometryEntry {
+        let bodyRegions: [(path: CGPath, color: CGColor)]
+        let markPaths: [CGPath?]
+        let markColors: [CGColor?]
+    }
+
+    private static var jawSideCache: [CGFloat: (body: [CGPoint], head: [CGPoint])] = [:]
+    private static var partGradientCache: [SkinPartGradient: CGGradient] = [:]
+    private static var bodyShadeGradientCache: [ColorPairKey: CGGradient] = [:]
+    private static var pointsGradientCache: [ColorPairKey: PointsGradients] = [:]
+    private static var headGeometryCache: [HeadGeometryKey: HeadGeometryEntry] = [:]
+    private static var bodyGeometryCache: [BodyGeometryKey: BodyGeometryEntry] = [:]
+
+    private static func cachedJawSide(head: Bool, cheekFullness: CGFloat) -> [CGPoint] {
+        if let hit = jawSideCache[cheekFullness] {
+            return head ? hit.head : hit.body
+        }
+        if jawSideCache.count > 16 {
+            jawSideCache.removeAll(keepingCapacity: true)
+        }
+        let entry = (
+            body: SkinSpec.jawSide(head: false, cheekFullness: cheekFullness),
+            head: SkinSpec.jawSide(head: true, cheekFullness: cheekFullness)
+        )
+        jawSideCache[cheekFullness] = entry
+        return head ? entry.head : entry.body
+    }
+
+    private static func cachedPartGradient(_ g: SkinPartGradient) -> CGGradient? {
+        if let hit = partGradientCache[g] { return hit }
+        if partGradientCache.count > 128 { partGradientCache.removeAll(keepingCapacity: true) }
+        let stop = max(0.1, min(0.9, g.stop))
+        let cols = [g.from.ns.cgColor, g.to.ns.cgColor, g.to.ns.cgColor] as CFArray
+        guard let grad = CGGradient(colorsSpace: rgbColorSpace, colors: cols, locations: [0.0, stop, 1.0]) else { return nil }
+        partGradientCache[g] = grad
+        return grad
+    }
+
+    private static func cachedBodyShadeGradient(body: SkinColor, shade: SkinColor) -> CGGradient? {
+        let key = ColorPairKey(first: body, second: shade)
+        if let hit = bodyShadeGradientCache[key] { return hit }
+        if bodyShadeGradientCache.count > 64 { bodyShadeGradientCache.removeAll(keepingCapacity: true) }
+        let colors = [body.ns.cgColor, shade.ns.cgColor] as CFArray
+        guard let grad = CGGradient(colorsSpace: rgbColorSpace, colors: colors, locations: [0.15, 1.0]) else { return nil }
+        bodyShadeGradientCache[key] = grad
+        return grad
+    }
+
+    private static func cachedPointsGradients(point: SkinColor, mid: SkinColor) -> PointsGradients {
+        let key = ColorPairKey(first: point, second: mid)
+        if let hit = pointsGradientCache[key] { return hit }
+        if pointsGradientCache.count > 64 { pointsGradientCache.removeAll(keepingCapacity: true) }
+        let pointCG = point.ns.cgColor
+        let maskCols = [
+            pointCG,
+            point.withAlpha(0.92).cgColor,
+            mid.withAlpha(0.62).cgColor,
+            mid.withAlpha(0.0).cgColor
+        ] as CFArray
+        let muzzleCols = [
+            pointCG,
+            point.withAlpha(0.85).cgColor,
+            point.withAlpha(0.0).cgColor
+        ] as CFArray
+        let entry = PointsGradients(
+            mask: CGGradient(colorsSpace: rgbColorSpace, colors: maskCols, locations: [0.0, 0.42, 0.74, 1.0]),
+            muzzle: CGGradient(colorsSpace: rgbColorSpace, colors: muzzleCols, locations: [0.0, 0.50, 1.0])
+        )
+        pointsGradientCache[key] = entry
+        return entry
+    }
+
+    private static func buildHeadGeometry(skin: SkinSpec, yaw: CGFloat, pitch: CGFloat, tilt: CGFloat, coverage: CGFloat) -> HeadGeometryEntry {
+        let isDome = skin.headSurface == .dome
+        let t = HeadTransform(yaw: yaw, pitch: pitch, tilt: tilt, headScale: skin.shape.headScale, isDome: isDome)
+        let needsJawBody = skin.partGradients["body"] != nil
+            || skin.regions.contains { $0.space == .body }
+            || skin.marks.contains { $0.space == .body }
+        let needsJawHead = skin.palette.headBody != nil
+            || skin.partGradients["head"] != nil
+            || skin.regions.contains { $0.space == .head || $0.space == .skull }
+
+        let jawBodyPath: CGPath? = needsJawBody
+            ? polyline(cachedJawSide(head: false, cheekFullness: skin.shape.cheekFullness), closed: true) { t.mapRelative($0, skull: false) }
+            : nil
+        let jawHeadPath: CGPath? = needsJawHead
+            ? polyline(cachedJawSide(head: true, cheekFullness: skin.shape.cheekFullness), closed: true) { t.mapRelative($0, skull: false) }
+            : nil
+
+        var headRegions: [(path: CGPath, color: CGColor)] = []
+        for region in skin.regions where region.space == .head || region.space == .skull {
+            let isSkull = region.space == .skull
+            let p = polyline(region.flat, closed: true) { t.mapRelative($0, skull: isSkull) }
+            headRegions.append((p, region.fill.ns.cgColor))
+        }
+
+        let bib = coverage > 0
+            ? skin.marks.first { $0.space == .head && !$0.stroke && isMilkMark($0) && $0.points.contains { abs($0.x) > 46 } }
+            : nil
+        var bibPathNormal: CGPath?
+        var bibPathWhite: CGPath?
+
+        var markPaths = [CGPath?](repeating: nil, count: skin.marks.count)
+        var markColors = [CGColor?](repeating: nil, count: skin.marks.count)
+
+        for (idx, mark) in skin.marks.enumerated() {
+            if mark.clipToBib && coverage == 0 { continue }
+            switch mark.space {
+            case .skull:
+                markPaths[idx] = polyline(mark.points, closed: !mark.stroke) { t.mapRelative($0, skull: true) }
+                markColors[idx] = mark.color.ns.cgColor
+            case .head:
+                let useWhite = isDome && isMilkMark(mark)
+                if mark.clipToBib, let bib = bib {
+                    if useWhite {
+                        if bibPathWhite == nil {
+                            bibPathWhite = polyline(bib.points, closed: true) { t.mapRelative($0, skull: false, whiteSurface: true) }
+                        }
+                    } else if bibPathNormal == nil {
+                        bibPathNormal = polyline(bib.points, closed: true) { t.mapRelative($0, skull: false, whiteSurface: false) }
+                    }
+                    markPaths[idx] = polyline(mark.points, closed: !mark.stroke) { pt in
+                        var local = pt
+                        let lowerRim = min(1, max(0, (pt.y - 20) / 6))
+                        local.x *= 1 - 0.5 * lowerRim * (1 - coverage)
+                        if pt.y > 20 { local.y = 20 + (pt.y - 20) * (0.75 + 0.25 * coverage) }
+                        return t.mapRelative(local, skull: false, whiteSurface: useWhite)
+                    }
+                } else {
+                    markPaths[idx] = polyline(mark.points, closed: !mark.stroke) { t.mapRelative($0, skull: false, whiteSurface: useWhite) }
+                }
+                markColors[idx] = mark.color.ns.cgColor
+            default:
+                break
+            }
+        }
+
+        return HeadGeometryEntry(
+            jawBodyPath: jawBodyPath,
+            jawHeadPath: jawHeadPath,
+            bibPathNormal: bibPathNormal,
+            bibPathWhite: bibPathWhite,
+            headRegions: headRegions,
+            markPaths: markPaths,
+            markColors: markColors
+        )
+    }
+
+    private static func cachedHeadGeometry(skin: SkinSpec, yaw: CGFloat, pitch: CGFloat, tilt: CGFloat, coverage: CGFloat) -> HeadGeometryEntry {
+        guard !skin.id.isEmpty else {
+            return buildHeadGeometry(skin: skin, yaw: yaw, pitch: pitch, tilt: tilt, coverage: coverage)
+        }
+        let key = HeadGeometryKey(
+            skinId: skin.id,
+            headScale: skin.shape.headScale,
+            cheekFullness: skin.shape.cheekFullness,
+            isDome: skin.headSurface == .dome,
+            regionCount: skin.regions.count,
+            markCount: skin.marks.count,
+            yaw: yaw,
+            pitch: pitch,
+            tilt: tilt,
+            coverage: coverage
+        )
+        if let hit = headGeometryCache[key] { return hit }
+        if headGeometryCache.count >= 24 { headGeometryCache.removeAll(keepingCapacity: true) }
+        let entry = buildHeadGeometry(skin: skin, yaw: yaw, pitch: pitch, tilt: tilt, coverage: coverage)
+        headGeometryCache[key] = entry
+        return entry
+    }
+
+    private static func buildBodyGeometry(skin: SkinSpec, bodySquash: CGFloat, lieIntensity: CGFloat, bodyTilt: CGFloat) -> BodyGeometryEntry {
+        let t = BodyTransform(bodyWidth: skin.shape.bodyWidth, bodySquash: bodySquash, lieIntensity: lieIntensity, bodyTilt: bodyTilt)
+        var bodyRegions: [(path: CGPath, color: CGColor)] = []
+        for region in skin.regions where region.space == .body {
+            bodyRegions.append((polyline(region.flat, closed: true) { t.mapRelative($0) }, region.fill.ns.cgColor))
+        }
+        var markPaths = [CGPath?](repeating: nil, count: skin.marks.count)
+        var markColors = [CGColor?](repeating: nil, count: skin.marks.count)
+        for (idx, mark) in skin.marks.enumerated() where mark.space == .body {
+            markPaths[idx] = polyline(mark.points, closed: !mark.stroke) { t.mapRelative($0) }
+            markColors[idx] = mark.color.ns.cgColor
+        }
+        return BodyGeometryEntry(bodyRegions: bodyRegions, markPaths: markPaths, markColors: markColors)
+    }
+
+    private static func cachedBodyGeometry(skin: SkinSpec, bodySquash: CGFloat, lieIntensity: CGFloat, bodyTilt: CGFloat) -> BodyGeometryEntry {
+        guard !skin.id.isEmpty else {
+            return buildBodyGeometry(skin: skin, bodySquash: bodySquash, lieIntensity: lieIntensity, bodyTilt: bodyTilt)
+        }
+        let key = BodyGeometryKey(
+            skinId: skin.id,
+            bodyWidth: skin.shape.bodyWidth,
+            regionCount: skin.regions.count,
+            markCount: skin.marks.count,
+            bodySquash: bodySquash,
+            lieIntensity: lieIntensity,
+            bodyTilt: bodyTilt
+        )
+        if let hit = bodyGeometryCache[key] { return hit }
+        if bodyGeometryCache.count >= 24 { bodyGeometryCache.removeAll(keepingCapacity: true) }
+        let entry = buildBodyGeometry(skin: skin, bodySquash: bodySquash, lieIntensity: lieIntensity, bodyTilt: bodyTilt)
+        bodyGeometryCache[key] = entry
+        return entry
+    }
 
     /// Head-local point -> canvas, on the skin's head surface (dome / plane) or flat skull space.
     private static func headPoint(_ p: CGPoint, skull: Bool, skin: SkinSpec, head: CGPoint, physics: CatPhysics, whiteSurface: Bool = false) -> CGPoint {
-        let radius = max(0, 1 - pow(p.x / 46, 2) - pow(p.y / 40, 2))
+        let rx = p.x / 46.0
+        let ry = p.y / 40.0
+        let radius = max(0, 1 - rx * rx - ry * ry)
         let surface = whiteSurface ? radius * radius * (3 - 2 * radius) : sqrt(radius)
         let depth: CGFloat = skin.headSurface == .dome ? 29.6 * surface : 27.5
         var projected = skull ? p : projectHead3D(x: p.x, y: p.y, z: depth,
@@ -1337,8 +2013,7 @@ enum CatRenderer {
         let path = CGPath(ellipseIn: rect, transform: nil)
         ctx.addPath(path)
         ctx.clip()
-        let cs = CGColorSpaceCreateDeviceRGB()
-        if let grad = CGGradient(colorsSpace: cs, colors: [dazedColor(0xFFF1CD), dazedColor(0xCCAC7F)] as CFArray, locations: [0, 1]) {
+        if let grad = CGGradient(colorsSpace: rgbColorSpace, colors: [dazedColor(0xFFF1CD), dazedColor(0xCCAC7F)] as CFArray, locations: [0, 1]) {
             ctx.drawLinearGradient(grad, start: CGPoint(x: rect.midX, y: rect.minY), end: CGPoint(x: rect.midX, y: rect.maxY), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
         }
         ctx.restoreGState()
@@ -1361,11 +2036,10 @@ enum CatRenderer {
         blade.addCurve(to: CGPoint(x: 50.0, y: -84.0), control1: CGPoint(x: -5.0, y: -33.0), control2: CGPoint(x: 27.0, y: -60.0))
         blade.closeSubpath()
 
-        let cs = CGColorSpaceCreateDeviceRGB()
         ctx.saveGState()
         ctx.addPath(blade)
         ctx.clip()
-        if let steel = CGGradient(colorsSpace: cs, colors: [dazedColor(0x8395B0), dazedColor(0xDDE7F2)] as CFArray, locations: [0, 1]) {
+        if let steel = CGGradient(colorsSpace: rgbColorSpace, colors: [dazedColor(0x8395B0), dazedColor(0xDDE7F2)] as CFArray, locations: [0, 1]) {
             ctx.drawLinearGradient(steel, start: CGPoint(x: -46.0, y: -51.0), end: CGPoint(x: -29.0, y: -22.0), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
         }
         ctx.restoreGState()
@@ -1441,15 +2115,13 @@ enum CatRenderer {
         ctx.saveGState()
         ctx.addPath(ear)
         ctx.clip()
-        let cs = CGColorSpaceCreateDeviceRGB()
-        if let grad = CGGradient(colorsSpace: cs, colors: [dazedColor(0x777FBD), dazedColor(0x4D5892)] as CFArray, locations: [0, 1]) {
+        if let grad = CGGradient(colorsSpace: rgbColorSpace, colors: [dazedColor(0x777FBD), dazedColor(0x4D5892)] as CFArray, locations: [0, 1]) {
             ctx.drawLinearGradient(grad, start: tip, end: outerBase, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
         }
         ctx.restoreGState()
     }
 
     private static func drawDazedSilhouette(in ctx: CGContext, seatX: CGFloat, seatY: CGFloat, head: CGPoint, physics: CatPhysics) {
-        let cs = CGColorSpaceCreateDeviceRGB()
         let lie = max(0, min(1, physics.lieIntensity.value))
         let lieS = lie * lie * (3.0 - 2.0 * lie)
         let squash = physics.bodySquash.value
@@ -1485,7 +2157,7 @@ enum CatRenderer {
         ctx.saveGState()
         ctx.addPath(belly)
         ctx.clip()
-        if let g = CGGradient(colorsSpace: cs, colors: [dazedColor(0xF4DFB8), dazedColor(0xC8A77A)] as CFArray, locations: [0, 1]) {
+        if let g = CGGradient(colorsSpace: rgbColorSpace, colors: [dazedColor(0xF4DFB8), dazedColor(0xC8A77A)] as CFArray, locations: [0, 1]) {
             ctx.drawLinearGradient(g, start: CGPoint(x: 0.0, y: -16.0), end: CGPoint(x: 0.0, y: 12.0), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
         }
         ctx.restoreGState()
@@ -1514,7 +2186,7 @@ enum CatRenderer {
         ctx.saveGState()
         ctx.addPath(tunic)
         ctx.clip()
-        if let g = CGGradient(colorsSpace: cs, colors: [dazedColor(0x555F9B), dazedColor(0x252E58)] as CFArray, locations: [0, 1]) {
+        if let g = CGGradient(colorsSpace: rgbColorSpace, colors: [dazedColor(0x555F9B), dazedColor(0x252E58)] as CFArray, locations: [0, 1]) {
             ctx.drawLinearGradient(g, start: CGPoint(x: head.x - 16.0, y: collarL.y), end: B(12.0, -5.0), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
         }
         ctx.restoreGState()
@@ -1539,14 +2211,13 @@ enum CatRenderer {
         hood.closeSubpath()
         ctx.addPath(hood)
         ctx.clip()
-        if let g = CGGradient(colorsSpace: cs, colors: [dazedColor(0x6871B4), dazedColor(0x2F386D)] as CFArray, locations: [0, 1]) {
+        if let g = CGGradient(colorsSpace: rgbColorSpace, colors: [dazedColor(0x6871B4), dazedColor(0x2F386D)] as CFArray, locations: [0, 1]) {
             ctx.drawLinearGradient(g, start: CGPoint(x: -16.0, y: -35.0), end: CGPoint(x: 15.0, y: 42.0), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
         }
         ctx.restoreGState()
     }
 
     private static func drawDazedFace(in ctx: CGContext, physics: CatPhysics, eyeTheme: EyeColorTheme, yawRad: CGFloat, pitchRad: CGFloat, scruffStartle: CGFloat, scruffWide: CGFloat) {
-        let cs = CGColorSpaceCreateDeviceRGB()
         let face = projectHead3D(x: 0.0, y: 4.0, z: 22.0, yawRad: yawRad * 0.72, pitchRad: pitchRad * 0.78).pt
         ctx.saveGState()
         ctx.translateBy(x: face.x, y: face.y)
@@ -1563,7 +2234,7 @@ enum CatRenderer {
         ctx.saveGState()
         ctx.addPath(opening)
         ctx.clip()
-        if let g = CGGradient(colorsSpace: cs, colors: [dazedColor(0xFFF4D4), dazedColor(0xDDBF91)] as CFArray, locations: [0, 1]) {
+        if let g = CGGradient(colorsSpace: rgbColorSpace, colors: [dazedColor(0xFFF4D4), dazedColor(0xDDBF91)] as CFArray, locations: [0, 1]) {
             ctx.drawLinearGradient(g, start: CGPoint(x: -7.0, y: -23.0), end: CGPoint(x: 8.0, y: 29.0), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
         }
         ctx.restoreGState()
@@ -1577,7 +2248,7 @@ enum CatRenderer {
         ctx.saveGState()
         ctx.translateBy(x: 0.0, y: 11.0)
         ctx.scaleBy(x: 1.0, y: 34.0 / 42.0)
-        if let g = CGGradient(colorsSpace: cs, colors: [
+        if let g = CGGradient(colorsSpace: rgbColorSpace, colors: [
             dazedColor(0x8D5B44, alpha: 220.0 / 255.0),
             dazedColor(0x8D5B44, alpha: 155.0 / 255.0),
             dazedColor(0x8D5B44, alpha: 5.0 / 255.0),
@@ -1734,10 +2405,7 @@ enum CatRenderer {
             ctx.fill(ctx.boundingBoxOfClipPath)
             return
         }
-        let stop = max(0.1, min(0.9, g.stop))
-        let cs = CGColorSpaceCreateDeviceRGB()
-        let cols = [g.from.ns.cgColor, g.to.ns.cgColor, g.to.ns.cgColor] as CFArray
-        if let grad = CGGradient(colorsSpace: cs, colors: cols, locations: [0.0, stop, 1.0]) {
+        if let grad = cachedPartGradient(g) {
             ctx.drawLinearGradient(grad, start: start, end: end, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
         } else {
             ctx.setFillColor(g.to.ns.cgColor)
@@ -1946,10 +2614,6 @@ enum CatRenderer {
         let partSpaces: [SkinSpace] = [.head, .skull, .body]
         let hasRegions = skin.regions.contains { partSpaces.contains($0.space) }
         let hasMarks = skin.marks.contains { partSpaces.contains($0.space) }
-        let headMap: (CGPoint) -> CGPoint = { Self.headPoint($0, skull: false, skin: skin, head: headCenter, physics: physics) }
-        let headWhiteMap: (CGPoint) -> CGPoint = { Self.headPoint($0, skull: false, skin: skin, head: headCenter, physics: physics, whiteSurface: true) }
-        let skullMap: (CGPoint) -> CGPoint = { Self.headPoint($0, skull: true, skin: skin, head: headCenter, physics: physics) }
-        let bodyMap: (CGPoint) -> CGPoint = { Self.bodyPoint($0, skin: skin, seatX: seatX, seatY: seatY, physics: physics) }
 
         ctx.saveGState()
         if pal.bodyShade == nil {
@@ -1969,46 +2633,56 @@ enum CatRenderer {
         }
         if pal.bodyShade != nil || pal.headBody != nil || skin.partGradients["body"] != nil || skin.partGradients["head"] != nil || skin.colorpoint || hasRegions || hasMarks {
             ctx.saveGState(); ctx.addPath(path); ctx.clip()
-            let cs = CGColorSpaceCreateDeviceRGB()
 
-            if let shade = pal.bodyShade {
+            if let shade = pal.bodyShade, let grad = cachedBodyShadeGradient(body: pal.body, shade: shade) {
                 // Warm oat-milk cream gradient + soft toasted back shading
-                let bodyColors = [pal.body.ns.cgColor, shade.ns.cgColor] as CFArray
-                if let grad = CGGradient(colorsSpace: cs, colors: bodyColors, locations: [0.15, 1.0]) {
-                    ctx.drawLinearGradient(
-                        grad,
-                        start: CGPoint(x: seatX, y: headCenter.y - 34),
-                        end: CGPoint(x: seatX, y: seatY + 18),
-                        options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
-                    )
-                }
+                ctx.drawLinearGradient(
+                    grad,
+                    start: CGPoint(x: seatX, y: headCenter.y - 34),
+                    end: CGPoint(x: seatX, y: seatY + 18),
+                    options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
+                )
             }
 
-            if let bodyGrad = skin.partGradients["body"] {
+            let needsHeadGeo = pal.headBody != nil
+                || skin.partGradients["body"] != nil
+                || skin.partGradients["head"] != nil
+                || hasRegions
+                || hasMarks
+            let overlap = min(1, abs(yaw) * max(0, pitch))
+            let coverage = overlap * overlap * (3 - 2 * overlap)
+            let headGeo: HeadGeometryEntry? = needsHeadGeo
+                ? cachedHeadGeometry(skin: skin, yaw: yaw, pitch: pitch, tilt: hTilt, coverage: coverage)
+                : nil
+
+            if let bodyGrad = skin.partGradients["body"], let jawBodyPath = headGeo?.jawBodyPath {
                 ctx.saveGState()
-                let bodySide = SkinSpec.jawSide(head: false, cheekFullness: skin.shape.cheekFullness)
-                ctx.addPath(polyline(bodySide, closed: true, map: headMap))
+                ctx.translateBy(x: headCenter.x, y: headCenter.y)
+                ctx.addPath(jawBodyPath)
                 ctx.clip()
+                ctx.translateBy(x: -headCenter.x, y: -headCenter.y)
                 drawClampedPartGradient(in: ctx, bodyGrad, start: CGPoint(x: seatX, y: seatY - 78), end: CGPoint(x: seatX, y: seatY + 16))
                 ctx.restoreGState()
             }
 
-            if let headBody = pal.headBody {
+            if let headBody = pal.headBody, let jawHeadPath = headGeo?.jawHeadPath {
                 ctx.saveGState()
-                let headSide = SkinSpec.jawSide(head: true, cheekFullness: skin.shape.cheekFullness)
-                ctx.addPath(polyline(headSide, closed: true, map: headMap))
+                ctx.translateBy(x: headCenter.x, y: headCenter.y)
+                ctx.addPath(jawHeadPath)
                 ctx.clip()
+                ctx.translateBy(x: -headCenter.x, y: -headCenter.y)
                 ctx.setFillColor(headBody.ns.cgColor)
                 ctx.addPath(path)
                 ctx.fillPath()
                 ctx.restoreGState()
             }
 
-            if let headGrad = skin.partGradients["head"] {
+            if let headGrad = skin.partGradients["head"], let jawHeadPath = headGeo?.jawHeadPath {
                 ctx.saveGState()
-                let headSide = SkinSpec.jawSide(head: true, cheekFullness: skin.shape.cheekFullness)
-                ctx.addPath(polyline(headSide, closed: true, map: headMap))
+                ctx.translateBy(x: headCenter.x, y: headCenter.y)
+                ctx.addPath(jawHeadPath)
                 ctx.clip()
+                ctx.translateBy(x: -headCenter.x, y: -headCenter.y)
                 drawClampedPartGradient(in: ctx, headGrad, start: CGPoint(x: headCenter.x, y: headCenter.y - 44), end: CGPoint(x: headCenter.x, y: headCenter.y + 40))
                 ctx.restoreGState()
             }
@@ -2017,6 +2691,7 @@ enum CatRenderer {
                 let mid = pal.pointsMid ?? point
                 let yawRad = yaw * 0.50
                 let pitchRad = pitch * 0.36
+                let pointGrads = cachedPointsGradients(point: point, mid: mid)
                 ctx.saveGState()
                 ctx.translateBy(x: headCenter.x, y: headCenter.y)
                 ctx.rotate(by: hTilt)
@@ -2031,13 +2706,7 @@ enum CatRenderer {
                 ctx.saveGState()
                 ctx.translateBy(x: maskCenter.x, y: maskCenter.y)
                 ctx.scaleBy(x: maskScaleX * 1.24, y: maskScaleY * 0.88)
-                let maskColors = [
-                    point.ns.cgColor,
-                    point.withAlpha(0.92).cgColor,
-                    mid.withAlpha(0.62).cgColor,
-                    mid.withAlpha(0.0).cgColor
-                ] as CFArray
-                if let maskGrad = CGGradient(colorsSpace: cs, colors: maskColors, locations: [0.0, 0.42, 0.74, 1.0]) {
+                if let maskGrad = pointGrads.mask {
                     ctx.drawRadialGradient(
                         maskGrad,
                         startCenter: .zero, startRadius: 0,
@@ -2052,12 +2721,7 @@ enum CatRenderer {
                 ctx.saveGState()
                 ctx.translateBy(x: muzzleCenter.x, y: muzzleCenter.y)
                 ctx.scaleBy(x: maskScaleX * 1.04, y: maskScaleY * 0.76)
-                let muzzleColors = [
-                    point.ns.cgColor,
-                    point.withAlpha(0.85).cgColor,
-                    point.withAlpha(0.0).cgColor
-                ] as CFArray
-                if let muzGrad = CGGradient(colorsSpace: cs, colors: muzzleColors, locations: [0.0, 0.50, 1.0]) {
+                if let muzGrad = pointGrads.muzzle {
                     ctx.drawRadialGradient(
                         muzGrad,
                         startCenter: .zero, startRadius: 0,
@@ -2069,57 +2733,89 @@ enum CatRenderer {
                 ctx.restoreGState()
             }
 
-            // Curve regions: body regions below jawline first, then skull/head regions above jawline.
-            let bodyRegSide = SkinSpec.jawSide(head: false, cheekFullness: skin.shape.cheekFullness)
-            for region in skin.regions where region.space == .body {
-                ctx.saveGState()
-                ctx.addPath(polyline(bodyRegSide, closed: true, map: headMap))
-                ctx.clip()
-                drawRegion(in: ctx, region, map: bodyMap)
-                ctx.restoreGState()
-            }
-            let headRegSide = SkinSpec.jawSide(head: true, cheekFullness: skin.shape.cheekFullness)
-            for region in skin.regions where region.space == .head || region.space == .skull {
-                ctx.saveGState()
-                ctx.addPath(polyline(headRegSide, closed: true, map: headMap))
-                ctx.clip()
-                drawRegion(in: ctx, region, map: region.space == .skull ? skullMap : headMap)
-                ctx.restoreGState()
-            }
+            if let headGeo {
+                let needsBodyGeo = skin.regions.contains { $0.space == .body } || skin.marks.contains { $0.space == .body }
+                let bodyGeo: BodyGeometryEntry? = needsBodyGeo
+                    ? cachedBodyGeometry(skin: skin, bodySquash: physics.bodySquash.value, lieIntensity: physics.lieIntensity.value, bodyTilt: bTilt)
+                    : nil
 
-            let overlap = min(1, abs(yaw) * max(0, pitch))
-            let coverage = overlap * overlap * (3 - 2 * overlap)
-            let bib = skin.marks.first { $0.space == .head && !$0.stroke && isMilkMark($0) && $0.points.contains { abs($0.x) > 46 } }
-            for mark in skin.marks {
-                if mark.clipToBib && coverage == 0 { continue }
-                switch mark.space {
-                case .body:
+                // Curve regions: body regions below jawline first, then skull/head regions above jawline.
+                if let bodyGeo, !bodyGeo.bodyRegions.isEmpty, let jawBodyPath = headGeo.jawBodyPath {
                     ctx.saveGState()
-                    ctx.addPath(polyline(bodyRegSide, closed: true, map: headMap))
+                    ctx.translateBy(x: headCenter.x, y: headCenter.y)
+                    ctx.addPath(jawBodyPath)
                     ctx.clip()
-                    drawMark(in: ctx, mark, map: bodyMap)
-                    ctx.restoreGState()
-                case .skull:
-                    drawMark(in: ctx, mark, map: skullMap)
-                case .head:
-                    let useWhite = skin.headSurface == .dome && isMilkMark(mark)
-                    if mark.clipToBib, let bib = bib {
-                        ctx.saveGState()
-                        ctx.addPath(polyline(bib.points, closed: true, map: useWhite ? headWhiteMap : headMap))
-                        ctx.clip()
-                        let clipMap: (CGPoint) -> CGPoint = { pt in
-                            var local = pt
-                            let lowerRim = min(1, max(0, (pt.y - 20) / 6))
-                            local.x *= 1 - 0.5 * lowerRim * (1 - coverage)
-                            if pt.y > 20 { local.y = 20 + (pt.y - 20) * (0.75 + 0.25 * coverage) }
-                            return (useWhite ? headWhiteMap : headMap)(local)
-                        }
-                        drawMark(in: ctx, mark, map: clipMap)
-                        ctx.restoreGState()
-                    } else {
-                        drawMark(in: ctx, mark, map: useWhite ? headWhiteMap : headMap)
+                    ctx.translateBy(x: seatX - headCenter.x, y: seatY - headCenter.y)
+                    for item in bodyGeo.bodyRegions {
+                        ctx.setFillColor(item.color)
+                        ctx.addPath(item.path)
+                        ctx.fillPath()
                     }
-                default: break
+                    ctx.restoreGState()
+                }
+                if !headGeo.headRegions.isEmpty, let jawHeadPath = headGeo.jawHeadPath {
+                    ctx.saveGState()
+                    ctx.translateBy(x: headCenter.x, y: headCenter.y)
+                    ctx.addPath(jawHeadPath)
+                    ctx.clip()
+                    for item in headGeo.headRegions {
+                        ctx.setFillColor(item.color)
+                        ctx.addPath(item.path)
+                        ctx.fillPath()
+                    }
+                    ctx.restoreGState()
+                }
+
+                func drawCachedMark(path: CGPath, color: CGColor, stroke: Bool, width: CGFloat) {
+                    if !stroke {
+                        ctx.setFillColor(color)
+                        ctx.addPath(path)
+                        ctx.fillPath()
+                    } else {
+                        ctx.setStrokeColor(color)
+                        ctx.setLineWidth(width)
+                        ctx.setLineCap(.round)
+                        ctx.setLineJoin(.round)
+                        ctx.addPath(path)
+                        ctx.strokePath()
+                    }
+                }
+
+                let isDome = skin.headSurface == .dome
+                for (idx, mark) in skin.marks.enumerated() {
+                    if mark.clipToBib && coverage == 0 { continue }
+                    switch mark.space {
+                    case .body:
+                        if let bodyGeo,
+                           let jawBodyPath = headGeo.jawBodyPath,
+                           let mPath = bodyGeo.markPaths[idx],
+                           let mColor = bodyGeo.markColors[idx] {
+                            ctx.saveGState()
+                            ctx.translateBy(x: headCenter.x, y: headCenter.y)
+                            ctx.addPath(jawBodyPath)
+                            ctx.clip()
+                            ctx.translateBy(x: seatX - headCenter.x, y: seatY - headCenter.y)
+                            drawCachedMark(path: mPath, color: mColor, stroke: mark.stroke, width: mark.width)
+                            ctx.restoreGState()
+                        }
+                    case .skull, .head:
+                        if let mPath = headGeo.markPaths[idx],
+                           let mColor = headGeo.markColors[idx] {
+                            ctx.saveGState()
+                            ctx.translateBy(x: headCenter.x, y: headCenter.y)
+                            if mark.space == .head && mark.clipToBib {
+                                let useWhite = isDome && isMilkMark(mark)
+                                if let bibPath = useWhite ? headGeo.bibPathWhite : headGeo.bibPathNormal {
+                                    ctx.addPath(bibPath)
+                                    ctx.clip()
+                                }
+                            }
+                            drawCachedMark(path: mPath, color: mColor, stroke: mark.stroke, width: mark.width)
+                            ctx.restoreGState()
+                        }
+                    default:
+                        break
+                    }
                 }
             }
             ctx.restoreGState()
@@ -2751,21 +3447,13 @@ enum CatRenderer {
         // Luminous iris (flat-art translucent pale crystal ice-blue top-to-bottom wash for Siamese!)
         ctx.setFillColor(eyeColor.cgColor)
         ctx.fill(eyeRect)
-        if siameseBlue {
-            let cs = CGColorSpaceCreateDeviceRGB()
-            let irisCols = [
-                NSColor(calibratedRed: 0.56, green: 0.77, blue: 0.90, alpha: 1.0).cgColor,  // #8FC4E6 soft cool upper iris
-                NSColor(calibratedRed: 0.71, green: 0.87, blue: 0.96, alpha: 1.0).cgColor,  // #B5DEF5 airy pale sky blue
-                NSColor(calibratedRed: 0.86, green: 0.945, blue: 0.99, alpha: 1.0).cgColor  // #DBF1FC clear luminous lower iris
-            ] as CFArray
-            if let irisGrad = CGGradient(colorsSpace: cs, colors: irisCols, locations: [0.0, 0.55, 1.0]) {
-                ctx.drawLinearGradient(
-                    irisGrad,
-                    start: CGPoint(x: 0, y: -ry),
-                    end: CGPoint(x: 0, y: ry),
-                    options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
-                )
-            }
+        if siameseBlue, let irisGrad = siameseIrisGradient {
+            ctx.drawLinearGradient(
+                irisGrad,
+                start: CGPoint(x: 0, y: -ry),
+                end: CGPoint(x: 0, y: ry),
+                options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
+            )
         }
 
         // Pupil morphs smoothly from vertical almond slit -> HUGE round black boba pupil when hunting!
@@ -2783,11 +3471,8 @@ enum CatRenderer {
         // Paint inside the existing lid clip and follow the animated pupil position/size.
         if customIris == nil && eyeTheme == .referenceHazel {
             for i in 0...24 {
-                let t = CGFloat(i) / 24
-                let mix = t * t * (3 - 2 * t)
-                ctx.setFillColor(NSColor(calibratedRed: (218 - 77 * mix)/255,
-                    green: (178 - 33 * mix)/255, blue: (87 + 41 * mix)/255, alpha: 1).cgColor)
-                let rim = (1 - t) * 2.2
+                ctx.setFillColor(hazelRingColors[i])
+                let rim = (1 - CGFloat(i) / 24) * 2.2
                 ctx.fillEllipse(in: pupilRect.insetBy(dx: -rim, dy: -rim))
             }
         }
@@ -3028,13 +3713,12 @@ enum CatRenderer {
             ctx.saveGState()
             ctx.addPath(legPath)
             ctx.clip()
-            let cs = CGColorSpaceCreateDeviceRGB()
             let colors = [
                 pal.body.withAlpha(0.0).cgColor,
                 mid.withAlpha(0.75).cgColor,
                 point.ns.cgColor
             ] as CFArray
-            if let grad = CGGradient(colorsSpace: cs, colors: colors, locations: [0.05, 0.50, 0.82]) {
+            if let grad = CGGradient(colorsSpace: rgbColorSpace, colors: colors, locations: [0.05, 0.50, 0.82]) {
                 ctx.drawLinearGradient(
                     grad,
                     start: CGPoint(x: top.x, y: top.y),
@@ -3076,9 +3760,8 @@ enum CatRenderer {
                 ctx.saveGState()
                 ctx.addPath(legShape)
                 ctx.clip()
-                let cs = CGColorSpaceCreateDeviceRGB()
                 let legCols = [pal.legs.withAlpha(0.0).cgColor, pal.legs.ns.cgColor, pal.legs.ns.cgColor] as CFArray
-                if let legGrad = CGGradient(colorsSpace: cs, colors: legCols, locations: [0.04, 0.32, 1.0]) {
+                if let legGrad = CGGradient(colorsSpace: rgbColorSpace, colors: legCols, locations: [0.04, 0.32, 1.0]) {
                     ctx.drawLinearGradient(
                         legGrad,
                         start: CGPoint(x: top.x, y: top.y),
@@ -3228,14 +3911,13 @@ enum CatRenderer {
             ctx.saveGState()
             ctx.addPath(limbPath)
             ctx.clip()
-            let cs = CGColorSpaceCreateDeviceRGB()
             let colors = [
                 pal.body.withAlpha(0.0).cgColor,
                 pal.body.ns.cgColor,
                 mid.ns.cgColor,
                 point.ns.cgColor
             ] as CFArray
-            if let grad = CGGradient(colorsSpace: cs, colors: colors, locations: [0.0, 0.16, 0.48, 0.78]) {
+            if let grad = CGGradient(colorsSpace: rgbColorSpace, colors: colors, locations: [0.0, 0.16, 0.48, 0.78]) {
                 ctx.drawLinearGradient(grad, start: start, end: end, options: [.drawsAfterEndLocation])
             }
             ctx.restoreGState()
@@ -3270,7 +3952,7 @@ enum CatRenderer {
                 // White chest fading into the leg colour along the first 30% of the arm.
                 ctx.saveGState(); ctx.clip()
                 let colors = [chest.ns.cgColor, limbBaseCol.ns.cgColor] as CFArray
-                if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 0.30]) {
+                if let gradient = CGGradient(colorsSpace: rgbColorSpace, colors: colors, locations: [0, 0.30]) {
                     ctx.drawLinearGradient(gradient, start: start, end: end,
                                            options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
                 }
@@ -3331,7 +4013,28 @@ enum CatRenderer {
 
     // MARK: - Floating Mechanical Keycap Popups
 
+    private static var keycapLabelCache: [String: (attr: NSAttributedString, size: CGSize)] = [:]
+
+    private static func cachedKeycapLabel(_ text: String) -> (attr: NSAttributedString, size: CGSize) {
+        if let hit = keycapLabelCache[text] { return hit }
+        if keycapLabelCache.count > 128 { keycapLabelCache.removeAll(keepingCapacity: true) }
+        let fontSize: CGFloat = text.count <= 1 ? 11.5 : 10.0
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: fontSize, weight: .bold),
+            .foregroundColor: NSColor(calibratedRed: 0.12, green: 0.12, blue: 0.14, alpha: 1.0)
+        ]
+        let attrStr = NSAttributedString(string: text, attributes: attrs)
+        let entry = (attr: attrStr, size: attrStr.size())
+        keycapLabelCache[text] = entry
+        return entry
+    }
+
     private static func drawFloatingKeycaps(in ctx: CGContext, physics: CatPhysics) {
+        let baseShadowColor = NSColor(calibratedRed: 0.15, green: 0.15, blue: 0.17, alpha: 0.95).cgColor
+        let faceColor = NSColor(calibratedRed: 0.975, green: 0.972, blue: 0.952, alpha: 1.0).cgColor
+        let strokeColor = NSColor(calibratedRed: 0.16, green: 0.16, blue: 0.18, alpha: 1.0).cgColor
+        let flipped = CatSettings.shared.flipHorizontal
+
         for badge in physics.floatingKeycaps {
             let progress = badge.age / badge.lifetime
             // Spring pop-in scale (starts crisp and readable immediately!)
@@ -3348,15 +4051,9 @@ enum CatRenderer {
 
             let alpha: CGFloat = progress < 0.62 ? 1.0 : max(0, 1.0 - (progress - 0.62) / 0.38)
 
-            let charCount = badge.label.count
-            let fontSize: CGFloat = charCount <= 1 ? 11.5 : 10.0
-            let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: NSColor(calibratedRed: 0.12, green: 0.12, blue: 0.14, alpha: 1.0)
-            ]
-            let attrStr = NSAttributedString(string: badge.label, attributes: attrs)
-            let strSize = attrStr.size()
+            let cached = cachedKeycapLabel(badge.label)
+            let attrStr = cached.attr
+            let strSize = cached.size
             let w: CGFloat = max(23, ceil(strSize.width) + 12)
             let h: CGFloat = 22
 
@@ -3364,23 +4061,23 @@ enum CatRenderer {
             ctx.setAlpha(alpha)
             ctx.translateBy(x: badge.position.x, y: badge.position.y)
             ctx.rotate(by: badge.rotation)
-            ctx.scaleBy(x: CatSettings.shared.flipHorizontal ? -scale : scale, y: scale)
+            ctx.scaleBy(x: flipped ? -scale : scale, y: scale)
 
             // 3D bottom keycap edge / shadow
             let baseRect = CGRect(x: -w * 0.5, y: -h * 0.5 + 2.5, width: w, height: h)
             let basePath = CGPath(roundedRect: baseRect, cornerWidth: 5.5, cornerHeight: 5.5, transform: nil)
-            ctx.setFillColor(NSColor(calibratedRed: 0.15, green: 0.15, blue: 0.17, alpha: 0.95).cgColor)
+            ctx.setFillColor(baseShadowColor)
             ctx.addPath(basePath)
             ctx.fillPath()
 
             // Crisp white mechanical keycap top face
             let faceRect = CGRect(x: -w * 0.5, y: -h * 0.5, width: w, height: h)
             let facePath = CGPath(roundedRect: faceRect, cornerWidth: 5.2, cornerHeight: 5.2, transform: nil)
-            ctx.setFillColor(NSColor(calibratedRed: 0.975, green: 0.972, blue: 0.952, alpha: 1.0).cgColor)
+            ctx.setFillColor(faceColor)
             ctx.addPath(facePath)
             ctx.fillPath()
 
-            ctx.setStrokeColor(NSColor(calibratedRed: 0.16, green: 0.16, blue: 0.18, alpha: 1.0).cgColor)
+            ctx.setStrokeColor(strokeColor)
             ctx.setLineWidth(1.45)
             ctx.addPath(facePath)
             ctx.strokePath()
@@ -3543,10 +4240,18 @@ enum CatRenderer {
     }
 
     private static func drawRadialGlow(in ctx: CGContext, center: CGPoint, radius: CGFloat, color: NSColor) {
-        let cs = CGColorSpaceCreateDeviceRGB()
+        if let mask = radialGlowMask {
+            let rect = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+            ctx.saveGState()
+            ctx.clip(to: rect, mask: mask)
+            ctx.setFillColor(color.cgColor)
+            ctx.fill(rect)
+            ctx.restoreGState()
+            return
+        }
         let colors = [color.cgColor, color.withAlphaComponent(0.0).cgColor] as CFArray
         let locs: [CGFloat] = [0.0, 1.0]
-        if let grad = CGGradient(colorsSpace: cs, colors: colors, locations: locs) {
+        if let grad = CGGradient(colorsSpace: rgbColorSpace, colors: colors, locations: locs) {
             ctx.saveGState()
             ctx.drawRadialGradient(
                 grad,
@@ -6940,12 +7645,11 @@ enum CatRenderer {
 
         if isDazed {
             // Authentic stretched Monster Hunter Palico hood + indigo tunic + cream lower tummy
-            let cs = CGColorSpaceCreateDeviceRGB()
             ctx.saveGState()
             ctx.addPath(longCatPath)
             ctx.clip()
             let bellyCols = [dazedColor(0xF4DFB8), dazedColor(0xC8A77A)] as CFArray
-            if let grad = CGGradient(colorsSpace: cs, colors: bellyCols, locations: [0.0, 1.0]) {
+            if let grad = CGGradient(colorsSpace: rgbColorSpace, colors: bellyCols, locations: [0.0, 1.0]) {
                 ctx.drawLinearGradient(grad, start: CGPoint(x: headCenter.x, y: headCenter.y + 30),
                                        end: CGPoint(x: rumpCenterX, y: torsoBottomY + bottomDip),
                                        options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
@@ -6963,7 +7667,7 @@ enum CatRenderer {
             ctx.addPath(tunic)
             ctx.clip()
             let clothCols = [dazedColor(0x555F9B), dazedColor(0x252E58)] as CFArray
-            if let grad = CGGradient(colorsSpace: cs, colors: clothCols, locations: [0.0, 1.0]) {
+            if let grad = CGGradient(colorsSpace: rgbColorSpace, colors: clothCols, locations: [0.0, 1.0]) {
                 ctx.drawLinearGradient(grad, start: CGPoint(x: headCenter.x - 16, y: headCenter.y + 20),
                                        end: CGPoint(x: rumpCenterX + 12, y: tunicBotY + 10),
                                        options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
@@ -6992,7 +7696,7 @@ enum CatRenderer {
             ctx.addPath(hood)
             ctx.clip()
             let hoodCols = [dazedColor(0x6871B4), dazedColor(0x2F386D)] as CFArray
-            if let grad = CGGradient(colorsSpace: cs, colors: hoodCols, locations: [0.0, 1.0]) {
+            if let grad = CGGradient(colorsSpace: rgbColorSpace, colors: hoodCols, locations: [0.0, 1.0]) {
                 ctx.drawLinearGradient(grad, start: CGPoint(x: -16, y: -38), end: CGPoint(x: 15, y: 42),
                                        options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
             }
@@ -7005,19 +7709,15 @@ enum CatRenderer {
             ctx.addPath(longCatPath)
             ctx.clip()
 
-            let cs = CGColorSpaceCreateDeviceRGB()
-            if let shade = pal.bodyShade {
-                let cols = [pal.body.ns.cgColor, shade.ns.cgColor] as CFArray
-                if let grad = CGGradient(colorsSpace: cs, colors: cols, locations: [0.15, 1.0]) {
-                    ctx.drawLinearGradient(grad, start: CGPoint(x: headCenter.x, y: headCenter.y - 36),
-                                           end: CGPoint(x: rumpCenterX, y: torsoBottomY + bottomDip),
-                                           options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
-                }
+            if let shade = pal.bodyShade, let grad = cachedBodyShadeGradient(body: pal.body, shade: shade) {
+                ctx.drawLinearGradient(grad, start: CGPoint(x: headCenter.x, y: headCenter.y - 36),
+                                       end: CGPoint(x: rumpCenterX, y: torsoBottomY + bottomDip),
+                                       options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
             }
 
             if let bodyGrad = skin.partGradients["body"] {
                 ctx.saveGState()
-                let bodySide = SkinSpec.jawSide(head: false, cheekFullness: skin.shape.cheekFullness)
+                let bodySide = cachedJawSide(head: false, cheekFullness: skin.shape.cheekFullness)
                 ctx.addPath(polyline(bodySide, closed: true, map: headMap))
                 ctx.clip()
                 drawClampedPartGradient(in: ctx, bodyGrad, start: CGPoint(x: headCenter.x, y: headCenter.y + 20), end: CGPoint(x: rumpCenterX, y: torsoBottomY + bottomDip))
@@ -7026,7 +7726,7 @@ enum CatRenderer {
 
             if let headBody = pal.headBody {
                 ctx.saveGState()
-                let headSide = SkinSpec.jawSide(head: true, cheekFullness: skin.shape.cheekFullness)
+                let headSide = cachedJawSide(head: true, cheekFullness: skin.shape.cheekFullness)
                 ctx.addPath(polyline(headSide, closed: true, map: headMap))
                 ctx.clip()
                 ctx.setFillColor(headBody.ns.cgColor)
@@ -7037,7 +7737,7 @@ enum CatRenderer {
 
             if let headGrad = skin.partGradients["head"] {
                 ctx.saveGState()
-                let headSide = SkinSpec.jawSide(head: true, cheekFullness: skin.shape.cheekFullness)
+                let headSide = cachedJawSide(head: true, cheekFullness: skin.shape.cheekFullness)
                 ctx.addPath(polyline(headSide, closed: true, map: headMap))
                 ctx.clip()
                 drawClampedPartGradient(in: ctx, headGrad, start: CGPoint(x: headCenter.x, y: headCenter.y - 48), end: CGPoint(x: headCenter.x, y: headCenter.y + 40))
@@ -7047,18 +7747,18 @@ enum CatRenderer {
             // 2.5D Colorpoint face mask (Siamese / Ragdoll)
             if let point = pal.points {
                 let mid = pal.pointsMid ?? point
+                let pointGrads = cachedPointsGradients(point: point, mid: mid)
                 ctx.saveGState()
                 ctx.translateBy(x: headCenter.x, y: headCenter.y + 3.0)
                 ctx.scaleBy(x: 1.22 * hs, y: 0.88 * hs)
-                let maskCols = [point.ns.cgColor, point.withAlpha(0.92).cgColor, mid.withAlpha(0.62).cgColor, mid.withAlpha(0.0).cgColor] as CFArray
-                if let g = CGGradient(colorsSpace: cs, colors: maskCols, locations: [0.0, 0.42, 0.74, 1.0]) {
+                if let g = pointGrads.mask {
                     ctx.drawRadialGradient(g, startCenter: .zero, startRadius: 0, endCenter: .zero, endRadius: 31.0, options: [.drawsBeforeStartLocation])
                 }
                 ctx.restoreGState()
             }
 
             // Curve regions: body regions below jawline first, then skull/head regions above jawline
-            let dragBodySide = SkinSpec.jawSide(head: false, cheekFullness: skin.shape.cheekFullness)
+            let dragBodySide = cachedJawSide(head: false, cheekFullness: skin.shape.cheekFullness)
             for region in skin.regions where region.space == .body {
                 ctx.saveGState()
                 ctx.addPath(polyline(dragBodySide, closed: true, map: headMap))
