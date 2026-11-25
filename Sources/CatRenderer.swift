@@ -3683,25 +3683,26 @@ enum CatRenderer {
         let armSp = skin.shape.armSpacing
         let armLen = skin.shape.armLength
         let armRY = skin.shape.armRootY
-        let idleTopY: CGFloat = max((seatY - bd.idleTopDY + armRY) + lieS * 34.0, headBottom + 40.0 * skin.shape.headScale)
-        let idleTopX: CGFloat = bd.idleTopX * bw * armSp - lieS * 5.0
-        let idleBotX: CGFloat = bd.idleBotX * bw * armSp - lieS * 4.5
-        let idleBotY: CGFloat = max(idleTopY + 14.0, (seatY + 12.0 + (armLen - 1.0) * 16.0) + lieS * 12.0)
         let shX: CGFloat = bd.shoulderX * bw * armSp
         let approved = !skin.colorpoint && skin.palette.belly != nil && skin.palette.belly == skin.palette.legs && !skin.idleLegsTinted && !skin.marks.isEmpty
-        let shoulderDepth: CGFloat = approved ? 43 : 49
+        let shoulderDepth: CGFloat = max(16.0, (approved ? 43.0 : 49.0) - armRY)
         let tiltChinDrop: CGFloat = abs(sin(physics.headTilt.value)) * 20.0 * skin.shape.cheekFullness * skin.shape.headScale + max(0, skin.shape.headScale - 1.0) * 32.0
-        let faceClearance: CGFloat = (approved ? 52 : 51) + tiltChinDrop
+        let faceClearance: CGFloat = (approved ? 52.0 : 51.0) + tiltChinDrop
         let faceBottom = headBottom + faceClearance
         func shoulder(_ x: CGFloat) -> CGPoint {
             let sy = physics.bodySquash.value * (1.0 - lieS * 0.42)
             let sx = (1.0 + (1.0 - physics.bodySquash.value) * 0.55) * (1.0 + lieS * 0.03)
             let c = cos(physics.bodyTilt.value), s = sin(physics.bodyTilt.value)
             return CGPoint(x: seatX + x*sx*c + shoulderDepth*sy*s,
-                           y: max(seatY + x*sx*s - shoulderDepth*sy*c, faceBottom))
+                           y: max(seatY + x*sx*s - shoulderDepth*sy*c, faceBottom - max(0, -armRY) * 0.6))
         }
         let leftShoulder = shoulder(-shX)
         let rightShoulder = shoulder(shX)
+        // Align idle sitting forearm root with typing shoulder(±shX) when awake; keep inward/downward tuck during sleep.
+        let leftIdleTop = CGPoint(x: leftShoulder.x + lieS * 5.0, y: leftShoulder.y + lieS * 16.0)
+        let rightIdleTop = CGPoint(x: rightShoulder.x - lieS * 5.0, y: rightShoulder.y + lieS * 16.0)
+        let idleBotX: CGFloat = bd.idleBotX * bw * armSp - lieS * 4.5
+        let idleBotY: CGFloat = max(max(leftIdleTop.y, rightIdleTop.y) + 14.0, (seatY + 12.0 + (armLen - 1.0) * 16.0) + lieS * 12.0)
         let idleAlpha: CGFloat = 1.0 - smoothstep(0.48, 0.78, lieS)
 
         // Left arm
@@ -3709,7 +3710,7 @@ enum CatRenderer {
             if idleAlpha > 0.01 {
                 ctx.saveGState()
                 if idleAlpha < 0.995 { ctx.setAlpha(idleAlpha) }
-                drawIdleFrontLeg(in: ctx, top: CGPoint(x: seatX - idleTopX, y: idleTopY), bottom: CGPoint(x: seatX - idleBotX, y: idleBotY), isLeft: true, skin: skin)
+                drawIdleFrontLeg(in: ctx, top: leftIdleTop, bottom: CGPoint(x: seatX - idleBotX, y: idleBotY), isLeft: true, skin: skin)
                 ctx.restoreGState()
             }
         } else {
@@ -3736,7 +3737,7 @@ enum CatRenderer {
             if idleAlpha > 0.01 {
                 ctx.saveGState()
                 if idleAlpha < 0.995 { ctx.setAlpha(idleAlpha) }
-                drawIdleFrontLeg(in: ctx, top: CGPoint(x: seatX + idleTopX, y: idleTopY), bottom: CGPoint(x: seatX + idleBotX, y: idleBotY), isLeft: false, skin: skin)
+                drawIdleFrontLeg(in: ctx, top: rightIdleTop, bottom: CGPoint(x: seatX + idleBotX, y: idleBotY), isLeft: false, skin: skin)
                 ctx.restoreGState()
             }
         } else {
@@ -3763,9 +3764,9 @@ enum CatRenderer {
     private static func drawIdleFrontLeg(in ctx: CGContext, top: CGPoint, bottom: CGPoint, isLeft: Bool, skin: SkinSpec) {
         if skin.renderStyle == .dazed {
             let sign: CGFloat = isLeft ? -1.0 : 1.0
-            let shoulder = CGPoint(x: top.x + sign * 4.0, y: top.y - 6.0)
-            let elbow = CGPoint(x: top.x + sign * 11.0, y: top.y + 1.0)
-            let paw = CGPoint(x: top.x + sign * 10.0, y: top.y + 15.0)
+            let shoulder = CGPoint(x: top.x + sign * 2.0, y: top.y + 13.0)
+            let elbow = CGPoint(x: top.x + sign * 9.0, y: top.y + 20.0)
+            let paw = CGPoint(x: top.x + sign * 8.0, y: top.y + 34.0)
             drawLimb(in: ctx, start: shoulder, control: elbow, end: paw, startWidth: 19.0, endWidth: 14.0, outlineOnLeftSide: !isLeft, outlineAlpha: 0.78, skin: skin, frontPaw: true)
             return
         }

@@ -54,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lastAnnouncedHour: Int = -1
 
     private var currentAppVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.4.6"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.4.7"
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -757,22 +757,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleKeyBadges() {
         CatSettings.shared.showKeyBadges.toggle()
+        wakeToActive(immediateRedraw: true)
     }
 
     @objc private func toggleMouseBadges() {
         CatSettings.shared.showMouseBadges.toggle()
+        wakeToActive(immediateRedraw: true)
     }
 
     @objc private func toggleKeyLegends() {
         CatSettings.shared.showKeyLegends.toggle()
+        wakeToActive(immediateRedraw: true)
     }
 
     @objc private func toggleFootEgg() {
         CatSettings.shared.footEasterEgg.toggle()
+        wakeToActive(immediateRedraw: true)
     }
 
     @objc private func toggleTailEgg() {
         CatSettings.shared.tailEasterEgg.toggle()
+        wakeToActive(immediateRedraw: true)
     }
 
     @objc private func toggleKeyboardMarquee() {
@@ -933,6 +938,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 message += " · 存在同名皮肤，已附加短编号区分"
             }
             dressingRoom?.setStatus("✓ " + message, kind: 1)
+            wakeToActive(immediateRedraw: true)
             dressingRoom?.refresh()
             settingsWindow?.refresh()
         } catch {
@@ -956,6 +962,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let id = sender.representedObject as? String else { return }
         CatSettings.shared.overrideSkinIris = false
         CatSettings.shared.customSkin = id
+        wakeToActive(immediateRedraw: true)
         dressingRoom?.refresh()
         settingsWindow?.refresh()
     }
@@ -1023,6 +1030,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         if CatSettings.shared.customSkin == id { CatSettings.shared.customSkin = "" }
+        wakeToActive(immediateRedraw: true)
         dressingRoom?.refresh()
         settingsWindow?.refresh()
     }
@@ -1032,11 +1040,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
               let theme = KeyboardTheme(rawValue: raw) else { return }
         CatSettings.shared.customKeyboard = ""
         CatSettings.shared.keyboardTheme = theme
+        wakeToActive(immediateRedraw: true)
     }
 
     @objc private func selectCustomKeyboard(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
         CatSettings.shared.customKeyboard = id
+        wakeToActive(immediateRedraw: true)
     }
 
     @objc private func openKeyboardPlaza() {
@@ -1073,7 +1083,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             var message = "已换上键盘皮肤「\(kb?.name ?? "新键盘")」"
             if let author = kb?.author, !author.isEmpty { message += "（作者：\(author)）" }
             dressingRoom?.setStatus("✓ " + message, kind: 1)
-            overlayWindow.catView.needsDisplay = true
+            wakeToActive(immediateRedraw: true)
             settingsWindow?.refresh()
         } catch {
             let en = CatSettings.shared.isEnglish
@@ -1104,6 +1114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         if CatSettings.shared.customKeyboard == id { CatSettings.shared.customKeyboard = "" }
+        wakeToActive(immediateRedraw: true)
         settingsWindow?.refresh()
     }
 

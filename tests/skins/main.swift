@@ -72,8 +72,13 @@ for coat in [CatCoatTheme.siamese] {
   for state in [0,1,2,4,5,6,7] {
    let current = pixels(frame(coat,eye,state))
    let old = pixels(frame(coat,eye,state,true))
-   // Universal sticker-style white outer outline only extends outside the silhouette; interior opaque pixels must stay unchanged.
+   // Universal sticker-style white outer outline only extends outside the silhouette, and aligned
+   // idle front legs share the typing shoulder root (x: 312...423, y >= 352); all remaining opaque
+   // pixels above the keyboard (head, ears, face, neck, back, tail) must stay unchanged.
    for i in stride(from: 0, to: aboveKeyboard, by: 4) where old[i + 3] == 255 {
+    let px = i / 4
+    let x = px % 720, y = px / 720
+    if (312...423).contains(x) && y >= 352 { continue }
     precondition(abs(Int(current[i]) - Int(old[i])) <= 2 && abs(Int(current[i+1]) - Int(old[i+1])) <= 2 && abs(Int(current[i+2]) - Int(old[i+2])) <= 2 && current[i+3] == 255,
                  "Existing skin interior changed: \(coat), \(eye), \(state) at \(i)")
    }

@@ -2629,34 +2629,34 @@ private:
         float armSp = skin.shape.armSpacing;
         float armLen = skin.shape.armLength;
         float armRY = skin.shape.armRootY;
-        float idleTopY = (seatY - bd.idleTopDY + armRY) + lieS * 24.0f;
-        float idleTopX = bd.idleTopX * bw * armSp - lieS * 5.0f;
-        float idleBotX = bd.idleBotX * bw * armSp - lieS * 4.5f;
-        float idleBotY = (seatY + 12.0f + (armLen - 1.0f) * 16.0f) - lieS * 4.0f;
         float shX = bd.shoulderX * bw * armSp;
         float limbStartW = bd.limbStartW;
         float limbEndW = bd.limbEndW;
 
         const bool approved = !skin.palette.points.set && skin.palette.belly.set && skin.palette.belly.sameAs(skin.palette.legs) && !skin.idleLegsTinted && !skin.marks.empty();
-        const float shoulderDepth = approved ? 43.0f : 49.0f;
+        float shoulderDepth = std::max(16.0f, (approved ? 43.0f : 49.0f) - armRY);
         const float faceClearance = approved ? 52.0f : 51.0f;
         float tiltChinDrop = std::fabs(std::sin(physics.headTilt.value)) * 18.0f * skin.shape.headScale;
         float scaledClearance = faceClearance * skin.shape.headScale + tiltChinDrop;
         float headBottom = 126.0f + headLift + physics.headOffsetY.value + physics.headPitch.value * 4.8f
                          + breath * 1.1f + lieS * 60.0f + scaledClearance;
         float idleAlpha = 1.0f - smoothstep(0.48f, 0.78f, lieS);
-        float safeIdleTopY = std::max(idleTopY, headBottom - 4.0f);
         auto shoulder = [&](float x) -> Pt {
             float sy=physics.bodySquash.value*(1.0f-lieS*0.42f), sx=(1+(1-physics.bodySquash.value)*0.55f)*(1.0f+lieS*0.03f);
             float c=std::cos(physics.bodyTilt.value), s=std::sin(physics.bodyTilt.value);
-            return {seatX+x*sx*c+shoulderDepth*sy*s, std::max(seatY+x*sx*s-shoulderDepth*sy*c, headBottom)};
+            return {seatX+x*sx*c+shoulderDepth*sy*s, std::max(seatY+x*sx*s-shoulderDepth*sy*c, headBottom - std::max(0.0f, -armRY) * 0.6f)};
         };
         Pt leftShoulder=shoulder(-shX), rightShoulder=shoulder(shX);
+        // Align idle forearm root with typing shoulder(±shX) when awake; keep inward/downward tuck during sleep.
+        Pt leftIdleTop = { leftShoulder.x + lieS * 5.0f, leftShoulder.y + lieS * 16.0f };
+        Pt rightIdleTop = { rightShoulder.x - lieS * 5.0f, rightShoulder.y + lieS * 16.0f };
+        float idleBotX = bd.idleBotX * bw * armSp - lieS * 4.5f;
+        float idleBotY = std::max(std::max(leftIdleTop.y, rightIdleTop.y) + 14.0f, (seatY + 12.0f + (armLen - 1.0f) * 16.0f) + lieS * 12.0f);
 
         if (lDist < 6.0f && !physics.leftPawOnMouse && !physics.leftPawTyping) {
             if (lieS < 0.78f) {
                 auto drawLeftIdle = [&](Gdiplus::Graphics& lg) {
-                    drawIdleFrontLeg(lg, { seatX - idleTopX, safeIdleTopY }, { seatX - idleBotX, std::max(idleBotY, safeIdleTopY + 12.0f) }, true, skin);
+                    drawIdleFrontLeg(lg, leftIdleTop, { seatX - idleBotX, idleBotY }, true, skin);
                 };
                 if (idleAlpha < 0.999f) drawWithLayerAlpha(g, idleAlpha, drawLeftIdle);
                 else drawLeftIdle(g);
@@ -2670,7 +2670,7 @@ private:
         if (rDist < 6.0f && !physics.rightPawTyping) {
             if (lieS < 0.78f) {
                 auto drawRightIdle = [&](Gdiplus::Graphics& lg) {
-                    drawIdleFrontLeg(lg, { seatX + idleTopX, safeIdleTopY }, { seatX + idleBotX, std::max(idleBotY, safeIdleTopY + 12.0f) }, false, skin);
+                    drawIdleFrontLeg(lg, rightIdleTop, { seatX + idleBotX, idleBotY }, false, skin);
                 };
                 if (idleAlpha < 0.999f) drawWithLayerAlpha(g, idleAlpha, drawRightIdle);
                 else drawRightIdle(g);
@@ -2687,9 +2687,9 @@ private:
         const SkinPalette& pal = skin.palette;
         float sign = isLeft ? -1.0f : 1.0f;
         if (isDazed(skin)) {
-            Pt shoulder = {top.x + sign * 4.0f, top.y - 6.0f};
-            Pt elbow = {top.x + sign * 11.0f, top.y + 1.0f};
-            Pt paw = {top.x + sign * 10.0f, top.y + 15.0f};
+            Pt shoulder = {top.x + sign * 2.0f, top.y + 13.0f};
+            Pt elbow = {top.x + sign * 9.0f, top.y + 20.0f};
+            Pt paw = {top.x + sign * 8.0f, top.y + 34.0f};
             drawLimb(g, shoulder, elbow, paw, 19.0f, 14.0f, !isLeft, 0.78f, skin, true);
             return;
         }
