@@ -76,6 +76,7 @@ final class InputEngine {
     private var lastReconcileTime: CFTimeInterval = 0
     private var lastPermissionCheckTime: CFTimeInterval = 0
     private var keyDownTimes: [PhysicalKey: CFTimeInterval] = [:]
+    private var mouseDownTimes: [Int: CFTimeInterval] = [:]
     private var cachedScreenFrames: [CGRect] = NSScreen.screens.map { $0.frame }
     private var screenObserver: NSObjectProtocol?
 
@@ -160,6 +161,16 @@ final class InputEngine {
         for name in resetNames {
             let obs = wsCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 self?.resetAllKeys()
+            }
+            workspaceObservers.append(obs)
+        }
+        let reconcileNames: [NSNotification.Name] = [
+            NSWorkspace.didActivateApplicationNotification,
+            NSWorkspace.activeSpaceDidChangeNotification
+        ]
+        for name in reconcileNames {
+            let obs = wsCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.reconcileStuckKeys(now: CACurrentMediaTime(), force: true)
             }
             workspaceObservers.append(obs)
         }
@@ -295,8 +306,8 @@ final class InputEngine {
         }
     }
 
-    private func reconcileStuckKeys(now: CFTimeInterval) {
-        guard now - lastReconcileTime >= 0.20 else { return }
+    private func reconcileStuckKeys(now: CFTimeInterval, force: Bool = false) {
+        guard force || now - lastReconcileTime >= 0.16 else { return }
         lastReconcileTime = now
 
         // Always keep pressedOrder strictly synced with activeKeys (guards against stopHID/stopEventTap races).
@@ -305,12 +316,14 @@ final class InputEngine {
         }
 
         if !activeKeys.isEmpty {
+            let maxMismatchHold: CFTimeInterval = force ? 0.05 : 0.18
             var stale: [PhysicalKey] = []
             for key in activeKeys {
                 let heldFor = now - (keyDownTimes[key] ?? 0)
                 // Check per-key (not global lastKeyActivityTime) so a stuck key releases
-                // immediately even while the user keeps typing other keys!
-                if heldFor > 0.25 && !isKeyPhysicallyDown(key) {
+                // immediately even while the user keeps typing other keys! Also cap CapsLock toggle state.
+                if (heldFor > maxMismatchHold && !isKeyPhysicallyDown(key))
+                    || (key == .capsLock && heldFor > 0.45) {
                     stale.append(key)
                 }
             }
@@ -327,11 +340,18 @@ final class InputEngine {
             }
         }
 
-        if (leftMouseDown || rightMouseDown || otherMouseDown) && (now - lastMouseClickTime > 0.35) {
+        if leftMouseDown || rightMouseDown || otherMouseDown {
             let buttons = NSEvent.pressedMouseButtons
-            if leftMouseDown && (buttons & 1) == 0 { updateMouseButton(0, isDown: false) }
-            if rightMouseDown && (buttons & 2) == 0 { updateMouseButton(1, isDown: false) }
-            if otherMouseDown && (buttons & ~3) == 0 { updateMouseButton(2, isDown: false) }
+            let mouseMinHold: CFTimeInterval = force ? 0.05 : 0.18
+            if leftMouseDown && (buttons & 1) == 0 && (now - (mouseDownTimes[0] ?? 0) > mouseMinHold) {
+                updateMouseButton(0, isDown: false)
+            }
+            if rightMouseDown && (buttons & 2) == 0 && (now - (mouseDownTimes[1] ?? 0) > mouseMinHold) {
+                updateMouseButton(1, isDown: false)
+            }
+            if otherMouseDown && (buttons & ~3) == 0 && (now - (mouseDownTimes[2] ?? 0) > mouseMinHold) {
+                updateMouseButton(2, isDown: false)
+            }
         }
     }
 
@@ -630,6 +650,9 @@ final class InputEngine {
             if let tap = eventTap {
                 CGEvent.tapEnable(tap: tap, enable: true)
             }
+            DispatchQueue.main.async { [weak self] in
+                self?.reconcileStuckKeys(now: CACurrentMediaTime(), force: true)
+            }
             return
         }
 
@@ -862,7 +885,12 @@ final class InputEngine {
         if prev != isDown {
             let now = CACurrentMediaTime()
             lastMouseMoveTime = now
-            if isDown { lastMouseClickTime = now }
+            if isDown {
+                lastMouseClickTime = now
+                mouseDownTimes[button] = now
+            } else {
+                mouseDownTimes.removeValue(forKey: button)
+            }
             onMouseClick?(button, isDown)
         }
     }

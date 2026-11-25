@@ -855,6 +855,7 @@ static void showMessage(GtkMessageType type, const char* title, const std::strin
 
 static void refreshDressingRoom(LinuxApp& app);
 static void selectCustomSkin(LinuxApp& app, const std::string& id) {
+    app.settings.overrideSkinIris = false;
     app.settings.customSkin = id;
     app.settings.save();
     updateInputShape(app);
@@ -1411,12 +1412,14 @@ static void showSettingsWindow() {
             if (idx < 0) return;
             if (idx < 4) {
                 auto coat = (CatCoatTheme)idx;
+                g_app->settings.overrideSkinIris = false;
                 g_app->settings.coatTheme = coat;
                 g_app->settings.customSkin.clear();
                 g_app->settings.eyeTheme = coat == CatCoatTheme::Siamese ? EyeColorTheme::SiameseBlue :
                     (coat == CatCoatTheme::ClassicBlack ? EyeColorTheme::NeonChartreuse :
                     (coat == CatCoatTheme::Shorthair ? EyeColorTheme::ReferenceHazel : EyeColorTheme::WarmAmber));
             } else if ((size_t)(idx - 4) < g_app->skins.skins.size()) {
+                g_app->settings.overrideSkinIris = false;
                 g_app->settings.customSkin = g_app->skins.skins[idx - 4].id;
             }
             g_app->settings.save();
@@ -1442,6 +1445,7 @@ static void showSettingsWindow() {
             if (g_app->settingsUpdating) return;
             int idx = gtk_combo_box_get_active(cb);
             if (idx >= 0 && idx <= 5) {
+                g_app->settings.overrideSkinIris = true;
                 g_app->settings.eyeTheme = (EyeColorTheme)idx;
                 g_app->settings.save();
                 if (g_app->drawArea) gtk_widget_queue_draw(g_app->drawArea);
@@ -1834,6 +1838,7 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
             gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(it), !customActive && app.settings.coatTheme == c);
             g_signal_connect(it, "activate", G_CALLBACK(+[](GtkMenuItem*, gpointer p) {
                 auto coat = (CatCoatTheme)(intptr_t)p;
+                g_app->settings.overrideSkinIris = false;
                 g_app->settings.coatTheme = coat;
                 g_app->settings.customSkin.clear();
                 g_app->settings.eyeTheme = coat == CatCoatTheme::Siamese ? EyeColorTheme::SiameseBlue :
@@ -2147,10 +2152,11 @@ static guint desiredFrameIntervalMs(const LinuxApp& app) {
     if (app.settings.highFrameRate) return 16;
     double now = nowSeconds();
     bool busy = app.isDragging || app.demoActive || !app.input.activeKeys.empty()
-        || app.input.leftMouseDown || app.input.rightMouseDown
+        || app.input.leftMouseDown || app.input.rightMouseDown || app.input.otherMouseDown
         || (now - app.input.lastAnyInputTime()) < 2.5
         || !app.physics.floatingKeycaps.empty() || !app.physics.tabletTrail.empty()
         || app.physics.scruffDrag.value > 0.02f || app.physics.scruffDropTimer > 0.01f
+        || app.physics.scruffDizzyIntensity.value > 0.02f || app.physics.mousePressMiddle.value > 0.02f
         || app.physics.douniSlapTimer > 0.01f || app.physics.kbSparkTimer > 0.005f
         || std::fabs(app.physics.kbImpactY.value) > 0.01f
         || std::fabs(app.physics.kbImpactTilt.value) > 0.01f
@@ -2310,9 +2316,10 @@ static gboolean onFrameTick(gpointer) {
     // Physics clamps dt to 1/25s; sub-step slower idle frames so animations keep real-time speed.
     int substeps = std::max(1, std::min(4, (int)std::ceil(dt / 0.034f)));
     const SkinSpec& curSkin = activeSkin(*g_app);
+    bool isClassicBuiltIn = (curSkin.id == "builtin:0" || curSkin.id == "builtin:1" || curSkin.id == "builtin:2" || curSkin.id == "builtin:3");
     for (int i = 0; i < substeps; ++i) {
         g_app->physics.step(dt / (float)substeps, (float)winX, (float)winY, (float)winW,
-                            g_app->input, g_app->settings, curSkin.typingStyle, curSkin.renderStyle);
+                            g_app->input, g_app->settings, curSkin.typingStyle, curSkin.renderStyle, isClassicBuiltIn);
     }
     gtk_widget_queue_draw(g_app->drawArea);
 

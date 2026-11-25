@@ -222,22 +222,8 @@ public:
         // Universal Scruff-Lifted Drag Pose (ALL non-Douni cat skins keep their own authentic KuroCat face/head/ears/markings in front,
         // with scruff-lifted arched neck/back, 4 dangling swinging paws, and limp drooping tail!)
         if (scruff > 0.005f) {
-            double kbFade = std::clamp(1.0 - (double)scruff * 2.6, 0.0, 1.0);
-            if (kbFade > 0.01) {
-                cairo_save(cr);
-                cairo_push_group(cr);
-                if (physics.isTabletActive) {
-                    drawTablet(cr, physics, settings.keyboardTheme, settings.eyeTheme);
-                    drawParkedStylus(cr, settings.keyboardTheme, settings.eyeTheme);
-                } else {
-                    drawMouse(cr, physics, kbSkin);
-                }
-                drawKeyboard(cr, physics, kbSkin, settings.eyeTheme, settings.showKeyLegends, settings.keyboardMarquee);
-                cairo_pop_group_to_source(cr);
-                cairo_paint_with_alpha(cr, kbFade);
-                cairo_restore(cr);
-            }
-            drawNativeScruffDragCat(cr, physics, skin, settings.eyeTheme, (double)scruff);
+            drawNativeScruffDragCat(cr, physics, skin, settings.eyeTheme, kbSkin, settings.keyboardTheme,
+                                    settings.showKeyLegends, settings.keyboardMarquee, settings.overrideSkinIris, (double)scruff);
             if (!physics.floatingKeycaps.empty()) {
                 drawFloatingKeycaps(cr, physics);
             }
@@ -251,10 +237,12 @@ public:
         float fallAngle = -dizzyFall * 1.46f + std::sin(physics.time * 9.5f) * 0.16f * preWobble;
         float fallShiftX = dizzyFall * 56.0f;
         float fallShiftY = dizzyFall * 20.0f;
+        bool isClassic = isClassicBlack(skin) || (skin.builtIn && skin.id == "builtin:1") || isBuiltInPatterned(skin);
+        float sharedSleepHead = isClassic ? (standardBuild().headLift - buildOf(skin).headLift) * lieS : 0.0f;
 
         Pt headCenter = {
             seatX + physics.bodyTilt.value * 36.0f + physics.headYaw.value * 7.5f - lieS * 4.0f,
-            126.0f + buildOf(skin).headLift - scruff * 22.0f + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f + lieS * 60.0f
+            126.0f + buildOf(skin).headLift + sharedSleepHead - scruff * 22.0f + physics.headOffsetY.value + physics.headPitch.value * 4.8f + breath * 1.1f + lieS * 60.0f
         };
 
         if (physics.isTabletActive) {
@@ -307,7 +295,7 @@ public:
             drawDecorations(cr, seatX, seatY, headCenter, physics, skin, nullptr, nullptr, anchorBit(SkinAnchorPoint::Neck));
         }
 
-        drawHeadFeatures(cr, headCenter, physics, settings.eyeTheme, skin);
+        drawHeadFeatures(cr, headCenter, physics, settings.eyeTheme, skin, 0.0, 0.0, settings.overrideSkinIris);
         if (!skin.decorations.empty()) {
             drawDecorations(cr, seatX, seatY, headCenter, physics, skin, nullptr, nullptr,
                             anchorBit(SkinAnchorPoint::Face) | anchorBit(SkinAnchorPoint::HeadTop));
@@ -482,7 +470,7 @@ private:
         float idleTopDY, idleTopX, idleBotX, shoulderX, limbStartW, limbEndW;
         bool sleekEyes;
     };
-    static const Build& buildOf(const SkinSpec& skin) {
+    static const Build& standardBuild() {
         static const Build standard = { 0.0f,
             42.5f, 26.0f, -30.0f, 5.0f, -14.0f, 2.5f, 24.0f,
             49.0f, 51.5f, -48.0f, 47.0f, 36.0f, 24.0f,
@@ -491,6 +479,9 @@ private:
             26.5, 8.5, 8.5, 5.5, 10.75, 6.25,
             30.0f, 18.0f, 16.0f, 20.0f, 19.0f, 13.5f,
             false };
+        return standard;
+    }
+    static const Build& buildOf(const SkinSpec& skin) {
         static const Build sleek = { -3.0f,
             42.5f, 25.0f, -29.5f, 6.5f, -13.0f, 6.5f, 27.5f,
             44.5f, 41.0f, -50.0f, 42.0f, 32.0f, 22.0f,
@@ -499,7 +490,7 @@ private:
             23.25, 7.75, 9.5, 6.0, 10.75, 6.25,
             31.0f, 16.5f, 15.0f, 18.5f, 17.0f, 12.5f,
             true };
-        return skin.shape.build == SkinBuild::Sleek ? sleek : standard;
+        return skin.shape.build == SkinBuild::Sleek ? sleek : standardBuild();
     }
 
     // Scale v around c by k; returns v untouched when k == 1 so default shapes stay bit-identical.
@@ -718,7 +709,7 @@ private:
     static void drawMouse(cairo_t* cr, const CatPhysics& physics, const KeyboardSkinSpec& kbSkin) {
         Pt center = { CatPhysics::MouseBaseCenter.x + physics.mouseOffset.point().x,
                       CatPhysics::MouseBaseCenter.y + physics.mouseOffset.point().y };
-        float pressShift = std::max(physics.mousePressLeft.value, physics.mousePressRight.value) * 1.6f;
+        float pressShift = std::max({physics.mousePressLeft.value, physics.mousePressRight.value, physics.mousePressMiddle.value}) * 1.6f;
 
         cairo_save(cr);
         cairo_translate(cr, center.x, center.y + pressShift);
@@ -765,8 +756,10 @@ private:
         cairo_stroke(cr);
 
         // Amber scroll wheel
-        roundedRect(cr, -1.9, 2.5, 3.8, 8.5, 1.9);
-        setCol(cr, wheelCol);
+        double wheelPress = std::clamp((double)physics.mousePressMiddle.value, 0.0, 1.0);
+        RGBA wheelFill = wheelPress > 0.02 ? blend(wheelCol, {1.0, 1.0, 1.0, 1.0}, 0.6 * wheelPress) : wheelCol;
+        roundedRect(cr, -1.9, 2.5 + wheelPress, 3.8, 8.5 - wheelPress, 1.9);
+        setCol(cr, wheelFill);
         cairo_fill(cr);
 
         // Outer border
@@ -972,8 +965,11 @@ private:
     static void drawHeldStylus(cairo_t* cr, const CatPhysics& physics, KeyboardTheme theme, EyeColorTheme eyeTheme) {
         Pt lPos = physics.leftPaw.point();
         float press = std::clamp(physics.tabletPenPress.value, 0.0f, 1.0f);
-        Pt nib = { lPos.x - 5.5f, lPos.y + 7.0f + press * 1.4f };
-        double angle = -2.18 + physics.tabletPenTilt.value;
+        double angle = (double)physics.stylusAngle();
+        Pt nib = {
+            lPos.x - (float)std::cos(angle) * CatPhysics::StylusBarrelGripDistance,
+            lPos.y - (float)std::sin(angle) * CatPhysics::StylusBarrelGripDistance + press * 1.4f
+        };
 
         cairo_save(cr);
         cairo_translate(cr, nib.x, nib.y);
@@ -1528,6 +1524,33 @@ private:
 
         fillEllipse(cr, 0.0, 11.5, 1.9, 1.4);
 
+        double dazedDizzy = std::clamp((double)std::max(physics.dizzyIntensity.value, physics.scruffDizzyIntensity.value), 0.0, 1.0);
+        if (dazedDizzy > 0.28) {
+            for (int side = 0; side < 2; ++side) {
+                double x = (side == 0) ? -11.8 : 11.8;
+                cairo_set_source_rgba(cr, 0.98, 0.98, 0.96, 0.95);
+                cairo_new_path(cr);
+                cairo_arc(cr, x, 1.0, 8.5, 0.0, 2.0 * PI);
+                cairo_fill(cr);
+                dazedSetHex(cr, 0x282333);
+                cairo_set_line_width(cr, 1.6);
+                cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+                double spin = physics.dizzyPhase * (side == 0 ? 1.0 : -1.0);
+                cairo_new_path(cr);
+                for (int i = 0; i <= 40; ++i) {
+                    double t = (double)i / 40.0;
+                    double theta = spin + t * PI * 4.8;
+                    double rad = 0.8 + t * 6.5;
+                    double sx = x + std::cos(theta) * rad;
+                    double sy = 1.0 + std::sin(theta) * rad;
+                    if (i == 0) cairo_move_to(cr, sx, sy);
+                    else cairo_line_to(cr, sx, sy);
+                }
+                cairo_stroke(cr);
+            }
+            cairo_restore(cr);
+            return;
+        }
         bool happy = physics.isHappyClosedEyes();
         bool squint = physics.isBlissfulSquint();
         if (happy || squint) {
@@ -1653,9 +1676,12 @@ private:
     static void drawTail(cairo_t* cr, float seatX, float seatY, const CatPhysics& physics, const SkinSpec& skin, bool outlineOnly = false) {
         TailCurve c = tailCurve(seatX, seatY, physics, skin);
         bool art = !outlineOnly && (skin.hasPartArt(SkinSpace::Tail) || skin.palette.tailTip.set);
-        double width = (skin.renderStyle == SkinRenderStyle::Dazed) ? 13.0 : (buildOf(skin).tailWidth * skin.shape.tailThickness);
         double lie = std::clamp(physics.lieIntensity.value, 0.0f, 1.0f);
         double lieS = lie * lie * (3.0 - 2.0 * lie);
+        bool isClassic = isClassicBlack(skin) || (skin.builtIn && skin.id == "builtin:1") || isBuiltInPatterned(skin);
+        double sharedSleep = isClassic ? lieS : 0.0;
+        double tailBaseW = lerpD(buildOf(skin).tailWidth, standardBuild().tailWidth, sharedSleep);
+        double width = (skin.renderStyle == SkinRenderStyle::Dazed) ? 13.0 : (tailBaseW * skin.shape.tailThickness);
 
         cairo_save(cr);
         if (art) cairo_push_group(cr);
@@ -1851,19 +1877,23 @@ private:
 
         float cheekShift = yaw * 3.0f;
         float crownDrop = pitch * 2.0f;
-        float cheekHalfW = b.cheekHalfW * skin.shape.cheekFullness;
-        float crownCtrlW = b.crownCtrlW;
-        float crownBaseY = b.crownBaseY;
-        float cheekY = b.cheekY;
-        float cheekCtrlTopY = b.cheekCtrlTopY;
-        float neckPinchX = b.neckPinchX;
-        float neckCtrlY = b.neckCtrlY;
-        float hipHalfW = b.hipHalfW;
-        float waistCtrlW = b.waistCtrlW;
-        float waistCtrlY = b.waistCtrlY;
-        float botOuterW = b.botOuterW;
-        float botInnerW = b.botInnerW;
-        float botHalfW = b.botHalfW;
+        bool isClassic = isClassicBlack(skin) || (skin.builtIn && skin.id == "builtin:1") || isBuiltInPatterned(skin);
+        float sharedSleep = isClassic ? lieS : 0.0f;
+        const Build& sb = standardBuild();
+        auto shLerp = [&](float a, float d) -> float { return a + (d - a) * sharedSleep; };
+        float cheekHalfW = shLerp(b.cheekHalfW, sb.cheekHalfW) * skin.shape.cheekFullness;
+        float crownCtrlW = shLerp(b.crownCtrlW, sb.crownCtrlW);
+        float crownBaseY = shLerp(b.crownBaseY, sb.crownBaseY);
+        float cheekY = shLerp(b.cheekY, sb.cheekY);
+        float cheekCtrlTopY = shLerp(b.cheekCtrlTopY, sb.cheekCtrlTopY);
+        float neckPinchX = shLerp(b.neckPinchX, sb.neckPinchX);
+        float neckCtrlY = shLerp(b.neckCtrlY, sb.neckCtrlY);
+        float hipHalfW = shLerp(b.hipHalfW, sb.hipHalfW);
+        float waistCtrlW = shLerp(b.waistCtrlW, sb.waistCtrlW);
+        float waistCtrlY = shLerp(b.waistCtrlY, sb.waistCtrlY);
+        float botOuterW = shLerp(b.botOuterW, sb.botOuterW);
+        float botInnerW = shLerp(b.botInnerW, sb.botInnerW);
+        float botHalfW = shLerp(b.botHalfW, sb.botHalfW);
         float lCX = -cheekHalfW + cheekShift * 0.4f;
         float rCX =  cheekHalfW + cheekShift * 0.4f;
 
@@ -2103,8 +2133,8 @@ private:
             cairo_fill(cr);
         }
 
-        if (!isClassicBlackRim(skin)) {
-            setCol(cr, skin.colorpoint() ? pal.body : pal.crease, 0.56);
+        if (!isClassicBlackRim(skin) && (1.0 - sharedSleep) > 0.01) {
+            setCol(cr, skin.colorpoint() ? pal.body : pal.crease, 0.56 * (1.0 - sharedSleep));
             cairo_set_line_width(cr, 1.3);
             cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
             cairo_new_path(cr);
@@ -2149,7 +2179,7 @@ private:
     // MARK: - 2.5D Eyes & Whiskers
 
     static void drawHeadFeatures(cairo_t* cr, Pt center, const CatPhysics& physics, EyeColorTheme eyeTheme, const SkinSpec& skin,
-                                 double scruffStartle = 0.0, double scruffWide = 0.0) {
+                                 double scruffStartle = 0.0, double scruffWide = 0.0, bool overrideSkinIris = false) {
         cairo_save(cr);
         cairo_translate(cr, center.x, center.y);
         cairo_rotate(cr, physics.headTilt.value);
@@ -2164,8 +2194,8 @@ private:
             return;
         }
 
-        drawEye3D(cr, true, yawRad, pitchRad, physics, eyeTheme, skin, scruffStartle, scruffWide);
-        drawEye3D(cr, false, yawRad, pitchRad, physics, eyeTheme, skin, scruffStartle, scruffWide);
+        drawEye3D(cr, true, yawRad, pitchRad, physics, eyeTheme, skin, scruffStartle, scruffWide, overrideSkinIris);
+        drawEye3D(cr, false, yawRad, pitchRad, physics, eyeTheme, skin, scruffStartle, scruffWide, overrideSkinIris);
         if (skin.palette.nose.set) {
             Pt nose = projectHead3D(0.0f, 8.2f, 29.0f, yawRad, pitchRad);
             cairo_new_path(cr);
@@ -2322,11 +2352,11 @@ private:
     }
 
     static void drawEye3D(cairo_t* cr, bool isLeft, float yawRad, float pitchRad, const CatPhysics& physics, EyeColorTheme eyeTheme, const SkinSpec& skin,
-                          double scruffStartle = 0.0, double scruffWide = 0.0) {
+                          double scruffStartle = 0.0, double scruffWide = 0.0, bool overrideSkinIris = false) {
         float sign = isLeft ? -1.0f : 1.0f;
         const SkinColor& sideIris = isLeft ? skin.palette.irisLeft : skin.palette.irisRight;
         const SkinColor& activeIris = sideIris.set ? sideIris : skin.palette.iris;
-        bool customIris = activeIris.set; // a skin's iris overrides the eye-colour menu
+        bool customIris = !overrideSkinIris && activeIris.set; // custom skin iris unless user explicitly switched eye color
         RGBA eyeCol = customIris ? RGBA{activeIris.r, activeIris.g, activeIris.b, activeIris.a} : eyePrimary(eyeTheme);
         const SkinColor& sidePupil = isLeft ? skin.palette.pupilLeft : skin.palette.pupilRight;
         const SkinColor& activePupil = sidePupil.set ? sidePupil : skin.palette.pupil;
@@ -2341,7 +2371,7 @@ private:
         cairo_scale(cr, foreX, foreY);
 
         // Mode 0: Dizzy spinning spiral eyes (@ @) — appear AFTER initial golden stars warning (>0.28)
-        float dizzy = std::clamp(physics.dizzyIntensity.value, 0.0f, 1.0f);
+        float dizzy = std::clamp(std::max(physics.dizzyIntensity.value, physics.scruffDizzyIntensity.value), 0.0f, 1.0f);
         if (dizzy > 0.28f) {
             cairo_set_source_rgba(cr, 0.98, 0.98, 0.96, 0.95);
             cairo_new_path(cr);
@@ -2369,13 +2399,8 @@ private:
         };
         double bodyLuma = colorLuma(skin.palette.headBody.set ? skin.palette.headBody : skin.palette.body);
         double pointsLuma = skin.palette.points.set ? colorLuma(skin.palette.points) : 1.0;
-        double outlineLuma = skin.palette.outline.set ? colorLuma(skin.palette.outline) : 1.0;
         bool isDarkEyeArea = bodyLuma < 0.28 || (skin.colorpoint() && pointsLuma < 0.38);
-        RGBA closedLidCol = isDarkEyeArea
-            ? eyeCol
-            : (skin.palette.outline.set && outlineLuma < 0.42
-                ? RGBA{ skin.palette.outline.r, skin.palette.outline.g, skin.palette.outline.b, 0.90 }
-                : RGBA{ 60.0 / 255.0, 50.0 / 255.0, 44.0 / 255.0, 0.88 });
+        RGBA closedLidCol = eyeCol;
 
         if (physics.isHappyClosedEyes()) {
             setCol(cr, closedLidCol);
@@ -2695,26 +2720,46 @@ private:
         float limbEndW = b.limbEndW;
 
         const bool approved = !skin.palette.points.set && skin.palette.belly.set && skin.palette.belly.sameAs(skin.palette.legs) && !skin.idleLegsTinted && !skin.marks.empty();
-        const float shoulderDepth = approved ? 43.0f : 58.0f, faceClearance = approved ? 52.0f : 42.0f;
+        const float shoulderDepth = approved ? 43.0f : 49.0f;
+        const float faceClearance = approved ? 52.0f : 51.0f;
+        float tiltChinDrop = std::fabs(std::sin(physics.headTilt.value)) * 18.0f * skin.shape.headScale;
+        float scaledClearance = faceClearance * skin.shape.headScale + tiltChinDrop;
+        float headBottom = 126.0f + headLift + physics.headOffsetY.value + physics.headPitch.value * 4.8f
+                         + breath * 1.1f + lieS * 60.0f + scaledClearance;
+        double idleAlpha = 1.0 - smoothstepD(0.48, 0.78, (double)lieS);
+        float safeIdleTopY = std::max(idleTopY, headBottom - 4.0f);
         auto shoulder = [&](float x) -> Pt {
             float sy=physics.bodySquash.value*(1.0f-lieS*0.42f), sx=(1+(1-physics.bodySquash.value)*0.55f)*(1.0f+lieS*0.03f);
             float c=std::cos(physics.bodyTilt.value), s=std::sin(physics.bodyTilt.value);
-            float floor=126+headLift+physics.headOffsetY.value+physics.headPitch.value*4.8f+breath*1.1f+faceClearance;
-            return {seatX+x*sx*c+shoulderDepth*sy*s, std::max(seatY+x*sx*s-shoulderDepth*sy*c,floor)};
+            return {seatX+x*sx*c+shoulderDepth*sy*s, std::max(seatY+x*sx*s-shoulderDepth*sy*c, headBottom)};
         };
         Pt lSh=shoulder(-shX), rSh=shoulder(shX);
 
         if (lDist < 6.0f && !physics.leftPawOnMouse && !physics.leftPawTyping) {
-            if (lieS < 0.78f) drawIdleFrontLeg(cr, { seatX - idleTopX, idleTopY }, { seatX - idleBotX, idleBotY }, true, skin);
+            if (lieS < 0.78f) {
+                cairo_save(cr);
+                if (idleAlpha < 0.995) cairo_push_group(cr);
+                drawIdleFrontLeg(cr, { seatX - idleTopX, safeIdleTopY }, { seatX - idleBotX, std::max(idleBotY, safeIdleTopY + 12.0f) }, true, skin);
+                if (idleAlpha < 0.995) { cairo_pop_group_to_source(cr); cairo_paint_with_alpha(cr, idleAlpha); }
+                cairo_restore(cr);
+            }
         } else {
-            Pt mid = { (lSh.x + lPos.x) * 0.5f - (physics.leftPawOnMouse ? 8.0f : 4.0f), (lSh.y + lPos.y) * 0.5f - 6.0f };
+            Pt mid = { (lSh.x + lPos.x) * 0.5f - (physics.leftPawOnMouse ? 8.0f : 4.0f),
+                       std::max((lSh.y + lPos.y) * 0.5f - 6.0f, headBottom - 1.0f) };
             drawLimb(cr, lSh, mid, lPos, limbStartW, limbEndW, false, 0.78f, skin, true);
         }
 
         if (rDist < 6.0f && !physics.rightPawTyping) {
-            if (lieS < 0.78f) drawIdleFrontLeg(cr, { seatX + idleTopX, idleTopY }, { seatX + idleBotX, idleBotY }, false, skin);
+            if (lieS < 0.78f) {
+                cairo_save(cr);
+                if (idleAlpha < 0.995) cairo_push_group(cr);
+                drawIdleFrontLeg(cr, { seatX + idleTopX, safeIdleTopY }, { seatX + idleBotX, std::max(idleBotY, safeIdleTopY + 12.0f) }, false, skin);
+                if (idleAlpha < 0.995) { cairo_pop_group_to_source(cr); cairo_paint_with_alpha(cr, idleAlpha); }
+                cairo_restore(cr);
+            }
         } else {
-            Pt mid = { (rSh.x + rPos.x) * 0.5f + 4.0f, (rSh.y + rPos.y) * 0.5f - 6.0f };
+            Pt mid = { (rSh.x + rPos.x) * 0.5f + 4.0f,
+                       std::max((rSh.y + rPos.y) * 0.5f - 6.0f, headBottom - 1.0f) };
             drawLimb(cr, rSh, mid, rPos, limbStartW, limbEndW, true, 0.78f, skin, true);
         }
     }
@@ -2722,7 +2767,7 @@ private:
     static void drawIdleFrontLeg(cairo_t* cr, Pt top, Pt bottom, bool isLeft, const SkinSpec& skin) {
         if (skin.renderStyle == SkinRenderStyle::Dazed) {
             float sign = isLeft ? -1.0f : 1.0f;
-            Pt shoulder = { top.x + sign * 4.0f, top.y - 10.0f };
+            Pt shoulder = { top.x + sign * 4.0f, top.y - 6.0f };
             Pt elbow = { top.x + sign * 11.0f, top.y + 1.0f };
             Pt paw = { top.x + sign * 10.0f, top.y + 15.0f };
             drawLimb(cr, shoulder, elbow, paw, 19.0f, 14.0f, !isLeft, 0.78f, skin, true);
@@ -3264,7 +3309,7 @@ private:
         double ty = 68.0 - liftS * 22.0 + physics.scruffSwingY.value * 8.0 + std::sin((double)physics.time * 3.8) * 2.5 * (1.0 - startleTarget);
         cairo_translate(cr, tx, ty);
         cairo_scale(cr, scale, scale);
-        drawVideo1DragInSpace(cr, skin, eyeTheme, startleTarget, swing);
+        drawVideo1DragInSpace(cr, physics, skin, eyeTheme, startleTarget, swing);
         if (alpha < 0.995) {
             cairo_pop_group_to_source(cr);
             cairo_paint_with_alpha(cr, alpha);
@@ -3465,7 +3510,7 @@ public:
 
     // MARK: - V1Space (1000 x 750) Universal Video 1 Lifted / Startled Drag Pose
 
-    static void drawVideo1DragInSpace(cairo_t* cr, const SkinSpec& skin, EyeColorTheme eyeTheme,
+    static void drawVideo1DragInSpace(cairo_t* cr, const CatPhysics& physics, const SkinSpec& skin, EyeColorTheme eyeTheme,
                                       double startle, double swing) {
         double s = std::clamp(startle, 0.0, 1.0);
         bool isDouni = (skin.renderStyle == SkinRenderStyle::Douni);
@@ -3632,8 +3677,38 @@ public:
         PtD rightEyeCenter = { lerpD(510.0, 501.0, s), lerpD(222.0, 324.0, s) };
         double eyeRX = lerpD(87.0, 89.0, s);
         double eyeRY = lerpD(91.0, 84.0, s);
-        drawV1WateryEye(cr, leftEyeCenter, eyeRX, eyeRY, true, irisColor, inkColor, lw, s, isBlackRim);
-        drawV1WateryEye(cr, rightEyeCenter, eyeRX + 2.0, eyeRY, false, irisColor, inkColor, lw, s, isBlackRim);
+        if (physics.scruffDizzyIntensity.value > 0.28f) {
+            for (int side = 0; side < 2; ++side) {
+                PtD ec = (side == 0) ? leftEyeCenter : rightEyeCenter;
+                double er = (side == 0) ? eyeRX : (eyeRX + 2.0);
+                cairo_save(cr);
+                cairo_translate(cr, ec.x, ec.y);
+                cairo_set_source_rgba(cr, 0.98, 0.98, 0.96, 0.96);
+                cairo_new_path(cr);
+                fillEllipse(cr, 0.0, 0.0, er, eyeRY);
+                cairo_fill_preserve(cr);
+                setCol(cr, inkColor);
+                cairo_set_line_width(cr, lw * 0.94);
+                cairo_stroke(cr);
+                double spin = (double)physics.dizzyPhase * (side == 0 ? 1.0 : -1.0);
+                double maxR = std::min(er, eyeRY) * 0.78;
+                cairo_new_path(cr);
+                for (int i = 0; i <= 44; ++i) {
+                    double t = (double)i / 44.0;
+                    double theta = spin + t * PI * 4.4;
+                    double rad = t * maxR;
+                    double sx = std::cos(theta) * rad, sy = std::sin(theta) * rad;
+                    if (i == 0) cairo_move_to(cr, sx, sy);
+                    else cairo_line_to(cr, sx, sy);
+                }
+                cairo_set_line_width(cr, lw * 0.72);
+                cairo_stroke(cr);
+                cairo_restore(cr);
+            }
+        } else {
+            drawV1WateryEye(cr, leftEyeCenter, eyeRX, eyeRY, true, irisColor, inkColor, lw, s, isBlackRim);
+            drawV1WateryEye(cr, rightEyeCenter, eyeRX + 2.0, eyeRY, false, irisColor, inkColor, lw, s, isBlackRim);
+        }
 
         // Optional cute tiny nose on patterned non-Douni cats
         if (!isDouni && !isBlackRim && !skin.colorpoint()) {
@@ -3763,7 +3838,8 @@ public:
                 drawDouniComicMouse(
                     cr, mouseCenter,
                     (double)physics.mousePressLeft.value, (double)physics.mousePressRight.value,
-                    mouseBodyColor, kbBevelColor, mouseWheelColor, glowBaseColor, ink, catLW
+                    mouseBodyColor, kbBevelColor, mouseWheelColor, glowBaseColor, ink, catLW,
+                    (double)physics.mousePressMiddle.value
                 );
             }
             if (groupGear) {
@@ -3835,8 +3911,9 @@ public:
             double gazeY = poseOverride ? 0.0 : (double)physics.eyeGaze.y.value;
             double baseBlink = poseOverride ? 0.0 : (double)physics.blinkProgress();
             double blink = std::max(baseBlink, smoothstepD(0.04, 0.44, morph));
-            drawV2BobaEye(cr, { 518.0, 262.0 }, 47.5, true,  gazeX, gazeY, blink, hunt, dizzy, (double)physics.dizzyPhase, anger, cream, ink, catLW);
-            drawV2BobaEye(cr, { 652.0, 274.0 }, 46.5, false, gazeX, gazeY, blink, hunt, dizzy, (double)physics.dizzyPhase, anger, cream, ink, catLW);
+            double v2Dizzy = poseOverride ? dizzy : std::max(dizzy, std::clamp((double)physics.scruffDizzyIntensity.value, 0.0, 1.0));
+            drawV2BobaEye(cr, { 518.0, 262.0 }, 47.5, true,  gazeX, gazeY, blink, hunt, v2Dizzy, (double)physics.dizzyPhase, anger, cream, ink, catLW);
+            drawV2BobaEye(cr, { 652.0, 274.0 }, 46.5, false, gazeX, gazeY, blink, hunt, v2Dizzy, (double)physics.dizzyPhase, anger, cream, ink, catLW);
 
             // 2e. Expressive Comic Emotion Accents: Pulsing Red Anger Vein (💢), Alert Hunter Ticks, Orbiting Dizzy Stars!
             if (anger > 0.14) {
@@ -3844,7 +3921,7 @@ public:
                 double pulse = (1.0 + std::sin((double)physics.time * 16.0) * 0.12) * 0.90;
                 drawDouniAngerVein(cr, { 682.0, 198.0 }, pulse, aAlpha);
             }
-            if (hunt > 0.35 && dizzy < 0.15) {
+            if (hunt > 0.35 && v2Dizzy < 0.15) {
                 double hAlpha = smoothstepD(0.35, 0.78, hunt);
                 cairo_save(cr);
                 setCol(cr, ink, hAlpha);
@@ -3856,8 +3933,8 @@ public:
                 cairo_stroke(cr);
                 cairo_restore(cr);
             }
-            if (dizzy > 0.08) {
-                drawDouniDizzyStars(cr, { 590.0, 74.0 }, (double)physics.dizzyPhase, dizzy, ink);
+            if (v2Dizzy > 0.08) {
+                drawDouniDizzyStars(cr, { 590.0, 74.0 }, (double)physics.dizzyPhase, v2Dizzy, ink);
             }
 
             if (groupCat) {
@@ -3912,8 +3989,10 @@ public:
                 (double)physics.douniLeftKeyTarget.point().x + impT * 10.0,
                 (double)physics.douniLeftKeyTarget.point().y + impY * 8.5
             };
+            double penAngle = -2.14 + (double)physics.tabletPenTilt.value;
             PtD leftToolTarget = isTablet
-                ? PtD{ v2Nib.x + 14.0, v2Nib.y - 12.0 + tabletPress * 5.0 }
+                ? PtD{ v2Nib.x + std::cos(penAngle) * 54.0 - 6.0,
+                       v2Nib.y + std::sin(penAngle) * 54.0 - 12.0 + tabletPress * 4.0 }
                 : PtD{ mouseCenter.x + 8.0, mouseCenter.y - 2.0 + mousePress * 8.0 };
 
             drawV2LeftArm(
@@ -3923,14 +4002,13 @@ public:
                 cream, taupe, ink, catLW, lVel
             );
 
-            // Held Hand-Drawn Comic Stylus gripped right at Douni's left paw when using Graphics Tablet!
+            // Held Hand-Drawn Comic Stylus gripped right at the middle of barrel by Douni's left paw!
             if (showMouse && isTablet && effectiveMouseBlend > 0.18) {
                 double penAlpha = smoothstepD(0.18, 0.42, effectiveMouseBlend);
                 cairo_save(cr);
                 bool groupPen = (penAlpha < 0.995);
                 if (groupPen) cairo_push_group(cr);
                 PtD nibDrawPt = { v2Nib.x, v2Nib.y + tabletPress * 4.0 };
-                double penAngle = -2.14 + (double)physics.tabletPenTilt.value;
                 cairo_translate(cr, nibDrawPt.x, nibDrawPt.y);
                 cairo_rotate(cr, penAngle);
                 drawDouniComicStylus(cr, 124.0, glowBaseColor, eyeCol, ink, catLW, tabletPress);
@@ -3966,7 +4044,9 @@ public:
     // MARK: - Universal Front-Facing Long-Cat Scruff-Lifted Drag Pose (ALL Non-Douni Skins!)
 
     static void drawNativeScruffDragCat(cairo_t* cr, const CatPhysics& physics, const SkinSpec& skin,
-                                        EyeColorTheme eyeTheme, double lift) {
+                                        EyeColorTheme eyeTheme, const KeyboardSkinSpec& kbSkin,
+                                        KeyboardTheme kbTheme, bool showKeyLegends, bool keyboardMarquee,
+                                        bool overrideSkinIris, double lift) {
         double liftS = smoothstepD(0.0, 1.0, lift);
         double startle = 0.0;
         if (physics.isScruffDragging()) {
@@ -4631,13 +4711,71 @@ public:
         }
 
         // 5. Native KuroCat Face Features (normal authentic almond eyes — no round bug-eyes!)
-        drawHeadFeatures(cr, headCenter, physics, eyeTheme, skin, 0.0, 0.0);
+        drawHeadFeatures(cr, headCenter, physics, eyeTheme, skin, 0.0, 0.0, overrideSkinIris);
 
-        // 6. Dangling front arms hanging along the outer shoulder slopes (leaving central chest/belly 100% unobstructed!)
-        drawDragLimb(frontLeftLimb);
-        drawDragLimb(frontRightLimb);
+        // 6. Carried Keyboard + Mouse / Graphics Tablet + Held Stylus gripped cleanly by its middle!
+        constexpr double carryScale = 0.74;
+        double carryAngle = bodyPendulum * 0.85 + swingH * 0.14;
+        Pt kbMid = KeyboardLayout::screenQuadPoint(0.5f, 0.5f);
+        PtD deskAnchor = physics.isTabletActive ? PtD{ 134.0, (double)kbMid.y } : PtD{ 166.0, (double)kbMid.y };
+        PtD carryPivot = { rumpCenterX + 4.0, std::min(226.0, shoulderY + armLen + 36.0) };
+        double carryCos = std::cos(carryAngle), carrySin = std::sin(carryAngle);
+        auto mapDesk = [&](Pt dp) -> PtD {
+            double dx = ((double)dp.x - deskAnchor.x) * carryScale;
+            double dy = ((double)dp.y - deskAnchor.y) * carryScale;
+            return { carryPivot.x + dx * carryCos - dy * carrySin,
+                     carryPivot.y + dx * carrySin + dy * carryCos };
+        };
 
-        // 7. Skin stickers / decorations stay anchored cleanly to the lifted cat's head and neck!
+        DragLimb carriedLeftLimb = frontLeftLimb;
+        DragLimb carriedRightLimb = frontRightLimb;
+        Pt deskNib = physics.scruffStartedHoldingPen ? physics.scruffPenStartNib : CatPhysics::tabletQuadPoint(0.58f, 0.48f);
+        double carryPenRad = (double)(physics.scruffStartedHoldingPen ? physics.scruffPenStartAngle : physics.stylusAngle()) + carryAngle;
+        PtD carriedNib = mapDesk(deskNib);
+        PtD carriedPenGrip = {
+            carriedNib.x + std::cos(carryPenRad) * ((double)CatPhysics::StylusBarrelGripDistance * carryScale),
+            carriedNib.y + std::sin(carryPenRad) * ((double)CatPhysics::StylusBarrelGripDistance * carryScale)
+        };
+        PtD leftGearTarget = physics.isTabletActive
+            ? carriedPenGrip
+            : mapDesk({ CatPhysics::MouseBaseCenter.x + physics.mouseOffset.point().x,
+                        CatPhysics::MouseBaseCenter.y + physics.mouseOffset.point().y - 4.0f });
+        PtD rightGearTarget = mapDesk(KeyboardLayout::screenQuadPoint(0.52f, 0.12f));
+        carriedLeftLimb.tip = lerpPtD(leftGearTarget, frontLeftLimb.tip, startle);
+        carriedRightLimb.tip = lerpPtD(rightGearTarget, frontRightLimb.tip, startle);
+
+        cairo_save(cr);
+        cairo_translate(cr, carryPivot.x, carryPivot.y);
+        cairo_rotate(cr, carryAngle);
+        cairo_scale(cr, carryScale, carryScale);
+        cairo_translate(cr, -deskAnchor.x, -deskAnchor.y);
+        if (physics.isTabletActive) {
+            drawTablet(cr, physics, kbTheme, eyeTheme);
+        } else {
+            drawMouse(cr, physics, kbSkin);
+        }
+        drawKeyboard(cr, physics, kbSkin, eyeTheme, showKeyLegends, keyboardMarquee);
+        cairo_restore(cr);
+
+        // 7. Dangling / Carrying Front Arms
+        drawDragLimb(carriedLeftLimb);
+        drawDragLimb(carriedRightLimb);
+
+        if (physics.isTabletActive) {
+            float press = std::clamp(physics.tabletPenPress.value, 0.0f, 1.0f);
+            PtD heldNib = {
+                carriedLeftLimb.tip.x - std::cos(carryPenRad) * ((double)CatPhysics::StylusBarrelGripDistance * carryScale),
+                carriedLeftLimb.tip.y - std::sin(carryPenRad) * ((double)CatPhysics::StylusBarrelGripDistance * carryScale) + press * 1.1
+            };
+            cairo_save(cr);
+            cairo_translate(cr, heldNib.x, heldNib.y);
+            cairo_rotate(cr, carryPenRad);
+            cairo_scale(cr, carryScale, carryScale);
+            drawStylusBody(cr, 35.0, kbTheme, eyeTheme, press);
+            cairo_restore(cr);
+        }
+
+        // 8. Skin stickers / decorations stay anchored cleanly to the lifted cat's head and neck!
         if (!skin.decorations.empty()) {
             Pt dragNeck = { (float)(headCenterD.x + hipLagX * 0.08), (float)(headCenterD.y + 36.0 * hs) };
             Pt dragTailTip = { (float)tailTip.x, (float)tailTip.y };
@@ -5764,8 +5902,8 @@ private:
 
     static void drawDouniComicMouse(cairo_t* cr, PtD center, double pressLeft, double pressRight,
                                     RGBA bodyColor, RGBA bevelColor, RGBA wheelColor, RGBA glowColor,
-                                    RGBA ink, double lw) {
-        double pressShift = std::max(pressLeft, pressRight) * 5.0;
+                                    RGBA ink, double lw, double pressMiddle = 0.0) {
+        double pressShift = std::max({pressLeft, pressRight, pressMiddle}) * 5.0;
         cairo_save(cr);
         // Cute short wavy comic mouse cord trailing up-left
         setCol(cr, ink);
@@ -5827,9 +5965,11 @@ private:
         cairo_stroke(cr);
 
         // Scroll wheel pill
+        double wpMix = std::clamp(pressMiddle, 0.0, 1.0);
+        RGBA wCol = wpMix > 0.02 ? blend(wheelColor, {1.0, 1.0, 1.0, 1.0}, 0.6 * wpMix) : wheelColor;
         cairo_new_path(cr);
-        roundedRect(cr, -29.0, -5.5, 17.0, 11.0, 5.0);
-        setCol(cr, wheelColor);
+        roundedRect(cr, -29.0 + wpMix * 2.0, -5.5 + wpMix * 0.6, 17.0 - wpMix * 2.0, 11.0 - wpMix * 1.2, 5.0);
+        setCol(cr, wCol);
         cairo_fill_preserve(cr);
         setCol(cr, ink);
         cairo_set_line_width(cr, lw * 0.62);
@@ -6105,11 +6245,11 @@ private:
         double rP = 33.0;
         double archLift = 14.0 * std::fabs(ux);
 
-        PtD shTop = { shoulder.x + nx * rS, shoulder.y + ny * rS };
+        PtD shTop = { shoulder.x + nx * rS, std::max(shoulder.y + ny * rS, 304.0) };
         PtD shBot = { shoulder.x - nx * rS, shoulder.y - ny * rS };
         PtD tip   = { target.x + ux * 16.0, target.y + uy * 16.0 };
 
-        PtD topC1 = { lerpD(shTop.x, target.x + nx * rP, 0.42), lerpD(shTop.y, target.y + ny * rP, 0.42) - archLift };
+        PtD topC1 = { lerpD(shTop.x, target.x + nx * rP, 0.42), std::max(lerpD(shTop.y, target.y + ny * rP, 0.42) - archLift, 286.0) };
         PtD topC2 = { target.x + nx * (rP * 1.15) + ux * 8.0,   target.y + ny * (rP * 1.15) + uy * 8.0 };
         PtD botC1 = { target.x - nx * (rP * 1.15) + ux * 8.0,   target.y - ny * (rP * 1.15) + uy * 8.0 };
         PtD botC2 = { lerpD(shBot.x, target.x - nx * rP, 0.42), lerpD(shBot.y, target.y - ny * rP, 0.42) - archLift * 0.4 };

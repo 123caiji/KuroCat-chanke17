@@ -12,6 +12,7 @@ private struct RenderedPose {
         let flipped: Bool
         let rotationDeg: CGFloat
         let whiteOutline: Bool
+        let overrideSkinIris: Bool
         let tabletActive: Bool
     }
 
@@ -39,9 +40,10 @@ private struct RenderedPose {
     let headTilt: CGFloat
     let eyeGaze: CGPoint
     let mouseOffset: CGPoint
-    let pawOnMouse: Bool
     let mousePressLeft: CGFloat
     let mousePressRight: CGFloat
+    let mousePressMiddle: CGFloat
+    let pawOnMouse: Bool
     let hindFoot: CGPoint
     let hindFootActive: CGFloat
     let yawnAmount: CGFloat
@@ -85,6 +87,7 @@ private struct RenderedPose {
             flipped: settings.flipHorizontal,
             rotationDeg: settings.rotationDeg,
             whiteOutline: settings.whiteOutline,
+            overrideSkinIris: settings.overrideSkinIris,
             tabletActive: tabletActive
         )
         appearance = Appearance(
@@ -111,6 +114,7 @@ private struct RenderedPose {
             || !physics.floatingKeycaps.isEmpty || !physics.keyGlow.isEmpty
             || !physics.tabletTrail.isEmpty || physics.kbSparkTimer > 0.005
             || physics.angerIntensity.value > 0.02 || physics.dizzyIntensity.value > 0.02
+            || physics.scruffDizzyIntensity.value > 0.02
             || physics.huntIntensity.value > 0.02
             || scruff > 0.02 || physics.isChangingLie
             || abs(physics.scruffSwing.value) > 0.01 || abs(physics.scruffSwingY.value) > 0.01
@@ -134,9 +138,10 @@ private struct RenderedPose {
         headTilt = physics.headTilt.value
         eyeGaze = physics.eyeGaze.point
         mouseOffset = physics.mouseOffset.point
-        pawOnMouse = physics.leftPawOnMouse
         mousePressLeft = physics.mousePressLeft.value
         mousePressRight = physics.mousePressRight.value
+        mousePressMiddle = physics.mousePressMiddle.value
+        pawOnMouse = physics.leftPawOnMouse
         hindFoot = physics.hindFoot.point
         hindFootActive = physics.hindFootActive.value
         yawnAmount = physics.yawnAmount
@@ -147,7 +152,7 @@ private struct RenderedPose {
         bodySquash = physics.bodySquash.value
         lieIntensity = physics.lieIntensity.value
         anger = physics.angerIntensity.value
-        dizzy = physics.dizzyIntensity.value
+        dizzy = max(physics.dizzyIntensity.value, physics.scruffDizzyIntensity.value)
         petIntensity = pet
         douniLoaf = loaf
         douniMouse = physics.douniMouseBlend.value
@@ -227,7 +232,8 @@ private struct RenderedPose {
         let scale = max(appearance.foreground.size.width / CatPhysics.canvasSize.width,
                         appearance.foreground.size.height / CatPhysics.canvasSize.height)
         let pressMovement = max(abs(mousePressLeft - previous.mousePressLeft),
-                                abs(mousePressRight - previous.mousePressRight)) * 10
+                                abs(mousePressRight - previous.mousePressRight),
+                                abs(mousePressMiddle - previous.mousePressMiddle)) * 20
         if pressMovement * scale >= 0.65 {
             return true
         }
@@ -1689,8 +1695,10 @@ final class SettingsWindowController: NSWindowController {
         guard idx >= 0 && idx < skinIds.count else { return }
         let token = skinIds[idx]
         if token.hasPrefix("custom:") {
+            CatSettings.shared.overrideSkinIris = false
             CatSettings.shared.customSkin = String(token.dropFirst(7))
         } else if token.hasPrefix("coat:"), let coat = CatCoatTheme(rawValue: String(token.dropFirst(5))) {
+            CatSettings.shared.overrideSkinIris = false
             CatSettings.shared.customSkin = ""
             CatSettings.shared.coatTheme = coat
             switch coat {
@@ -1735,6 +1743,7 @@ final class SettingsWindowController: NSWindowController {
     @objc private func onEyeSelected() {
         let idx = eyePopup.indexOfSelectedItem
         guard idx >= 0 && idx < EyeColorTheme.allCases.count else { return }
+        CatSettings.shared.overrideSkinIris = true
         CatSettings.shared.eyeTheme = EyeColorTheme.allCases[idx]
         onSettingsChanged?()
     }
