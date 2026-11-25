@@ -123,6 +123,10 @@ final class CatCanvasView: NSView {
     /// A `.kurocat` dropped onto the cat is imported and worn right away.
     var onDropSkinFiles: (([URL]) -> Void)?
 
+    /// Extra transparent space reserved above the cat canvas, so the hourly
+    /// toast pill (60pt above the head) never gets clipped by the view bounds.
+    static let contentTopInset: CGFloat = 64
+
     private var lastHoverCanvasPt: CGPoint?
     private var isDragging = false
     private var isRotating = false
@@ -137,6 +141,15 @@ final class CatCanvasView: NSView {
     private var isShowingOpenHand = false
     private var lastDrawnPose: RenderedPose?
 
+    // MARK: - Toast (drawn directly on the canvas, above the cat's head)
+    private var toastText: String? = nil
+    private var toastProgress: CGFloat = 0
+    private var toastPhase: Double = 0
+    private let toastFadeIn: Double = 0.4
+    private let toastHold: Double = 4.2
+    private let toastFadeOut: Double = 0.4
+    var toastActive: Bool { toastText != nil }
+
     var isDraggingOrResizing: Bool { isDragging || isRotating || activeResizeCorner >= 0 }
 
     override var isFlipped: Bool { true }
@@ -147,15 +160,24 @@ final class CatCanvasView: NSView {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         ctx.clear(bounds)
 
+        let totalCanvasH = CatPhysics.canvasSize.height + CatCanvasView.contentTopInset
         let scaleX = bounds.width / CatPhysics.canvasSize.width
-        let scaleY = bounds.height / CatPhysics.canvasSize.height
+        let scaleY = bounds.height / totalCanvasH
         ctx.saveGState()
         ctx.scaleBy(x: scaleX, y: scaleY)
+        // Shift the cat down, leaving transparent headroom above for the toast
+        ctx.translateBy(x: 0, y: CatCanvasView.contentTopInset)
 
         let status = InputEngine.shared.status
         CatRenderer.draw(in: ctx, physics: physics, showPermissionPill: status.needsAttention,
                          permissionPillText: status.permissionPillText)
         lastDrawnPose = RenderedPose(physics: physics, settings: CatSettings.shared, size: bounds.size)
+
+        // Draw hourly toast above the cat's head
+        if toastActive, let text = toastText {
+            drawToastPill(in: ctx, text: text, alpha: toastProgress)
+        }
+
         ctx.restoreGState()
     }
 
@@ -170,8 +192,9 @@ final class CatCanvasView: NSView {
         let frame = win.frame
         guard frame.contains(screenPt) else { return nil }
         let localX = (screenPt.x - frame.minX) / frame.width * CatPhysics.canvasSize.width
-        // Convert bottom-up screen Y to flipped top-down canvas Y
-        let localY = (frame.maxY - screenPt.y) / frame.height * CatPhysics.canvasSize.height
+        // Convert bottom-up screen Y to flipped top-down canvas Y (minus the top headroom)
+        let totalCanvasH = CatPhysics.canvasSize.height + CatCanvasView.contentTopInset
+        let localY = (frame.maxY - screenPt.y) / frame.height * totalCanvasH - CatCanvasView.contentTopInset
         return CGPoint(x: localX, y: localY)
     }
 
@@ -463,6 +486,96 @@ final class CatCanvasView: NSView {
         DispatchQueue.main.async { [weak self] in self?.onDropSkinFiles?(urls) }
         return true
     }
+
+    // MARK: - Toast API (hourly announcement pill)
+
+    func showToast(text: String) {
+        toastText = text
+        toastPhase = 0
+        toastProgress = 0
+        needsDisplay = true
+    }
+
+    /// Called every frame from the render loop. Returns true while toast is alive.
+    @discardableResult
+    func tickToast(dt: CGFloat) -> Bool {
+        guard toastActive else { return false }
+        toastPhase += Double(dt)
+
+        if toastPhase < toastFadeIn {
+            toastProgress = CGFloat(toastPhase / toastFadeIn)
+        } else if toastPhase < toastFadeIn + toastHold {
+            toastProgress = 1.0
+        } else if toastPhase < toastFadeIn + toastHold + toastFadeOut {
+            let fadeOutElapsed = toastPhase - (toastFadeIn + toastHold)
+            toastProgress = CGFloat(1.0 - fadeOutElapsed / toastFadeOut)
+        } else {
+            toastText = nil
+            toastProgress = 0
+            toastPhase = 0
+            return false
+        }
+        return true
+    }
+
+    private func drawToastPill(in ctx: CGContext, text: String, alpha: CGFloat) {
+        guard alpha > 0.01 else { return }
+
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 18, weight: .semibold),
+            .foregroundColor: NSColor.white
+        ]
+        let attrStr = NSAttributedString(string: text, attributes: attrs)
+        let sz = attrStr.size()
+
+        let padX: CGFloat = 20
+        let padY: CGFloat = 13
+        let pillW = sz.width + padX * 2
+        let pillH = sz.height + padY * 2
+
+        // Follow the cat's actual head center so toast stays above the head
+        // during scruff-drag, lie-down, sleep, and other pose transitions.
+        let skin = CatSettings.shared.activeSkin
+        let headCenter = CatRenderer.headPosition(physics, skin: skin)
+        let headScale = skin.shape.headScale
+        let headTopY = headCenter.y - 38.0 * headScale  // top of cat face ellipse
+
+        let rect = CGRect(
+            x: headCenter.x - pillW / 2,
+            y: headTopY - pillH - 60,
+            width: pillW,
+            height: pillH
+        )
+        let cornerRadius = rect.height / 2
+
+        ctx.saveGState()
+        ctx.setAlpha(max(0, min(1, alpha)))
+        ctx.setShadow(offset: CGSize(width: 0, height: -2), blur: 8,
+                      color: NSColor.black.withAlphaComponent(0.35).cgColor)
+
+        let path = CGPath(roundedRect: rect, cornerWidth: cornerRadius,
+                          cornerHeight: cornerRadius, transform: nil)
+        ctx.setFillColor(NSColor(calibratedWhite: 0.08, alpha: 0.90).cgColor)
+        ctx.addPath(path)
+        ctx.fillPath()
+
+        ctx.setShadow(offset: CGSize.zero, blur: 0)
+        ctx.setStrokeColor(NSColor(calibratedWhite: 0.45, alpha: 0.55).cgColor)
+        ctx.setLineWidth(1.0)
+        let inner = rect.insetBy(dx: 0.5, dy: 0.5)
+        let innerPath = CGPath(roundedRect: inner, cornerWidth: cornerRadius - 0.5,
+                               cornerHeight: cornerRadius - 0.5, transform: nil)
+        ctx.addPath(innerPath)
+        ctx.strokePath()
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+        let textY = rect.midY - sz.height / 2
+        attrStr.draw(at: CGPoint(x: rect.midX - sz.width / 2, y: textY))
+        NSGraphicsContext.restoreGraphicsState()
+
+        ctx.restoreGState()
+    }
 }
 
 final class OverlayWindow: NSPanel {
@@ -472,7 +585,7 @@ final class OverlayWindow: NSPanel {
         let scale = CatSettings.shared.scale
         let size = CGSize(
             width: CatPhysics.canvasSize.width * scale,
-            height: CatPhysics.canvasSize.height * scale
+            height: (CatPhysics.canvasSize.height + CatCanvasView.contentTopInset) * scale
         )
         let origin = OverlayWindow.initialOrigin(for: size)
 
@@ -540,7 +653,7 @@ final class OverlayWindow: NSPanel {
         let oldFrame = frame
         let newSize = CGSize(
             width: CatPhysics.canvasSize.width * newScale,
-            height: CatPhysics.canvasSize.height * newScale
+            height: (CatPhysics.canvasSize.height + CatCanvasView.contentTopInset) * newScale
         )
         // Anchor bottom-center so scaling feels grounded
         let newOrigin = CGPoint(
@@ -557,6 +670,15 @@ final class OverlayWindow: NSPanel {
         setFrameOrigin(origin)
         UserDefaults.standard.set(Double(origin.x), forKey: "KuroCat.PosX")
         UserDefaults.standard.set(Double(origin.y), forKey: "KuroCat.PosY")
+    }
+
+    /// Frame the physics engine should treat as the cat's actual drawing area
+    /// (the window is taller than the cat canvas because of the toast headroom).
+    var physicsFrameInScreen: CGRect {
+        let scale = frame.width / CatPhysics.canvasSize.width
+        var f = frame
+        f.size.height -= CatCanvasView.contentTopInset * scale
+        return f
     }
 
     private static func initialOrigin(for size: CGSize) -> CGPoint {
@@ -895,6 +1017,7 @@ final class SettingsWindowController: NSWindowController {
     private var autoHideSwitch: NSSwitch!
     private var obsHideSwitch: NSSwitch!
     private var autoStartSwitch: NSSwitch!
+    private var hourlySwitch: NSSwitch!
 
     private var rotSlider: NSSlider!
     private var rotValLabel: NSTextField!
@@ -1233,7 +1356,7 @@ final class SettingsWindowController: NSWindowController {
 
         // MARK: Card 3 — Window & System
         addSectionHeader(tr("窗口与系统", "Window & System"))
-        addCard(rows: 7) { card, rh in
+        addCard(rows: 8) { card, rh in
             // Row 0: Fullscreen topmost
             card.addSubview(makeLabel(tr("全屏游戏/应用置顶显示", "Always On Top Over Fullscreen"), yPos: 4, width: 320))
             fullscreenOverlaySwitch = makeSwitch(s.fullScreenOverlay, action: #selector(onToggleFullscreenOverlay), yPos: 4)
@@ -1284,12 +1407,19 @@ final class SettingsWindowController: NSWindowController {
             card.addSubview(autoStartSwitch)
             addRowDivider(card, yPos: r5 + rh)
 
-            // Row 6: Language
+            // Row 6: Hourly Announcement
             let r6 = 4 + rh * 6
-            card.addSubview(makeLabel("语言 / Language", yPos: r6, width: 180))
+            card.addSubview(makeLabel(tr("整点猫头报时（HH:00 弹框提示）", "Hourly Head-Toast Announcement (HH:00)"), yPos: r6, width: 340))
+            hourlySwitch = makeSwitch(s.hourlyAnnouncement, action: #selector(onToggleHourlyAnnouncement), yPos: r6)
+            card.addSubview(hourlySwitch)
+            addRowDivider(card, yPos: r6 + rh)
+
+            // Row 7: Language
+            let r7 = 4 + rh * 7
+            card.addSubview(makeLabel("语言 / Language", yPos: r7, width: 180))
             langSeg = NSSegmentedControl(labels: ["简体中文", "English"], trackingMode: .selectOne, target: self, action: #selector(onLangChanged))
             langSeg.selectedSegment = s.isEnglish ? 1 : 0
-            langSeg.frame = NSRect(x: cardW - 14 - 166, y: r6 + 6, width: 166, height: 24)
+            langSeg.frame = NSRect(x: cardW - 14 - 166, y: r7 + 6, width: 166, height: 24)
             card.addSubview(langSeg)
         }
 
@@ -1506,6 +1636,10 @@ final class SettingsWindowController: NSWindowController {
 
     @objc private func onToggleAutoStart() {
         setAutoStart?(autoStartSwitch.state == .on)
+    }
+
+    @objc private func onToggleHourlyAnnouncement() {
+        CatSettings.shared.hourlyAnnouncement = (hourlySwitch.state == .on)
     }
 
     @objc private func onLangChanged() {
