@@ -472,7 +472,7 @@ private:
     static bool isSiamese(const SkinSpec& skin)      { return isBuiltInCoat(skin, "builtin:1"); }
     static bool isShorthair(const SkinSpec& skin)    { return isBuiltInCoat(skin, "builtin:2"); }
     static bool isOrangeWhite(const SkinSpec& skin)  { return isBuiltInCoat(skin, "builtin:3"); }
-    static bool isDazed(const SkinSpec& skin)        { return isBuiltInCoat(skin, "builtin:4"); }
+    static bool isDazed(const SkinSpec& skin)        { return skin.renderStyle == SkinRenderStyle::Dazed || isBuiltInCoat(skin, "builtin:4"); }
     static bool isTabby(const SkinSpec& skin)        { return isBuiltInCoat(skin, "builtin:5"); }
     static bool isPatternedBuiltIn(const SkinSpec& skin) { return isShorthair(skin) || isOrangeWhite(skin); }
     static bool isClassicBlackRim(const SkinSpec& skin) {
@@ -1382,6 +1382,12 @@ private:
             outerBase = { around(outerBase.x, m.x, es), around(outerBase.y, m.y, es) };
             tip3D = { around(tip3D.x, m.x, es), around(tip3D.y, m.y, es) };
         }
+        float ebw = skin.shape.earBaseWidth;
+        if (ebw != 1.0f) {
+            Pt m = { (innerBase.x + outerBase.x) * 0.5f, (innerBase.y + outerBase.y) * 0.5f };
+            innerBase = { around(innerBase.x, m.x, ebw), around(innerBase.y, m.y, ebw) };
+            outerBase = { around(outerBase.x, m.x, ebw), around(outerBase.y, m.y, ebw) };
+        }
 
         float ep = skin.shape.earPointiness;
         float tipSpread = bd.earTipSpread / ep;
@@ -1530,13 +1536,19 @@ private:
         PointF lHip   = B(-hipHalfW, -14.0f);
         PointF lCheek = H(leftCheekX, cheekY);
 
+        float nw = skin.shape.neckWidth;
+        float neckCenter = cheekShift * 0.4f;
+        float rNeckX = neckCenter + (rightCheekX - neckPinchX - neckCenter) * nw;
+        float lNeckX = neckCenter + (leftCheekX + neckPinchX - neckCenter) * nw;
+        float neckWaistW = waistCtrlW * (1.0f + (nw - 1.0f) * 0.32f);
+
         GraphicsPath path;
         path.AddBezier(crown, H(crownCtrlW + cheekShift * 0.3f, crownBaseY + crownDrop), H(rightCheekX + 1.5f, cheekCtrlTopY), rCheek);
-        path.AddBezier(rCheek, H(rightCheekX - neckPinchX, neckCtrlY), B(waistCtrlW, waistCtrlY + breath * 0.5f), rHip);
+        path.AddBezier(rCheek, H(rNeckX, neckCtrlY), B(neckWaistW, waistCtrlY + breath * 0.5f), rHip);
         path.AddBezier(rHip, B(botOuterW, 5.0f), B(botInnerW, 12.0f), rBot);
         path.AddLine(rBot, lBot);
         path.AddBezier(lBot, B(-botInnerW, 12.0f), B(-botOuterW, 5.0f), lHip);
-        path.AddBezier(lHip, B(-waistCtrlW, waistCtrlY + breath * 0.5f), H(leftCheekX + neckPinchX, neckCtrlY), lCheek);
+        path.AddBezier(lHip, B(-neckWaistW, waistCtrlY + breath * 0.5f), H(lNeckX, neckCtrlY), lCheek);
         path.AddBezier(lCheek, H(leftCheekX - 1.5f, cheekCtrlTopY), H(-crownCtrlW + cheekShift * 0.3f, crownBaseY + crownDrop), crown);
         path.CloseFigure();
 

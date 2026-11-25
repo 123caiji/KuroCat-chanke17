@@ -318,6 +318,10 @@ enum CatRenderer {
             )
         }
 
+        if skin.renderStyle == .dazed {
+            drawDazedSword(in: ctx, seatX: seatX, seatY: seatY, physics: physics)
+        }
+
         if !tailInFront {
             drawTail(in: ctx, seatX: seatX, seatY: seatY, physics: physics, skin: skin)
         }
@@ -1304,9 +1308,377 @@ enum CatRenderer {
         return TailCurve(root: root, c1: c1, c2: c2, tip: tip, thickness: skin.shape.tailThickness)
     }
 
+    // MARK: - Monster Hunter Dazed Cat Special Renderer (renderStyle == .dazed)
+
+    private static func dazedColor(_ hex: Int, alpha: CGFloat = 1.0) -> CGColor {
+        let r = CGFloat((hex >> 16) & 0xFF) / 255.0
+        let g = CGFloat((hex >> 8) & 0xFF) / 255.0
+        let b = CGFloat(hex & 0xFF) / 255.0
+        return NSColor(calibratedRed: r, green: g, blue: b, alpha: alpha).cgColor
+    }
+
+    private static func drawDazedPaw(in ctx: CGContext, rect: CGRect) {
+        ctx.saveGState()
+        let path = CGPath(ellipseIn: rect, transform: nil)
+        ctx.addPath(path)
+        ctx.clip()
+        let cs = CGColorSpaceCreateDeviceRGB()
+        if let grad = CGGradient(colorsSpace: cs, colors: [dazedColor(0xFFF1CD), dazedColor(0xCCAC7F)] as CFArray, locations: [0, 1]) {
+            ctx.drawLinearGradient(grad, start: CGPoint(x: rect.midX, y: rect.minY), end: CGPoint(x: rect.midX, y: rect.maxY), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+        }
+        ctx.restoreGState()
+        ctx.saveGState()
+        ctx.setStrokeColor(dazedColor(0x7E634A, alpha: 170.0 / 255.0))
+        ctx.setLineWidth(0.9)
+        ctx.strokeEllipse(in: rect)
+        ctx.restoreGState()
+    }
+
+    private static func drawDazedSword(in ctx: CGContext, seatX: CGFloat, seatY: CGFloat, physics: CatPhysics) {
+        ctx.saveGState()
+        ctx.translateBy(x: seatX, y: seatY + (1.0 - physics.bodySquash.value) * 36.0)
+        ctx.rotate(by: physics.bodyTilt.value)
+
+        let blade = CGMutablePath()
+        blade.move(to: CGPoint(x: 38.0, y: -96.0))
+        blade.addCurve(to: CGPoint(x: -65.0, y: -38.0), control1: CGPoint(x: 7.0, y: -61.0), control2: CGPoint(x: -31.0, y: -33.0))
+        blade.addCurve(to: CGPoint(x: -37.0, y: -25.0), control1: CGPoint(x: -62.0, y: -24.0), control2: CGPoint(x: -51.0, y: -21.0))
+        blade.addCurve(to: CGPoint(x: 50.0, y: -84.0), control1: CGPoint(x: -5.0, y: -33.0), control2: CGPoint(x: 27.0, y: -60.0))
+        blade.closeSubpath()
+
+        let cs = CGColorSpaceCreateDeviceRGB()
+        ctx.saveGState()
+        ctx.addPath(blade)
+        ctx.clip()
+        if let steel = CGGradient(colorsSpace: cs, colors: [dazedColor(0x8395B0), dazedColor(0xDDE7F2)] as CFArray, locations: [0, 1]) {
+            ctx.drawLinearGradient(steel, start: CGPoint(x: -46.0, y: -51.0), end: CGPoint(x: -29.0, y: -22.0), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+        }
+        ctx.restoreGState()
+
+        ctx.setStrokeColor(dazedColor(0x232638))
+        ctx.setLineWidth(3.6)
+        ctx.setLineJoin(.round)
+        ctx.addPath(blade)
+        ctx.strokePath()
+
+        ctx.setStrokeColor(dazedColor(0xF3F7FB))
+        ctx.setLineWidth(2.1)
+        ctx.setLineCap(.round)
+        ctx.move(to: CGPoint(x: -59.0, y: -33.5))
+        ctx.addCurve(to: CGPoint(x: 43.0, y: -87.0), control1: CGPoint(x: -34.0, y: -24.0), control2: CGPoint(x: 12.0, y: -53.0))
+        ctx.strokePath()
+
+        ctx.translateBy(x: 44.0, y: -90.0)
+        ctx.rotate(by: 44.0 * .pi / 180.0)
+
+        let grip = CGPath(roundedRect: CGRect(x: -7.5, y: -32.0, width: 15.0, height: 32.0), cornerWidth: 3.6, cornerHeight: 3.6, transform: nil)
+        ctx.setFillColor(dazedColor(0x58617D))
+        ctx.addPath(grip)
+        ctx.fillPath()
+        ctx.saveGState()
+        ctx.addPath(grip)
+        ctx.clip()
+        ctx.setFillColor(dazedColor(0xB5BED0))
+        for y in [-27.0, -19.0, -11.0] as [CGFloat] {
+            let band = CGMutablePath()
+            band.move(to: CGPoint(x: -7.5, y: y - 2.0))
+            band.addLine(to: CGPoint(x: 7.5, y: y + 1.0))
+            band.addLine(to: CGPoint(x: 7.5, y: y + 4.3))
+            band.addLine(to: CGPoint(x: -7.5, y: y + 1.3))
+            band.closeSubpath()
+            ctx.addPath(band)
+            ctx.fillPath()
+        }
+        ctx.restoreGState()
+        ctx.setStrokeColor(dazedColor(0x232638))
+        ctx.setLineWidth(3.6)
+        ctx.addPath(grip)
+        ctx.strokePath()
+
+        let guardPath = CGPath(roundedRect: CGRect(x: -13.5, y: -3.8, width: 27.0, height: 7.6), cornerWidth: 2.5, cornerHeight: 2.5, transform: nil)
+        ctx.setFillColor(dazedColor(0xE2C58B))
+        ctx.addPath(guardPath)
+        ctx.fillPath()
+        ctx.setStrokeColor(dazedColor(0x232638))
+        ctx.setLineWidth(3.6)
+        ctx.addPath(guardPath)
+        ctx.strokePath()
+
+        ctx.restoreGState()
+    }
+
+    private static func drawDazedEar(in ctx: CGContext, sign: CGFloat, yawRad: CGFloat, pitchRad: CGFloat, fold: CGFloat, twitch: CGFloat) {
+        let foldAngle = sign * fold * 0.34 + twitch
+        let tipDx = sin(foldAngle) * 37.0
+        let tipDy = (1.0 - cos(foldAngle)) * 37.0
+        func proj(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat) -> CGPoint {
+            projectHead3D(x: sign * x + tipDx * w, y: y + tipDy * w, z: -3.0 * w, yawRad: yawRad, pitchRad: pitchRad).pt
+        }
+        let innerBase = proj(5.0, -25.0, 0.0)
+        let tip = proj(40.0, -63.0, 1.0)
+        let outerBase = proj(42.5, -5.0, 0.0)
+        let ear = CGMutablePath()
+        ear.move(to: innerBase)
+        ear.addCurve(to: tip, control1: proj(13.0, -46.0, 0.30), control2: proj(31.0, -62.0, 0.90))
+        ear.addCurve(to: outerBase, control1: proj(54.0, -66.0, 0.95), control2: proj(57.0, -34.0, 0.40))
+        ear.closeSubpath()
+
+        ctx.saveGState()
+        ctx.addPath(ear)
+        ctx.clip()
+        let cs = CGColorSpaceCreateDeviceRGB()
+        if let grad = CGGradient(colorsSpace: cs, colors: [dazedColor(0x777FBD), dazedColor(0x4D5892)] as CFArray, locations: [0, 1]) {
+            ctx.drawLinearGradient(grad, start: tip, end: outerBase, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+        }
+        ctx.restoreGState()
+    }
+
+    private static func drawDazedSilhouette(in ctx: CGContext, seatX: CGFloat, seatY: CGFloat, head: CGPoint, physics: CatPhysics) {
+        let cs = CGColorSpaceCreateDeviceRGB()
+        ctx.saveGState()
+        ctx.translateBy(x: seatX, y: seatY)
+        ctx.rotate(by: physics.bodyTilt.value)
+        let squash = physics.bodySquash.value
+        ctx.scaleBy(x: 1.0 + (1.0 - squash) * 0.55, y: squash)
+
+        drawDazedPaw(in: ctx, rect: CGRect(x: -34.0, y: -2.0, width: 19.0, height: 18.0))
+        if physics.hindFootActive.value < 0.35 {
+            drawDazedPaw(in: ctx, rect: CGRect(x: 15.0, y: -2.0, width: 19.0, height: 18.0))
+        }
+
+        let belly = CGMutablePath()
+        belly.move(to: CGPoint(x: -42.0, y: -19.0))
+        belly.addCurve(to: CGPoint(x: 0.0, y: 11.5), control1: CGPoint(x: -46.0, y: -5.0), control2: CGPoint(x: -41.0, y: 11.5))
+        belly.addCurve(to: CGPoint(x: 42.0, y: -19.0), control1: CGPoint(x: 41.0, y: 11.5), control2: CGPoint(x: 46.0, y: -5.0))
+        belly.closeSubpath()
+        ctx.saveGState()
+        ctx.addPath(belly)
+        ctx.clip()
+        if let g = CGGradient(colorsSpace: cs, colors: [dazedColor(0xF4DFB8), dazedColor(0xC8A77A)] as CFArray, locations: [0, 1]) {
+            ctx.drawLinearGradient(g, start: CGPoint(x: 0.0, y: -16.0), end: CGPoint(x: 0.0, y: 12.0), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+        }
+        ctx.restoreGState()
+
+        let tunic = CGMutablePath()
+        tunic.move(to: CGPoint(x: -21.0, y: -65.0))
+        tunic.addCurve(to: CGPoint(x: -44.0, y: -17.0), control1: CGPoint(x: -34.0, y: -56.0), control2: CGPoint(x: -44.0, y: -35.0))
+        tunic.addCurve(to: CGPoint(x: 44.0, y: -17.0), control1: CGPoint(x: -37.0, y: -2.0), control2: CGPoint(x: 37.0, y: -2.0))
+        tunic.addCurve(to: CGPoint(x: 21.0, y: -65.0), control1: CGPoint(x: 44.0, y: -35.0), control2: CGPoint(x: 34.0, y: -56.0))
+        tunic.closeSubpath()
+        ctx.saveGState()
+        ctx.addPath(tunic)
+        ctx.clip()
+        if let g = CGGradient(colorsSpace: cs, colors: [dazedColor(0x555F9B), dazedColor(0x252E58)] as CFArray, locations: [0, 1]) {
+            ctx.drawLinearGradient(g, start: CGPoint(x: -16.0, y: -65.0), end: CGPoint(x: 12.0, y: -5.0), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+        }
+        ctx.restoreGState()
+
+        ctx.setStrokeColor(dazedColor(0x7C86BC, alpha: 155.0 / 255.0))
+        ctx.setLineWidth(1.1)
+        ctx.move(to: CGPoint(x: -39.0, y: -15.0))
+        ctx.addCurve(to: CGPoint(x: 39.0, y: -15.0), control1: CGPoint(x: -28.0, y: -6.0), control2: CGPoint(x: 28.0, y: -6.0))
+        ctx.strokePath()
+        ctx.restoreGState()
+
+        ctx.saveGState()
+        ctx.translateBy(x: head.x, y: head.y)
+        ctx.rotate(by: physics.headTilt.value)
+        let hood = CGMutablePath()
+        hood.move(to: CGPoint(x: 0.0, y: -33.0))
+        hood.addCurve(to: CGPoint(x: 48.0, y: 9.0), control1: CGPoint(x: 28.0, y: -35.0), control2: CGPoint(x: 48.0, y: -16.0))
+        hood.addCurve(to: CGPoint(x: 0.0, y: 41.0), control1: CGPoint(x: 48.0, y: 32.0), control2: CGPoint(x: 25.0, y: 41.0))
+        hood.addCurve(to: CGPoint(x: -48.0, y: 9.0), control1: CGPoint(x: -25.0, y: 41.0), control2: CGPoint(x: -48.0, y: 32.0))
+        hood.addCurve(to: CGPoint(x: 0.0, y: -33.0), control1: CGPoint(x: -48.0, y: -16.0), control2: CGPoint(x: -28.0, y: -35.0))
+        hood.closeSubpath()
+        ctx.addPath(hood)
+        ctx.clip()
+        if let g = CGGradient(colorsSpace: cs, colors: [dazedColor(0x6871B4), dazedColor(0x2F386D)] as CFArray, locations: [0, 1]) {
+            ctx.drawLinearGradient(g, start: CGPoint(x: -16.0, y: -35.0), end: CGPoint(x: 15.0, y: 42.0), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+        }
+        ctx.restoreGState()
+    }
+
+    private static func drawDazedFace(in ctx: CGContext, physics: CatPhysics, eyeTheme: EyeColorTheme, yawRad: CGFloat, pitchRad: CGFloat, scruffStartle: CGFloat, scruffWide: CGFloat) {
+        let cs = CGColorSpaceCreateDeviceRGB()
+        let face = projectHead3D(x: 0.0, y: 4.0, z: 22.0, yawRad: yawRad * 0.72, pitchRad: pitchRad * 0.78).pt
+        ctx.saveGState()
+        ctx.translateBy(x: face.x, y: face.y)
+        ctx.scaleBy(x: cos(yawRad), y: cos(pitchRad))
+
+        let opening = CGMutablePath()
+        opening.move(to: CGPoint(x: 0.0, y: -22.0))
+        opening.addCurve(to: CGPoint(x: 32.0, y: 8.0), control1: CGPoint(x: 17.0, y: -23.0), control2: CGPoint(x: 32.0, y: -9.0))
+        opening.addCurve(to: CGPoint(x: 0.0, y: 27.5), control1: CGPoint(x: 32.0, y: 22.0), control2: CGPoint(x: 17.0, y: 27.5))
+        opening.addCurve(to: CGPoint(x: -32.0, y: 8.0), control1: CGPoint(x: -17.0, y: 27.5), control2: CGPoint(x: -32.0, y: 22.0))
+        opening.addCurve(to: CGPoint(x: 0.0, y: -22.0), control1: CGPoint(x: -32.0, y: -9.0), control2: CGPoint(x: -17.0, y: -23.0))
+        opening.closeSubpath()
+
+        ctx.saveGState()
+        ctx.addPath(opening)
+        ctx.clip()
+        if let g = CGGradient(colorsSpace: cs, colors: [dazedColor(0xFFF4D4), dazedColor(0xDDBF91)] as CFArray, locations: [0, 1]) {
+            ctx.drawLinearGradient(g, start: CGPoint(x: -7.0, y: -23.0), end: CGPoint(x: 8.0, y: 29.0), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+        }
+        ctx.restoreGState()
+
+        ctx.setStrokeColor(dazedColor(0x34355D))
+        ctx.setLineWidth(1.9)
+        ctx.addPath(opening)
+        ctx.strokePath()
+
+        // Soft colorpoint muzzle
+        ctx.saveGState()
+        ctx.translateBy(x: 0.0, y: 11.0)
+        ctx.scaleBy(x: 1.0, y: 34.0 / 42.0)
+        if let g = CGGradient(colorsSpace: cs, colors: [
+            dazedColor(0x8D5B44, alpha: 220.0 / 255.0),
+            dazedColor(0x8D5B44, alpha: 155.0 / 255.0),
+            dazedColor(0x8D5B44, alpha: 5.0 / 255.0),
+            dazedColor(0x8D5B44, alpha: 0.0)
+        ] as CFArray, locations: [0.0, 0.62, 0.83, 1.0]) {
+            ctx.drawRadialGradient(g, startCenter: .zero, startRadius: 0, endCenter: .zero, endRadius: 21.0, options: [])
+        }
+        ctx.restoreGState()
+
+        ctx.setFillColor(dazedColor(0xCF8173, alpha: 94.0 / 255.0))
+        ctx.fillEllipse(in: CGRect(x: -23.0, y: 10.0, width: 9.0, height: 4.0))
+        ctx.fillEllipse(in: CGRect(x: 14.0, y: 10.0, width: 9.0, height: 4.0))
+
+        let ink = dazedColor(0x282333)
+        ctx.setStrokeColor(ink)
+        ctx.setLineWidth(1.7)
+        ctx.setLineCap(.round)
+        ctx.setLineJoin(.round)
+        ctx.move(to: CGPoint(x: -6.5, y: 12.0))
+        ctx.addCurve(to: CGPoint(x: 0.0, y: 13.4), control1: CGPoint(x: -5.9, y: 17.0), control2: CGPoint(x: -1.8, y: 17.5))
+        ctx.addCurve(to: CGPoint(x: 6.5, y: 12.0), control1: CGPoint(x: 1.8, y: 17.5), control2: CGPoint(x: 5.9, y: 17.0))
+        ctx.strokePath()
+
+        ctx.setFillColor(ink)
+        ctx.fillEllipse(in: CGRect(x: -1.9, y: 10.1, width: 3.8, height: 2.8))
+
+        let happy = physics.isHappyClosedEyes
+        let squint = physics.isBlissfulSquint
+        if happy || squint {
+            for x in [-11.8, 11.8] as [CGFloat] {
+                ctx.move(to: CGPoint(x: x - 7.2, y: 2.0))
+                ctx.addQuadCurve(to: CGPoint(x: x + 7.2, y: 2.0), control: CGPoint(x: x, y: happy ? 7.0 : 4.0))
+                ctx.strokePath()
+            }
+            ctx.restoreGState()
+            return
+        }
+
+        let open = 1.0 - max(0.0, min(1.0, max(physics.effectiveEyeClosure, scruffStartle * 0.44)))
+        if open <= 0.025 {
+            ctx.restoreGState()
+            return
+        }
+        let hunt = max(0.0, min(1.0, max(physics.huntIntensity.value, scruffWide * 0.94)))
+        let gaze = physics.eyeGaze.point
+        let gazeX = max(-1.0, min(1.0, gaze.x)) * (1.35 - hunt * 0.65)
+        let gazeY = max(-1.0, min(1.0, gaze.y)) * (1.1 - hunt * 0.55)
+        let radius = 8.5 + hunt * 1.0
+        let pupilRadius = 6.25 + hunt * 1.35
+        let irisCol = eyeTheme.primaryColor.blended(withFraction: 0.80, of: NSColor(calibratedRed: 1.0, green: 248.0/255.0, blue: 229.0/255.0, alpha: 1.0))?.cgColor ?? dazedColor(0xFFF8E5)
+
+        for x in [-11.8, 11.8] as [CGFloat] {
+            ctx.saveGState()
+            ctx.translateBy(x: x, y: 1.0)
+            ctx.scaleBy(x: 1.0, y: open)
+            ctx.setFillColor(ink)
+            ctx.fillEllipse(in: CGRect(x: -radius, y: -radius, width: radius * 2, height: radius * 2))
+            let ir = radius - 1.25
+            ctx.setFillColor(irisCol)
+            ctx.fillEllipse(in: CGRect(x: -ir, y: -ir, width: ir * 2, height: ir * 2))
+            ctx.setFillColor(dazedColor(0x191825))
+            ctx.fillEllipse(in: CGRect(x: gazeX - pupilRadius, y: gazeY - pupilRadius, width: pupilRadius * 2, height: pupilRadius * 2))
+            if hunt > 0.25 {
+                let shine = 1.1 + hunt * 0.6
+                ctx.setFillColor(dazedColor(0xFFF9EA))
+                ctx.fillEllipse(in: CGRect(x: gazeX - 3.4 - shine, y: gazeY - 4.2 - shine, width: shine * 2, height: shine * 2))
+            }
+            ctx.restoreGState()
+        }
+        ctx.restoreGState()
+    }
+
+    private static func drawDazedArm(in ctx: CGContext, arm: CGPath, left: [CGPoint], right: [CGPoint], paw: CGRect) {
+        ctx.saveGState()
+        ctx.setFillColor(dazedColor(0x465189))
+        ctx.addPath(arm)
+        ctx.fillPath()
+
+        let sleeveLength: CGFloat = 15.0
+        var distance: CGFloat = 0.0
+        for i in 1..<left.count {
+            let dx = (left[i].x + right[i].x - left[i - 1].x - right[i - 1].x) * 0.5
+            let dy = (left[i].y + right[i].y - left[i - 1].y - right[i - 1].y) * 0.5
+            let segment = hypot(dx, dy)
+            if distance + segment < sleeveLength && i < left.count - 1 {
+                distance += segment
+                continue
+            }
+            let t = max(0.0, min(1.0, (sleeveLength - distance) / max(segment, 0.001)))
+            func interp(_ a: CGPoint, _ b: CGPoint, _ f: CGFloat) -> CGPoint {
+                CGPoint(x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f)
+            }
+            func offsetAlong(_ pt: CGPoint, _ off: CGFloat) -> CGPoint {
+                let sc = off / max(segment, 0.001)
+                return CGPoint(x: pt.x + dx * sc, y: pt.y + dy * sc)
+            }
+            let leftCuff = interp(left[i - 1], left[i], t)
+            let rightCuff = interp(right[i - 1], right[i], t)
+            let leftLip = interp(rightCuff, leftCuff, 1.23)
+            let rightLip = interp(leftCuff, rightCuff, 1.23)
+            let leftFront = offsetAlong(leftLip, 4.0)
+            let rightFront = offsetAlong(rightLip, 4.0)
+
+            let flare = CGMutablePath()
+            flare.move(to: offsetAlong(leftCuff, -8.0))
+            flare.addLine(to: leftLip)
+            flare.addCurve(to: rightLip, control1: leftFront, control2: rightFront)
+            flare.addLine(to: offsetAlong(rightCuff, -8.0))
+            flare.closeSubpath()
+            ctx.setFillColor(dazedColor(0x465189))
+            ctx.addPath(flare)
+            ctx.fillPath()
+
+            let opening = CGMutablePath()
+            opening.move(to: leftLip)
+            opening.addCurve(to: rightLip, control1: leftFront, control2: rightFront)
+            opening.addCurve(to: leftLip, control1: offsetAlong(rightLip, -3.5), control2: offsetAlong(leftLip, -3.5))
+            opening.closeSubpath()
+            ctx.setFillColor(dazedColor(0x252D54))
+            ctx.addPath(opening)
+            ctx.fillPath()
+
+            let forearm = CGMutablePath()
+            forearm.move(to: leftCuff)
+            for k in i..<left.count { forearm.addLine(to: left[k]) }
+            for k in stride(from: right.count - 1, through: i, by: -1) { forearm.addLine(to: right[k]) }
+            forearm.addLine(to: rightCuff)
+            forearm.closeSubpath()
+            ctx.setFillColor(dazedColor(0xE3C99F))
+            ctx.addPath(forearm)
+            ctx.fillPath()
+
+            drawDazedPaw(in: ctx, rect: paw)
+
+            ctx.setStrokeColor(dazedColor(0x8790C8))
+            ctx.setLineWidth(1.25)
+            ctx.setLineCap(.round)
+            ctx.move(to: leftLip)
+            ctx.addCurve(to: rightLip, control1: leftFront, control2: rightFront)
+            ctx.strokePath()
+            break
+        }
+        ctx.restoreGState()
+    }
+
     private static func drawTail(in ctx: CGContext, seatX: CGFloat, seatY: CGFloat, physics: CatPhysics, skin: SkinSpec, outlineOnly: Bool = false) {
         let curve = tailCurve(seatX: seatX, seatY: seatY, physics: physics, skin: skin)
-        let width = build(skin).tailWidth * skin.shape.tailThickness
+        let width = (skin.renderStyle == .dazed) ? 13.0 : (build(skin).tailWidth * skin.shape.tailThickness)
         let lie = max(0, min(1, physics.lieIntensity.value))
         let lieS = lie * lie * (3.0 - 2.0 * lie)
 
@@ -1384,6 +1756,10 @@ enum CatRenderer {
         skin: SkinSpec,
         outlineOnly: Bool = false
     ) {
+        if skin.renderStyle == .dazed {
+            if !outlineOnly { drawDazedSilhouette(in: ctx, seatX: seatX, seatY: seatY, head: headCenter, physics: physics) }
+            return
+        }
         let bd = build(skin)
         let pal = skin.palette
         let yaw = physics.headYaw.value
@@ -1442,14 +1818,19 @@ enum CatRenderer {
         let lCheek = H(leftCheekX, cheekY)
 
         let cheekCtrlTopY: CGFloat = bd.cheekCtrlTopY
+        let nw = skin.shape.neckWidth
+        let neckCenter = cheekShift * 0.4
+        let rNeckX = neckCenter + (rightCheekX - neckPinchX - neckCenter) * nw
+        let lNeckX = neckCenter + (leftCheekX + neckPinchX - neckCenter) * nw
+        let neckWaistW = waistCtrlW * (1.0 + (nw - 1.0) * 0.32)
         let path = CGMutablePath()
         path.move(to: crown)
         path.addCurve(to: rCheek, control1: H(crownCtrlW + cheekShift * 0.3, crownBaseY + crownDrop), control2: H(rightCheekX + 1.5, cheekCtrlTopY))
-        path.addCurve(to: rHip,   control1: H(rightCheekX - neckPinchX, neckCtrlY), control2: B(waistCtrlW, waistCtrlY + breath * 0.5))
+        path.addCurve(to: rHip,   control1: H(rNeckX, neckCtrlY), control2: B(neckWaistW, waistCtrlY + breath * 0.5))
         path.addCurve(to: rBot,   control1: B(botOuterW, 5), control2: B(botInnerW, 12))
         path.addLine(to: lBot)
         path.addCurve(to: lHip,   control1: B(-botInnerW, 12), control2: B(-botOuterW, 5))
-        path.addCurve(to: lCheek, control1: B(-waistCtrlW, waistCtrlY + breath * 0.5), control2: H(leftCheekX + neckPinchX, neckCtrlY))
+        path.addCurve(to: lCheek, control1: B(-neckWaistW, waistCtrlY + breath * 0.5), control2: H(lNeckX, neckCtrlY))
         path.addCurve(to: crown,  control1: H(leftCheekX - 1.5, cheekCtrlTopY), control2: H(-crownCtrlW + cheekShift * 0.3, crownBaseY + crownDrop))
         path.closeSubpath()
 
@@ -1774,6 +2155,12 @@ enum CatRenderer {
         let yawRad = yaw * 0.50              // ~±28.5° authentic head turn
         let pitchRad = pitch * 0.36          // ~±20.5° authentic head nod
 
+        if skin.renderStyle == .dazed {
+            drawDazedFace(in: ctx, physics: physics, eyeTheme: eyeTheme, yawRad: yawRad, pitchRad: pitchRad, scruffStartle: scruffStartle, scruffWide: scruffWide)
+            ctx.restoreGState()
+            return
+        }
+
         // 1. 3D-Projected Eyes with authentic spherical foreshortening & parallax!
         drawEye3D(in: ctx, isLeft: true, yawRad: yawRad, pitchRad: pitchRad, physics: physics, eyeTheme: eyeTheme, skin: skin, scruffStartle: scruffStartle, scruffWide: scruffWide)
         drawEye3D(in: ctx, isLeft: false, yawRad: yawRad, pitchRad: pitchRad, physics: physics, eyeTheme: eyeTheme, skin: skin, scruffStartle: scruffStartle, scruffWide: scruffWide)
@@ -1961,6 +2348,10 @@ enum CatRenderer {
         skin: SkinSpec,
         outlineOnly: Bool = false
     ) {
+        if skin.renderStyle == .dazed {
+            if !outlineOnly { drawDazedEar(in: ctx, sign: isLeft ? -1.0 : 1.0, yawRad: yawRad, pitchRad: pitchRad, fold: fold, twitch: twitch) }
+            return
+        }
         let bd = build(skin)
         let sign: CGFloat = isLeft ? -1.0 : 1.0
         let foldAngle = sign * (bd.earFold + fold * 0.34) + twitch
@@ -1979,6 +2370,12 @@ enum CatRenderer {
             innerBase3D = CGPoint(x: around(innerBase3D.x, m.x, es), y: around(innerBase3D.y, m.y, es))
             outerBase3D = CGPoint(x: around(outerBase3D.x, m.x, es), y: around(outerBase3D.y, m.y, es))
             tip3D = CGPoint(x: around(tip3D.x, m.x, es), y: around(tip3D.y, m.y, es))
+        }
+        let ebw = skin.shape.earBaseWidth
+        if ebw != 1 {
+            let m = CGPoint(x: (innerBase3D.x + outerBase3D.x) * 0.5, y: (innerBase3D.y + outerBase3D.y) * 0.5)
+            innerBase3D = CGPoint(x: around(innerBase3D.x, m.x, ebw), y: around(innerBase3D.y, m.y, ebw))
+            outerBase3D = CGPoint(x: around(outerBase3D.x, m.x, ebw), y: around(outerBase3D.y, m.y, ebw))
         }
 
         // Soft plush rounded-tip feline ear
@@ -2429,7 +2826,8 @@ enum CatRenderer {
                 endWidth: bd.limbEndW,
                 outlineOnLeftSide: false,
                 outlineAlpha: 0.78,
-                skin: skin
+                skin: skin,
+                frontPaw: true
             )
         }
 
@@ -2452,13 +2850,22 @@ enum CatRenderer {
                 endWidth: bd.limbEndW,
                 outlineOnLeftSide: true,
                 outlineAlpha: 0.78,
-                skin: skin
+                skin: skin,
+                frontPaw: true
             )
         }
     }
 
     /// Signature tucked sitting front legs (black with mint lines OR colour-point cream-to-chocolate socks!)
     private static func drawIdleFrontLeg(in ctx: CGContext, top: CGPoint, bottom: CGPoint, isLeft: Bool, skin: SkinSpec) {
+        if skin.renderStyle == .dazed {
+            let sign: CGFloat = isLeft ? -1.0 : 1.0
+            let shoulder = CGPoint(x: top.x + sign * 4.0, y: top.y - 10.0)
+            let elbow = CGPoint(x: top.x + sign * 11.0, y: top.y + 1.0)
+            let paw = CGPoint(x: top.x + sign * 10.0, y: top.y + 15.0)
+            drawLimb(in: ctx, start: shoulder, control: elbow, end: paw, startWidth: 19.0, endWidth: 14.0, outlineOnLeftSide: !isLeft, outlineAlpha: 0.78, skin: skin, frontPaw: true)
+            return
+        }
         let pal = skin.palette
         let sign: CGFloat = isLeft ? -1.0 : 1.0
         ctx.saveGState()
@@ -2571,7 +2978,8 @@ enum CatRenderer {
         endWidth: CGFloat,
         outlineOnLeftSide: Bool,
         outlineAlpha: CGFloat,
-        skin: SkinSpec
+        skin: SkinSpec,
+        frontPaw: Bool = false
     ) {
         let pal = skin.palette
         let steps = 14
@@ -2604,6 +3012,21 @@ enum CatRenderer {
         let pawR = endWidth * 0.58
         let pawRect = CGRect(x: end.x - pawR, y: end.y - pawR * 0.85, width: pawR * 2, height: pawR * 1.7)
         let lineColor = pal.outline ?? pal.crease
+
+        if skin.renderStyle == .dazed {
+            let dazedPawRect = pawRect.insetBy(dx: -pawR * 0.28, dy: -pawR * 0.46)
+            if frontPaw {
+                drawDazedArm(in: ctx, arm: limbPath, left: leftEdge, right: rightEdge, paw: dazedPawRect)
+            } else {
+                ctx.saveGState()
+                ctx.setFillColor(dazedColor(0xE3C99F))
+                ctx.addPath(limbPath)
+                ctx.fillPath()
+                drawDazedPaw(in: ctx, rect: dazedPawRect)
+                ctx.restoreGState()
+            }
+            return
+        }
 
         ctx.saveGState()
         // Optional sticker-style crisp white outer rim on reaching arms & hind foot for ALL skins

@@ -1325,7 +1325,7 @@ enum SkinSpace: String { case head, skull, body, tail, leftEar, rightEar }
 enum SkinBuild: String { case standard, sleek }
 enum SkinHeadSurface: String { case dome, plane }
 enum SkinAnchorPoint: String { case headTop, face, neck, tailTip }
-enum SkinRenderStyle: String { case standard, douni }
+enum SkinRenderStyle: String { case standard, douni, dazed }
 enum SkinTypingStyle: String { case standard, douni }
 
 /// One pen-tool anchor; in/out are absolute handle positions in the same part space.
@@ -1349,8 +1349,8 @@ struct SkinMark {
 
 struct SkinShape {
     var build: SkinBuild = .standard
-    var bodyWidth: CGFloat = 1, headScale: CGFloat = 1, earSize: CGFloat = 1, earPointiness: CGFloat = 1
-    var tailLength: CGFloat = 1, tailThickness: CGFloat = 1, cheekFullness: CGFloat = 1, pawStagger: CGFloat = 1
+    var bodyWidth: CGFloat = 1, headScale: CGFloat = 1, earSize: CGFloat = 1, earBaseWidth: CGFloat = 1, earPointiness: CGFloat = 1
+    var tailLength: CGFloat = 1, tailThickness: CGFloat = 1, cheekFullness: CGFloat = 1, neckWidth: CGFloat = 1, pawStagger: CGFloat = 1
 }
 
 struct SkinDecoration {
@@ -1591,10 +1591,12 @@ struct SkinSpec {
             spec.shape.bodyWidth = try number(sh["bodyWidth"], "shape.bodyWidth", 0.85, 1.35, 1)
             spec.shape.headScale = try number(sh["headScale"], "shape.headScale", 0.90, 1.15, 1)
             spec.shape.earSize = try number(sh["earSize"], "shape.earSize", 0.80, 1.25, 1)
+            spec.shape.earBaseWidth = try number(sh["earBaseWidth"], "shape.earBaseWidth", 0.65, 1.40, 1)
             spec.shape.earPointiness = try number(sh["earPointiness"], "shape.earPointiness", 0.50, 1.50, 1)
             spec.shape.tailLength = try number(sh["tailLength"], "shape.tailLength", 0.70, 1.30, 1)
             spec.shape.tailThickness = try number(sh["tailThickness"], "shape.tailThickness", 0.70, 1.50, 1)
             spec.shape.cheekFullness = try number(sh["cheekFullness"], "shape.cheekFullness", 0.85, 1.25, 1)
+            spec.shape.neckWidth = try number(sh["neckWidth"], "shape.neckWidth", 0.65, 1.40, 1)
             spec.shape.pawStagger = try number(sh["pawStagger"], "shape.pawStagger", 0, 1, 1)
         }
         if let hs = root["headSurface"], !isNull(hs) {

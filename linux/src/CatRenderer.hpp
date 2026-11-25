@@ -281,6 +281,9 @@ public:
             drawEarsLayer(cr, headCenter, physics, skin, true);
             drawUnifiedSilhouette(cr, seatX, seatY, headCenter, breath, physics, skin, true);
         }
+        if (skin.renderStyle == SkinRenderStyle::Dazed) {
+            drawDazedSword(cr, seatX, seatY, physics);
+        }
         if (!tailInFront) drawTail(cr, seatX, seatY, physics, skin);
         drawEarsLayer(cr, headCenter, physics, skin);
         drawUnifiedSilhouette(cr, seatX, seatY, headCenter, breath, physics, skin);
@@ -1236,10 +1239,372 @@ private:
         return c;
     }
 
+    // MARK: - Monster Hunter Dazed Cat Special Renderer (SkinRenderStyle::Dazed)
+
+    static void dazedSetHex(cairo_t* cr, int hex, double a = 1.0) {
+        cairo_set_source_rgba(cr, ((hex >> 16) & 0xFF) / 255.0, ((hex >> 8) & 0xFF) / 255.0, (hex & 0xFF) / 255.0, a);
+    }
+
+    static void dazedAddStopHex(cairo_pattern_t* pat, double off, int hex, double a = 1.0) {
+        cairo_pattern_add_color_stop_rgba(pat, off, ((hex >> 16) & 0xFF) / 255.0, ((hex >> 8) & 0xFF) / 255.0, (hex & 0xFF) / 255.0, a);
+    }
+
+    static void drawDazedPaw(cairo_t* cr, double x, double y, double w, double h) {
+        cairo_save(cr);
+        cairo_save(cr);
+        cairo_translate(cr, x + w * 0.5, y + h * 0.5);
+        cairo_scale(cr, w * 0.5, h * 0.5);
+        cairo_new_path(cr);
+        cairo_arc(cr, 0.0, 0.0, 1.0, 0.0, 2.0 * PI);
+        cairo_restore(cr);
+        cairo_pattern_t* grad = cairo_pattern_create_linear(x, y, x, y + h);
+        dazedAddStopHex(grad, 0.0, 0xFFF1CD);
+        dazedAddStopHex(grad, 1.0, 0xCCAC7F);
+        cairo_set_source(cr, grad);
+        cairo_fill_preserve(cr);
+        cairo_pattern_destroy(grad);
+        dazedSetHex(cr, 0x7E634A, 170.0 / 255.0);
+        cairo_set_line_width(cr, 0.9);
+        cairo_stroke(cr);
+        cairo_restore(cr);
+    }
+
+    static void drawDazedSword(cairo_t* cr, float seatX, float seatY, const CatPhysics& physics) {
+        cairo_save(cr);
+        cairo_translate(cr, seatX, seatY + (1.0f - physics.bodySquash.value) * 36.0f);
+        cairo_rotate(cr, physics.bodyTilt.value);
+
+        cairo_new_path(cr);
+        cairo_move_to(cr, 38.0, -96.0);
+        cairo_curve_to(cr, 7.0, -61.0, -31.0, -33.0, -65.0, -38.0);
+        cairo_curve_to(cr, -62.0, -24.0, -51.0, -21.0, -37.0, -25.0);
+        cairo_curve_to(cr, -5.0, -33.0, 27.0, -60.0, 50.0, -84.0);
+        cairo_close_path(cr);
+        cairo_pattern_t* steel = cairo_pattern_create_linear(-46.0, -51.0, -29.0, -22.0);
+        dazedAddStopHex(steel, 0.0, 0x8395B0);
+        dazedAddStopHex(steel, 1.0, 0xDDE7F2);
+        cairo_set_source(cr, steel);
+        cairo_fill_preserve(cr);
+        cairo_pattern_destroy(steel);
+        dazedSetHex(cr, 0x232638);
+        cairo_set_line_width(cr, 3.6);
+        cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+        cairo_stroke(cr);
+
+        cairo_new_path(cr);
+        cairo_move_to(cr, -59.0, -33.5);
+        cairo_curve_to(cr, -34.0, -24.0, 12.0, -53.0, 43.0, -87.0);
+        dazedSetHex(cr, 0xF3F7FB);
+        cairo_set_line_width(cr, 2.1);
+        cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+        cairo_stroke(cr);
+
+        cairo_translate(cr, 44.0, -90.0);
+        cairo_rotate(cr, 44.0 * PI / 180.0);
+
+        roundedRect(cr, -7.5, -32.0, 15.0, 32.0, 3.6);
+        dazedSetHex(cr, 0x58617D);
+        cairo_fill_preserve(cr);
+        cairo_save(cr);
+        cairo_clip(cr);
+        dazedSetHex(cr, 0xB5BED0);
+        for (double y : {-27.0, -19.0, -11.0}) {
+            cairo_new_path(cr);
+            cairo_move_to(cr, -7.5, y - 2.0);
+            cairo_line_to(cr, 7.5, y + 1.0);
+            cairo_line_to(cr, 7.5, y + 4.3);
+            cairo_line_to(cr, -7.5, y + 1.3);
+            cairo_close_path(cr);
+            cairo_fill(cr);
+        }
+        cairo_restore(cr);
+        roundedRect(cr, -7.5, -32.0, 15.0, 32.0, 3.6);
+        dazedSetHex(cr, 0x232638);
+        cairo_set_line_width(cr, 3.6);
+        cairo_stroke(cr);
+
+        roundedRect(cr, -13.5, -3.8, 27.0, 7.6, 2.5);
+        dazedSetHex(cr, 0xE2C58B);
+        cairo_fill_preserve(cr);
+        dazedSetHex(cr, 0x232638);
+        cairo_set_line_width(cr, 3.6);
+        cairo_stroke(cr);
+        cairo_restore(cr);
+    }
+
+    static void drawDazedEar(cairo_t* cr, float sign, float yawRad, float pitchRad, float fold, float twitch) {
+        float foldAngle = sign * fold * 0.34f + twitch;
+        float tipDx = std::sin(foldAngle) * 37.0f;
+        float tipDy = (1.0f - std::cos(foldAngle)) * 37.0f;
+        auto proj = [&](float x, float y, float w) {
+            return projectHead3D(sign * x + tipDx * w, y + tipDy * w, -3.0f * w, yawRad, pitchRad);
+        };
+        Pt innerBase = proj(5.0f, -25.0f, 0.0f);
+        Pt tip = proj(40.0f, -63.0f, 1.0f);
+        Pt outerBase = proj(42.5f, -5.0f, 0.0f);
+        Pt c1 = proj(13.0f, -46.0f, 0.30f), c2 = proj(31.0f, -62.0f, 0.90f);
+        Pt c3 = proj(54.0f, -66.0f, 0.95f), c4 = proj(57.0f, -34.0f, 0.40f);
+
+        cairo_save(cr);
+        cairo_new_path(cr);
+        cairo_move_to(cr, innerBase.x, innerBase.y);
+        cairo_curve_to(cr, c1.x, c1.y, c2.x, c2.y, tip.x, tip.y);
+        cairo_curve_to(cr, c3.x, c3.y, c4.x, c4.y, outerBase.x, outerBase.y);
+        cairo_close_path(cr);
+        cairo_pattern_t* grad = cairo_pattern_create_linear(tip.x, tip.y, outerBase.x, outerBase.y);
+        dazedAddStopHex(grad, 0.0, 0x777FBD);
+        dazedAddStopHex(grad, 1.0, 0x4D5892);
+        cairo_set_source(cr, grad);
+        cairo_fill(cr);
+        cairo_pattern_destroy(grad);
+        cairo_restore(cr);
+    }
+
+    static void drawDazedSilhouette(cairo_t* cr, float seatX, float seatY, Pt head, const CatPhysics& physics) {
+        cairo_save(cr);
+        cairo_translate(cr, seatX, seatY);
+        cairo_rotate(cr, physics.bodyTilt.value);
+        float squash = physics.bodySquash.value;
+        cairo_scale(cr, 1.0f + (1.0f - squash) * 0.55f, squash);
+
+        drawDazedPaw(cr, -34.0, -2.0, 19.0, 18.0);
+        if (physics.hindFootActive.value < 0.35f) {
+            drawDazedPaw(cr, 15.0, -2.0, 19.0, 18.0);
+        }
+
+        cairo_new_path(cr);
+        cairo_move_to(cr, -42.0, -19.0);
+        cairo_curve_to(cr, -46.0, -5.0, -41.0, 11.5, 0.0, 11.5);
+        cairo_curve_to(cr, 41.0, 11.5, 46.0, -5.0, 42.0, -19.0);
+        cairo_close_path(cr);
+        cairo_pattern_t* bellyGrad = cairo_pattern_create_linear(0.0, -16.0, 0.0, 12.0);
+        dazedAddStopHex(bellyGrad, 0.0, 0xF4DFB8);
+        dazedAddStopHex(bellyGrad, 1.0, 0xC8A77A);
+        cairo_set_source(cr, bellyGrad);
+        cairo_fill(cr);
+        cairo_pattern_destroy(bellyGrad);
+
+        cairo_new_path(cr);
+        cairo_move_to(cr, -21.0, -65.0);
+        cairo_curve_to(cr, -34.0, -56.0, -44.0, -35.0, -44.0, -17.0);
+        cairo_curve_to(cr, -37.0, -2.0, 37.0, -2.0, 44.0, -17.0);
+        cairo_curve_to(cr, 44.0, -35.0, 34.0, -56.0, 21.0, -65.0);
+        cairo_close_path(cr);
+        cairo_pattern_t* clothGrad = cairo_pattern_create_linear(-16.0, -65.0, 12.0, -5.0);
+        dazedAddStopHex(clothGrad, 0.0, 0x555F9B);
+        dazedAddStopHex(clothGrad, 1.0, 0x252E58);
+        cairo_set_source(cr, clothGrad);
+        cairo_fill(cr);
+        cairo_pattern_destroy(clothGrad);
+
+        cairo_new_path(cr);
+        cairo_move_to(cr, -39.0, -15.0);
+        cairo_curve_to(cr, -28.0, -6.0, 28.0, -6.0, 39.0, -15.0);
+        dazedSetHex(cr, 0x7C86BC, 155.0 / 255.0);
+        cairo_set_line_width(cr, 1.1);
+        cairo_stroke(cr);
+        cairo_restore(cr);
+
+        cairo_save(cr);
+        cairo_translate(cr, head.x, head.y);
+        cairo_rotate(cr, physics.headTilt.value);
+        cairo_new_path(cr);
+        cairo_move_to(cr, 0.0, -33.0);
+        cairo_curve_to(cr, 28.0, -35.0, 48.0, -16.0, 48.0, 9.0);
+        cairo_curve_to(cr, 48.0, 32.0, 25.0, 41.0, 0.0, 41.0);
+        cairo_curve_to(cr, -25.0, 41.0, -48.0, 32.0, -48.0, 9.0);
+        cairo_curve_to(cr, -48.0, -16.0, -28.0, -35.0, 0.0, -33.0);
+        cairo_close_path(cr);
+        cairo_pattern_t* hoodGrad = cairo_pattern_create_linear(-16.0, -35.0, 15.0, 42.0);
+        dazedAddStopHex(hoodGrad, 0.0, 0x6871B4);
+        dazedAddStopHex(hoodGrad, 1.0, 0x2F386D);
+        cairo_set_source(cr, hoodGrad);
+        cairo_fill(cr);
+        cairo_pattern_destroy(hoodGrad);
+        cairo_restore(cr);
+    }
+
+    static void drawDazedFace(cairo_t* cr, const CatPhysics& physics, EyeColorTheme eyeTheme, float yawRad, float pitchRad,
+                              double scruffStartle, double scruffWide) {
+        Pt face = projectHead3D(0.0f, 4.0f, 22.0f, yawRad * 0.72f, pitchRad * 0.78f);
+        cairo_save(cr);
+        cairo_translate(cr, face.x, face.y);
+        cairo_scale(cr, std::cos(yawRad), std::cos(pitchRad));
+
+        cairo_new_path(cr);
+        cairo_move_to(cr, 0.0, -22.0);
+        cairo_curve_to(cr, 17.0, -23.0, 32.0, -9.0, 32.0, 8.0);
+        cairo_curve_to(cr, 32.0, 22.0, 17.0, 27.5, 0.0, 27.5);
+        cairo_curve_to(cr, -17.0, 27.5, -32.0, 22.0, -32.0, 8.0);
+        cairo_curve_to(cr, -32.0, -9.0, -17.0, -23.0, 0.0, -22.0);
+        cairo_close_path(cr);
+        cairo_pattern_t* furGrad = cairo_pattern_create_linear(-7.0, -23.0, 8.0, 29.0);
+        dazedAddStopHex(furGrad, 0.0, 0xFFF4D4);
+        dazedAddStopHex(furGrad, 1.0, 0xDDBF91);
+        cairo_set_source(cr, furGrad);
+        cairo_fill_preserve(cr);
+        cairo_pattern_destroy(furGrad);
+        dazedSetHex(cr, 0x34355D);
+        cairo_set_line_width(cr, 1.9);
+        cairo_stroke(cr);
+
+        cairo_save(cr);
+        cairo_translate(cr, 0.0, 11.0);
+        cairo_scale(cr, 1.0, 34.0 / 42.0);
+        cairo_pattern_t* ptGrad = cairo_pattern_create_radial(0, 0, 0, 0, 0, 21.0);
+        dazedAddStopHex(ptGrad, 0.0, 0x8D5B44, 220.0 / 255.0);
+        dazedAddStopHex(ptGrad, 0.62, 0x8D5B44, 155.0 / 255.0);
+        dazedAddStopHex(ptGrad, 0.83, 0x8D5B44, 5.0 / 255.0);
+        dazedAddStopHex(ptGrad, 1.0, 0x8D5B44, 0.0);
+        cairo_set_source(cr, ptGrad);
+        cairo_new_path(cr);
+        cairo_arc(cr, 0, 0, 21.0, 0, 2.0 * PI);
+        cairo_fill(cr);
+        cairo_pattern_destroy(ptGrad);
+        cairo_restore(cr);
+
+        dazedSetHex(cr, 0xCF8173, 94.0 / 255.0);
+        fillEllipse(cr, -18.5, 12.0, 4.5, 2.0);
+        fillEllipse(cr, 18.5, 12.0, 4.5, 2.0);
+
+        dazedSetHex(cr, 0x282333);
+        cairo_set_line_width(cr, 1.7);
+        cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+        cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+        cairo_new_path(cr);
+        cairo_move_to(cr, -6.5, 12.0);
+        cairo_curve_to(cr, -5.9, 17.0, -1.8, 17.5, 0.0, 13.4);
+        cairo_curve_to(cr, 1.8, 17.5, 5.9, 17.0, 6.5, 12.0);
+        cairo_stroke(cr);
+
+        fillEllipse(cr, 0.0, 11.5, 1.9, 1.4);
+
+        bool happy = physics.isHappyClosedEyes();
+        bool squint = physics.isBlissfulSquint();
+        if (happy || squint) {
+            for (double x : {-11.8, 11.8}) {
+                cairo_new_path(cr);
+                cairo_move_to(cr, x - 7.2, 2.0);
+                quadCurveTo(cr, x - 7.2, 2.0, x, happy ? 7.0 : 4.0, x + 7.2, 2.0);
+                cairo_stroke(cr);
+            }
+            cairo_restore(cr);
+            return;
+        }
+
+        double open = 1.0 - std::clamp(std::max((double)physics.effectiveEyeClosure(), scruffStartle * 0.44), 0.0, 1.0);
+        if (open <= 0.025) {
+            cairo_restore(cr);
+            return;
+        }
+        double hunt = std::clamp(std::max((double)physics.huntIntensity.value, scruffWide * 0.94), 0.0, 1.0);
+        Pt gaze = physics.eyeGaze.point();
+        double gazeX = std::clamp((double)gaze.x, -1.0, 1.0) * (1.35 - hunt * 0.65);
+        double gazeY = std::clamp((double)gaze.y, -1.0, 1.0) * (1.1 - hunt * 0.55);
+        double radius = 8.5 + hunt * 1.0;
+        double pupilRadius = 6.25 + hunt * 1.35;
+        RGBA eCol = eyePrimary(eyeTheme);
+        double ir = 1.0 * 0.8 + eCol.r * 0.2;
+        double ig = (248.0 / 255.0) * 0.8 + eCol.g * 0.2;
+        double ib = (229.0 / 255.0) * 0.8 + eCol.b * 0.2;
+
+        for (double x : {-11.8, 11.8}) {
+            cairo_save(cr);
+            cairo_translate(cr, x, 1.0);
+            cairo_scale(cr, 1.0, open);
+            dazedSetHex(cr, 0x282333);
+            cairo_new_path(cr); cairo_arc(cr, 0, 0, radius, 0, 2.0 * PI); cairo_fill(cr);
+            cairo_set_source_rgb(cr, ir, ig, ib);
+            cairo_new_path(cr); cairo_arc(cr, 0, 0, radius - 1.25, 0, 2.0 * PI); cairo_fill(cr);
+            dazedSetHex(cr, 0x191825);
+            cairo_new_path(cr); cairo_arc(cr, gazeX, gazeY, pupilRadius, 0, 2.0 * PI); cairo_fill(cr);
+            if (hunt > 0.25) {
+                double shine = 1.1 + hunt * 0.6;
+                dazedSetHex(cr, 0xFFF9EA);
+                cairo_new_path(cr); cairo_arc(cr, gazeX - 3.4, gazeY - 4.2, shine, 0, 2.0 * PI); cairo_fill(cr);
+            }
+            cairo_restore(cr);
+        }
+        cairo_restore(cr);
+    }
+
+    template <typename TraceFn>
+    static void drawDazedArm(cairo_t* cr, TraceFn traceLimb, const std::vector<Pt>& left, const std::vector<Pt>& right,
+                             double px, double py, double pw, double ph) {
+        cairo_save(cr);
+        traceLimb();
+        dazedSetHex(cr, 0x465189);
+        cairo_fill(cr);
+
+        constexpr float sleeveLength = 15.0f;
+        float distance = 0.0f;
+        for (size_t i = 1; i < left.size(); ++i) {
+            float dx = (left[i].x + right[i].x - left[i - 1].x - right[i - 1].x) * 0.5f;
+            float dy = (left[i].y + right[i].y - left[i - 1].y - right[i - 1].y) * 0.5f;
+            float segment = std::hypot(dx, dy);
+            if (distance + segment < sleeveLength && i < left.size() - 1) {
+                distance += segment;
+                continue;
+            }
+            float t = std::clamp((sleeveLength - distance) / std::max(segment, 0.001f), 0.0f, 1.0f);
+            auto interp = [](Pt a, Pt b, float f) -> Pt { return { a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f }; };
+            auto offsetAlong = [dx, dy, segment](Pt p, float off) -> Pt {
+                float sc = off / std::max(segment, 0.001f);
+                return { p.x + dx * sc, p.y + dy * sc };
+            };
+            Pt leftCuff = interp(left[i - 1], left[i], t);
+            Pt rightCuff = interp(right[i - 1], right[i], t);
+            Pt leftLip = interp(rightCuff, leftCuff, 1.23f);
+            Pt rightLip = interp(leftCuff, rightCuff, 1.23f);
+            Pt leftFront = offsetAlong(leftLip, 4.0f);
+            Pt rightFront = offsetAlong(rightLip, 4.0f);
+
+            Pt lb = offsetAlong(leftCuff, -8.0f), rb = offsetAlong(rightCuff, -8.0f);
+            cairo_new_path(cr);
+            cairo_move_to(cr, lb.x, lb.y);
+            cairo_line_to(cr, leftLip.x, leftLip.y);
+            cairo_curve_to(cr, leftFront.x, leftFront.y, rightFront.x, rightFront.y, rightLip.x, rightLip.y);
+            cairo_line_to(cr, rb.x, rb.y);
+            cairo_close_path(cr);
+            dazedSetHex(cr, 0x465189);
+            cairo_fill(cr);
+
+            Pt rIn = offsetAlong(rightLip, -3.5f), lIn = offsetAlong(leftLip, -3.5f);
+            cairo_new_path(cr);
+            cairo_move_to(cr, leftLip.x, leftLip.y);
+            cairo_curve_to(cr, leftFront.x, leftFront.y, rightFront.x, rightFront.y, rightLip.x, rightLip.y);
+            cairo_curve_to(cr, rIn.x, rIn.y, lIn.x, lIn.y, leftLip.x, leftLip.y);
+            cairo_close_path(cr);
+            dazedSetHex(cr, 0x252D54);
+            cairo_fill(cr);
+
+            cairo_new_path(cr);
+            cairo_move_to(cr, leftCuff.x, leftCuff.y);
+            for (size_t k = i; k < left.size(); ++k) cairo_line_to(cr, left[k].x, left[k].y);
+            for (size_t k = right.size(); k > i; --k) cairo_line_to(cr, right[k - 1].x, right[k - 1].y);
+            cairo_line_to(cr, rightCuff.x, rightCuff.y);
+            cairo_close_path(cr);
+            dazedSetHex(cr, 0xE3C99F);
+            cairo_fill(cr);
+
+            drawDazedPaw(cr, px, py, pw, ph);
+
+            cairo_new_path(cr);
+            cairo_move_to(cr, leftLip.x, leftLip.y);
+            cairo_curve_to(cr, leftFront.x, leftFront.y, rightFront.x, rightFront.y, rightLip.x, rightLip.y);
+            dazedSetHex(cr, 0x8790C8);
+            cairo_set_line_width(cr, 1.25);
+            cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+            cairo_stroke(cr);
+            break;
+        }
+        cairo_restore(cr);
+    }
+
     static void drawTail(cairo_t* cr, float seatX, float seatY, const CatPhysics& physics, const SkinSpec& skin, bool outlineOnly = false) {
         TailCurve c = tailCurve(seatX, seatY, physics, skin);
         bool art = !outlineOnly && (skin.hasPartArt(SkinSpace::Tail) || skin.palette.tailTip.set);
-        double width = buildOf(skin).tailWidth * skin.shape.tailThickness;
+        double width = (skin.renderStyle == SkinRenderStyle::Dazed) ? 13.0 : (buildOf(skin).tailWidth * skin.shape.tailThickness);
         double lie = std::clamp(physics.lieIntensity.value, 0.0f, 1.0f);
         double lieS = lie * lie * (3.0 - 2.0 * lie);
 
@@ -1306,6 +1671,10 @@ private:
     }
 
     static void drawEar3D(cairo_t* cr, bool isLeft, float yawRad, float pitchRad, float fold, float twitch, const SkinSpec& skin, bool outlineOnly = false) {
+        if (skin.renderStyle == SkinRenderStyle::Dazed) {
+            if (!outlineOnly) drawDazedEar(cr, isLeft ? -1.0f : 1.0f, yawRad, pitchRad, fold, twitch);
+            return;
+        }
         const Build& b = buildOf(skin);
         float sign = isLeft ? -1.0f : 1.0f;
         float foldAngle = sign * (b.earFold + fold * 0.34f) + twitch;
@@ -1322,6 +1691,12 @@ private:
             inB = { around(inB.x, m.x, es), around(inB.y, m.y, es) };
             outB = { around(outB.x, m.x, es), around(outB.y, m.y, es) };
             tip = { around(tip.x, m.x, es), around(tip.y, m.y, es) };
+        }
+        float ebw = skin.shape.earBaseWidth;
+        if (ebw != 1.0f) {
+            Pt m = { (inB.x + outB.x) * 0.5f, (inB.y + outB.y) * 0.5f };
+            inB = { around(inB.x, m.x, ebw), around(inB.y, m.y, ebw) };
+            outB = { around(outB.x, m.x, ebw), around(outB.y, m.y, ebw) };
         }
         float ep = skin.shape.earPointiness;
         float tipSpread = b.earTipSpread / ep;
@@ -1381,6 +1756,10 @@ private:
     // MARK: - Unified C1-Continuous Cat Silhouette (+ regions, colour-point mask, marks)
 
     static void drawUnifiedSilhouette(cairo_t* cr, float seatX, float seatY, Pt headCenter, float breath, const CatPhysics& physics, const SkinSpec& skin, bool outlineOnly = false) {
+        if (skin.renderStyle == SkinRenderStyle::Dazed) {
+            if (!outlineOnly) drawDazedSilhouette(cr, seatX, seatY, headCenter, physics);
+            return;
+        }
         const Build& b = buildOf(skin);
         const SkinPalette& pal = skin.palette;
         float yaw = physics.headYaw.value;
@@ -1431,20 +1810,26 @@ private:
         Pt lHip   = B(-hipHalfW, -14.0f);
         Pt lCheek = H(lCX, cheekY);
 
+        float nw = skin.shape.neckWidth;
+        float neckCenter = cheekShift * 0.4f;
+        float rNeckX = neckCenter + (rCX - neckPinchX - neckCenter) * nw;
+        float lNeckX = neckCenter + (lCX + neckPinchX - neckCenter) * nw;
+        float neckWaistW = waistCtrlW * (1.0f + (nw - 1.0f) * 0.32f);
+
         auto buildPath = [&]() {
             Pt c1, c2;
             cairo_new_path(cr);
             cairo_move_to(cr, crown.x, crown.y);
             c1 = H(crownCtrlW + cheekShift * 0.3f, crownBaseY + crownDrop); c2 = H(rCX + 1.5f, cheekCtrlTopY);
             cairo_curve_to(cr, c1.x, c1.y, c2.x, c2.y, rCheek.x, rCheek.y);
-            c1 = H(rCX - neckPinchX, neckCtrlY); c2 = B(waistCtrlW, waistCtrlY + breath * 0.5f);
+            c1 = H(rNeckX, neckCtrlY); c2 = B(neckWaistW, waistCtrlY + breath * 0.5f);
             cairo_curve_to(cr, c1.x, c1.y, c2.x, c2.y, rHip.x, rHip.y);
             c1 = B(botOuterW, 5.0f); c2 = B(botInnerW, 12.0f);
             cairo_curve_to(cr, c1.x, c1.y, c2.x, c2.y, rBot.x, rBot.y);
             cairo_line_to(cr, lBot.x, lBot.y);
             c1 = B(-botInnerW, 12.0f); c2 = B(-botOuterW, 5.0f);
             cairo_curve_to(cr, c1.x, c1.y, c2.x, c2.y, lHip.x, lHip.y);
-            c1 = B(-waistCtrlW, waistCtrlY + breath * 0.5f); c2 = H(lCX + neckPinchX, neckCtrlY);
+            c1 = B(-neckWaistW, waistCtrlY + breath * 0.5f); c2 = H(lNeckX, neckCtrlY);
             cairo_curve_to(cr, c1.x, c1.y, c2.x, c2.y, lCheek.x, lCheek.y);
             c1 = H(lCX - 1.5f, cheekCtrlTopY); c2 = H(-crownCtrlW + cheekShift * 0.3f, crownBaseY + crownDrop);
             cairo_curve_to(cr, c1.x, c1.y, c2.x, c2.y, crown.x, crown.y);
@@ -1661,6 +2046,12 @@ private:
 
         float yawRad = physics.headYaw.value * 0.50f;
         float pitchRad = physics.headPitch.value * 0.36f;
+
+        if (skin.renderStyle == SkinRenderStyle::Dazed) {
+            drawDazedFace(cr, physics, eyeTheme, yawRad, pitchRad, scruffStartle, scruffWide);
+            cairo_restore(cr);
+            return;
+        }
 
         drawEye3D(cr, true, yawRad, pitchRad, physics, eyeTheme, skin, scruffStartle, scruffWide);
         drawEye3D(cr, false, yawRad, pitchRad, physics, eyeTheme, skin, scruffStartle, scruffWide);
@@ -2150,18 +2541,26 @@ private:
             if (lieS < 0.78f) drawIdleFrontLeg(cr, { seatX - idleTopX, idleTopY }, { seatX - idleBotX, idleBotY }, true, skin);
         } else {
             Pt mid = { (lSh.x + lPos.x) * 0.5f - (physics.leftPawOnMouse ? 8.0f : 4.0f), (lSh.y + lPos.y) * 0.5f - 6.0f };
-            drawLimb(cr, lSh, mid, lPos, limbStartW, limbEndW, false, 0.78f, skin);
+            drawLimb(cr, lSh, mid, lPos, limbStartW, limbEndW, false, 0.78f, skin, true);
         }
 
         if (rDist < 6.0f && !physics.rightPawTyping) {
             if (lieS < 0.78f) drawIdleFrontLeg(cr, { seatX + idleTopX, idleTopY }, { seatX + idleBotX, idleBotY }, false, skin);
         } else {
             Pt mid = { (rSh.x + rPos.x) * 0.5f + 4.0f, (rSh.y + rPos.y) * 0.5f - 6.0f };
-            drawLimb(cr, rSh, mid, rPos, limbStartW, limbEndW, true, 0.78f, skin);
+            drawLimb(cr, rSh, mid, rPos, limbStartW, limbEndW, true, 0.78f, skin, true);
         }
     }
 
     static void drawIdleFrontLeg(cairo_t* cr, Pt top, Pt bottom, bool isLeft, const SkinSpec& skin) {
+        if (skin.renderStyle == SkinRenderStyle::Dazed) {
+            float sign = isLeft ? -1.0f : 1.0f;
+            Pt shoulder = { top.x + sign * 4.0f, top.y - 10.0f };
+            Pt elbow = { top.x + sign * 11.0f, top.y + 1.0f };
+            Pt paw = { top.x + sign * 10.0f, top.y + 15.0f };
+            drawLimb(cr, shoulder, elbow, paw, 19.0f, 14.0f, !isLeft, 0.78f, skin, true);
+            return;
+        }
         const SkinPalette& pal = skin.palette;
         float sign = isLeft ? -1.0f : 1.0f;
         if (skin.colorpoint()) {
@@ -2222,7 +2621,7 @@ private:
         cairo_stroke(cr);
     }
 
-    static void drawLimb(cairo_t* cr, Pt start, Pt ctrl, Pt end, float startW, float endW, bool outlineOnLeft, float outlineAlpha, const SkinSpec& skin) {
+    static void drawLimb(cairo_t* cr, Pt start, Pt ctrl, Pt end, float startW, float endW, bool outlineOnLeft, float outlineAlpha, const SkinSpec& skin, bool frontPaw = false) {
         const SkinPalette& pal = skin.palette;
         constexpr int steps = 14;
         std::vector<Pt> leftEdge, rightEdge;
@@ -2253,6 +2652,21 @@ private:
         };
 
         double pawR = endW * 0.58;
+        if (skin.renderStyle == SkinRenderStyle::Dazed) {
+            double px = end.x - pawR * 1.28, py = end.y - pawR * (0.85 + 0.46);
+            double pw = pawR * 2.56, ph = pawR * (1.70 + 0.92);
+            if (frontPaw) {
+                drawDazedArm(cr, traceLimb, leftEdge, rightEdge, px, py, pw, ph);
+            } else {
+                cairo_save(cr);
+                traceLimb();
+                dazedSetHex(cr, 0xE3C99F);
+                cairo_fill(cr);
+                drawDazedPaw(cr, px, py, pw, ph);
+                cairo_restore(cr);
+            }
+            return;
+        }
         if (whiteOutlineEnabled()) {
             setCol(cr, blackOutline);
             cairo_set_line_width(cr, BlackOutlineW * 2.0);
