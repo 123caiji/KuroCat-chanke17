@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://chanke17.github.io/KuroCat/sitemap.xml
+Sitemap: https://kurocat.cc/sitemap.xml

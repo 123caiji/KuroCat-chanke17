@@ -3,9 +3,9 @@
 > KuroCat is a free, MIT open source, native cross platform desktop cat pet (Bongo Cat alternative) for macOS, Windows, Linux, UnionTech UOS, and Kylin. It reacts in real time to keyboard typing, gaming, mouse movement, and graphics tablet stylus strokes with zero keystroke logging or telemetry.
 
 ## Official Links
-- Official Homepage: https://chanke17.github.io/KuroCat/
+- Official Homepage: https://kurocat.cc/
 - Fast Direct Download Mirror (China): https://kurocat-download.app.workbuddy.host/?sharecode=JVAABIVZ7L
-- Online Skin Workshop & Community Plaza: https://chanke17.github.io/KuroCat-Workshop/
+- Online Skin Workshop & Community Plaza: https://workshop.kurocat.cc/
 - GitHub Repository: https://github.com/chanke17/KuroCat
 - GitHub Releases: https://github.com/chanke17/KuroCat/releases
 - `.kurocat` Skin Format Spec: https://github.com/chanke17/KuroCat/blob/main/docs/skin-format.md
