@@ -104,6 +104,10 @@ final class CatSettings {
     var enableAnger: Bool {
         didSet { UserDefaults.standard.set(enableAnger, forKey: "KuroCat.EnableAnger") }
     }
+    /// Scruff-lifted drag animation toggle (optional in Settings; when off, dragging keeps seated pose)
+    var enableDragAnimation: Bool {
+        didSet { UserDefaults.standard.set(enableDragAnimation, forKey: "KuroCat.EnableDragAnimation") }
+    }
     /// "zh" or "en"
     var language: String {
         didSet { UserDefaults.standard.set(language, forKey: "KuroCat.Language") }
@@ -165,6 +169,7 @@ final class CatSettings {
         rotationDeg = CGFloat(d.object(forKey: "KuroCat.RotationDeg") as? Double ?? 0.0)
         whiteOutline = d.object(forKey: "KuroCat.WhiteOutline") as? Bool ?? true
         enableAnger = d.object(forKey: "KuroCat.EnableAnger") as? Bool ?? true
+        enableDragAnimation = d.object(forKey: "KuroCat.EnableDragAnimation") as? Bool ?? true
         language = d.string(forKey: "KuroCat.Language") ?? "zh"
         petInteraction = d.object(forKey: "KuroCat.PetInteraction") as? Bool ?? true
         fullClickThrough = d.object(forKey: "KuroCat.FullClickThrough") as? Bool ?? false
@@ -315,6 +320,9 @@ final class CatPhysics {
     private var scruffDragAccumY: CGFloat = 0
     private var fastMouseDuration: CGFloat = 0
     private var dizzyTimer: CGFloat = 0
+    private var fastTypeAccum: CGFloat = 0
+    private var angerBurstTimer: CGFloat = 0
+    private var angerCooldown: CGFloat = 0
     var mouseOffset = Spring2D(.zero)
     var mousePressLeft = Spring1D(0)
     var mousePressRight = Spring1D(0)
@@ -541,7 +549,7 @@ final class CatPhysics {
             }
             pupilScale.target = 1.12
             earTwitch.velocity -= 2.2
-            if CatSettings.shared.showKeyBadges {
+            if CatSettings.shared.showMouseBadges {
                 let en = CatSettings.shared.isEnglish
                 let label = button == 0 ? (en ? "LMB" : "左键") : (button == 1 ? (en ? "RMB" : "右键") : (en ? "MMB" : "中键"))
                 let pt = CGPoint(
@@ -556,11 +564,12 @@ final class CatPhysics {
         }
     }
 
-    /// Called by OverlayWindow when the user drags the cat window (triggers scruff-pickup posture!).
+    /// Called by OverlayWindow when the user drags the cat window (triggers scruff-pickup posture when enabled!).
     func setDragging(_ dragging: Bool, dragDx: CGFloat = 0, dragDy: CGFloat = 0) {
+        let effectiveDragging = dragging && CatSettings.shared.enableDragAnimation
         let wasDragging = isScruffDragging
-        isScruffDragging = dragging
-        if dragging {
+        isScruffDragging = effectiveDragging
+        if effectiveDragging {
             if !wasDragging {
                 scruffHoldTime = 0
                 scruffDropTimer = 0
@@ -579,10 +588,10 @@ final class CatPhysics {
             scruffDragAccumY = 0
             if wasDragging {
                 scruffDropTimer = 0.16
+                // Cute soft squash bounce when set back down (Video 1 drop settle!)
+                bodySquash.velocity -= 2.4
+                headOffsetY.velocity += 78
             }
-            // Cute soft squash bounce when set back down (Video 1 drop settle!)
-            bodySquash.velocity -= 2.4
-            headOffsetY.velocity += 78
         }
     }
 
@@ -837,7 +846,10 @@ final class CatPhysics {
         dizzyIntensity.step(dt: dt, stiffness: 75, damping: 14)
         let dizzy = max(0, min(1, dizzyIntensity.value))
 
-        // 2c. Scruff-drag pickup, idle lie-on-keyboard, and fast-typing anger
+        // 2c. Scruff-drag pickup, idle lie-on-keyboard, and episodic low-frequency fast-typing anger
+        if !CatSettings.shared.enableDragAnimation && isScruffDragging {
+            isScruffDragging = false
+        }
         if isScruffDragging {
             scruffHoldTime += dt
             scruffDropTimer = 0
@@ -871,9 +883,35 @@ final class CatPhysics {
         lieIntensity.step(dt: dt, stiffness: 55, damping: 14)
         let lie = max(0, min(1, lieIntensity.value))
 
+        // Low-frequency episodic anger: ~3.2s of brisk typing (>= 260 KPM) triggers a brief ~4.2s grumpy burst,
+        // followed by a ~28s cooldown so fast typists get occasional cute anger without staying angry non-stop!
         let kpm = CGFloat(engine.currentKPM)
-        angerIntensity.target = (CatSettings.shared.enableAnger && !isScruffDragging && dizzyTimer <= 0 && kpm >= 240)
-            ? min(1.0, (kpm - 240.0) / 140.0) : 0.0
+        if !CatSettings.shared.enableAnger || isScruffDragging || dizzyTimer > 0 {
+            fastTypeAccum = 0
+            angerBurstTimer = 0
+            angerCooldown = max(0, angerCooldown - dt)
+            angerIntensity.target = 0.0
+        } else if angerBurstTimer > 0 {
+            let sootheMul: CGFloat = (petHeadIntensity > 0.25 || petBodyIntensity > 0.25 || kpm < 80) ? 2.6 : 1.0
+            angerBurstTimer = max(0, angerBurstTimer - dt * sootheMul)
+            angerIntensity.target = min(1.0, angerBurstTimer / 0.7)
+        } else {
+            if angerCooldown > 0 {
+                angerCooldown = max(0, angerCooldown - dt)
+                fastTypeAccum = max(0, fastTypeAccum - dt * 1.2)
+            } else if kpm >= 260 {
+                let speedFactor = min(1.8, 0.75 + (kpm - 260.0) / 220.0)
+                fastTypeAccum += dt * speedFactor
+                if fastTypeAccum >= 3.2 {
+                    angerBurstTimer = 4.2
+                    angerCooldown = 28.0 + CGFloat(Int(time * 13) % 9) - 4.0 // 24..32s cooldown
+                    fastTypeAccum = 0
+                }
+            } else {
+                fastTypeAccum = max(0, fastTypeAccum - dt * 0.9)
+            }
+            angerIntensity.target = 0.0
+        }
         angerIntensity.step(dt: dt, stiffness: 70, damping: 14)
         let anger = max(0, min(1, angerIntensity.value))
 
@@ -1108,7 +1146,11 @@ final class CatPhysics {
         }
 
         // Held physical keys determine the mode; repeats and mouse buttons do not count.
-        tailTyping.target = (CatSettings.shared.tailEasterEgg && activeKeys.count == 4) ? 1 : 0
+        // When both foot & tail are enabled: 3rd key -> hind foot, 4th key -> tail.
+        // When tail-only mode is selected (!footEasterEgg && tailEasterEgg): 3+ keys (or 2+ keys while mouse is active) -> tail!
+        let tailOnlyTrigger = !CatSettings.shared.footEasterEgg && (orderedKeys.count >= 3 || (mouseActivelyUsed && leftKey == nil && rightCandidates.count >= 2))
+        let tailActiveNow = CatSettings.shared.tailEasterEgg && (activeKeys.count >= 4 || tailOnlyTrigger)
+        tailTyping.target = tailActiveNow ? 1 : 0
         tailTyping.step(dt: dt, stiffness: 180, damping: 24)
         // Marquee chase across the keyboard deck: steady sweep, faster while many keys are held.
         if CatSettings.shared.keyboardMarquee {
@@ -1321,7 +1363,7 @@ struct SkinColor: Equatable {
 }
 
 /// Part coordinate spaces (see docs/skin-format.md for the diagram).
-enum SkinSpace: String { case head, skull, body, tail, leftEar, rightEar }
+enum SkinSpace: String { case head, skull, body, tail, leftEar, rightEar, leftArm, rightArm }
 enum SkinBuild: String { case standard, sleek }
 enum SkinHeadSurface: String { case dome, plane }
 enum SkinAnchorPoint: String { case headTop, face, neck, tailTip }
@@ -1532,9 +1574,9 @@ struct SkinSpec {
             return .rgba(CGFloat(vals[0]) / 255, CGFloat(vals[1]) / 255, CGFloat(vals[2]) / 255, CGFloat(vals[3]) / 255)
         }
         func space(_ v: Any?, _ field: String) throws -> SkinSpace {
-            guard let s = v as? String else { throw fail("\(field) 缺失：必须是 head / skull / body / tail / leftEar / rightEar 之一") }
+            guard let s = v as? String else { throw fail("\(field) 缺失：必须是 head / skull / body / tail / leftEar / rightEar / leftArm / rightArm 之一") }
             guard let sp = SkinSpace(rawValue: s) else {
-                throw fail("\(field) 必须是 head / skull / body / tail / leftEar / rightEar 之一，现在是 \"\(String(s.prefix(24)))\"")
+                throw fail("\(field) 必须是 head / skull / body / tail / leftEar / rightEar / leftArm / rightArm 之一，现在是 \"\(String(s.prefix(24)))\"")
             }
             return sp
         }

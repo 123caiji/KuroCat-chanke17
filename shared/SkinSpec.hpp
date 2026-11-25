@@ -24,7 +24,7 @@ struct SkinColor {
 };
 
 // Part coordinate spaces (see docs/skin-format.md for the diagram).
-enum class SkinSpace : int { Head = 0, Skull, Body, Tail, LeftEar, RightEar };
+enum class SkinSpace : int { Head = 0, Skull, Body, Tail, LeftEar, RightEar, LeftArm, RightArm };
 enum class SkinBuild : int { Standard = 0, Sleek };
 enum class SkinHeadSurface : int { Dome = 0, Plane };
 enum class SkinAnchorPoint : int { HeadTop = 0, Face, Neck, TailTip };
@@ -381,10 +381,10 @@ inline bool color(Ctx& c, const Value* v, const std::string& field, SkinColor& o
 }
 
 inline bool space(Ctx& c, const Value* v, const std::string& field, SkinSpace& out) {
-    static const char* names[] = {"head", "skull", "body", "tail", "leftEar", "rightEar"};
-    if (!v || v->type != Value::JString) return c.fail(field + " 缺失：必须是 head / skull / body / tail / leftEar / rightEar 之一");
-    for (int i = 0; i < 6; ++i) if (v->s == names[i]) { out = (SkinSpace)i; return true; }
-    return c.fail(field + " 必须是 head / skull / body / tail / leftEar / rightEar 之一，现在是 \"" + v->s.substr(0, 24) + "\"");
+    static const char* names[] = {"head", "skull", "body", "tail", "leftEar", "rightEar", "leftArm", "rightArm"};
+    if (!v || v->type != Value::JString) return c.fail(field + " 缺失：必须是 head / skull / body / tail / leftEar / rightEar / leftArm / rightArm 之一");
+    for (int i = 0; i < 8; ++i) if (v->s == names[i]) { out = (SkinSpace)i; return true; }
+    return c.fail(field + " 必须是 head / skull / body / tail / leftEar / rightEar / leftArm / rightArm 之一，现在是 \"" + v->s.substr(0, 24) + "\"");
 }
 
 inline std::string trimmedUtf8(const std::string& s, size_t maxChars) {

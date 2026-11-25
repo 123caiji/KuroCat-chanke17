@@ -49,6 +49,7 @@ struct CatSettings {
     float rotationDeg = 0.0f; // -180..180 degrees
     bool whiteOutline = true;
     bool enableAnger = true;
+    bool enableDragAnimation = true;
     bool isEnglish = false;
     bool isEditMode = false; // runtime-only interactive resize & rotate box
     bool petInteraction = true;
@@ -103,6 +104,7 @@ struct CatSettings {
                 else if (k == "rotationDeg") rotationDeg = std::clamp(std::stof(v), -180.0f, 180.0f);
                 else if (k == "whiteOutline") whiteOutline = (std::stoi(v) != 0);
                 else if (k == "enableAnger") enableAnger = (std::stoi(v) != 0);
+                else if (k == "enableDragAnimation") enableDragAnimation = (std::stoi(v) != 0);
                 else if (k == "isEnglish") isEnglish = (std::stoi(v) != 0);
                 else if (k == "petInteraction") petInteraction = (std::stoi(v) != 0);
                 else if (k == "fullClickThrough") fullClickThrough = (std::stoi(v) != 0);
@@ -141,6 +143,7 @@ struct CatSettings {
           << "rotationDeg=" << rotationDeg << "\n"
           << "whiteOutline=" << (whiteOutline ? 1 : 0) << "\n"
           << "enableAnger=" << (enableAnger ? 1 : 0) << "\n"
+          << "enableDragAnimation=" << (enableDragAnimation ? 1 : 0) << "\n"
           << "isEnglish=" << (isEnglish ? 1 : 0) << "\n"
           << "petInteraction=" << (petInteraction ? 1 : 0) << "\n"
           << "fullClickThrough=" << (fullClickThrough ? 1 : 0) << "\n"
@@ -251,6 +254,9 @@ public:
     float scruffDragAccumY_ = 0.0f;
     float fastMouseDuration_ = 0.0f;
     float dizzyTimer_ = 0.0f;
+    float fastTypeAccum_ = 0.0f;
+    float angerBurstTimer_ = 0.0f;
+    float angerCooldown_ = 0.0f;
     Spring2D mouseOffset{{0.0f, 0.0f}};
     Spring1D mousePressLeft{0.0f};
     Spring1D mousePressRight{0.0f};
@@ -433,7 +439,7 @@ public:
             }
             pupilScale.target = 1.12f;
             earTwitch.velocity -= 2.2f;
-            if (settings.showKeyBadges) {
+            if (settings.showMouseBadges) {
                 std::string lbl = settings.isEnglish
                     ? (button == 0 ? "LMB" : (button == 1 ? "RMB" : "MMB"))
                     : ((button == 0) ? "左键" : (button == 1 ? "右键" : "中键"));
@@ -468,10 +474,10 @@ public:
             scruffDragAccumY_ = 0.0f;
             if (wasDragging) {
                 scruffDropTimer = 0.16f;
+                // Cute soft squash bounce when set back down (Video 1 drop settle!)
+                bodySquash.velocity -= 2.4f;
+                headOffsetY.velocity += 78.0f;
             }
-            // Cute soft squash bounce when set back down (Video 1 drop settle!)
-            bodySquash.velocity -= 2.4f;
-            headOffsetY.velocity += 78.0f;
         }
     }
 
@@ -665,6 +671,9 @@ public:
         dizzyIntensity.step(dt, 75.0f, 14.0f);
         float dizzy = std::clamp(dizzyIntensity.value, 0.0f, 1.0f);
 
+        if (!settings.enableDragAnimation && isScruffDragging_) {
+            isScruffDragging_ = false;
+        }
         if (isScruffDragging_) {
             scruffHoldTime += dt;
             scruffDropTimer = 0.0f;
@@ -696,9 +705,35 @@ public:
         lieIntensity.step(dt, 55.0f, 14.0f);
         float lie = std::clamp(lieIntensity.value, 0.0f, 1.0f);
 
+        // Low-frequency episodic anger: ~3.2s of brisk typing (>= 260 KPM) triggers a brief ~4.2s grumpy burst,
+        // followed by a ~28s cooldown so fast typists get occasional cute anger without staying angry non-stop!
         float kpmVal = (float)engine.currentKPM();
-        angerIntensity.target = (settings.enableAnger && !isScruffDragging_ && dizzyTimer_ <= 0.0f && kpmVal >= 240.0f)
-            ? std::min(1.0f, (kpmVal - 240.0f) / 140.0f) : 0.0f;
+        if (!settings.enableAnger || isScruffDragging_ || dizzyTimer_ > 0.0f) {
+            fastTypeAccum_ = 0.0f;
+            angerBurstTimer_ = 0.0f;
+            angerCooldown_ = std::max(0.0f, angerCooldown_ - dt);
+            angerIntensity.target = 0.0f;
+        } else if (angerBurstTimer_ > 0.0f) {
+            float sootheMul = (petHeadIntensity > 0.25f || petBodyIntensity > 0.25f || kpmVal < 80.0f) ? 2.6f : 1.0f;
+            angerBurstTimer_ = std::max(0.0f, angerBurstTimer_ - dt * sootheMul);
+            angerIntensity.target = std::min(1.0f, angerBurstTimer_ / 0.7f);
+        } else {
+            if (angerCooldown_ > 0.0f) {
+                angerCooldown_ = std::max(0.0f, angerCooldown_ - dt);
+                fastTypeAccum_ = std::max(0.0f, fastTypeAccum_ - dt * 1.2f);
+            } else if (kpmVal >= 260.0f) {
+                float speedFactor = std::min(1.8f, 0.75f + (kpmVal - 260.0f) / 220.0f);
+                fastTypeAccum_ += dt * speedFactor;
+                if (fastTypeAccum_ >= 3.2f) {
+                    angerBurstTimer_ = 4.2f;
+                    angerCooldown_ = 28.0f + (float)(((int)(time * 13.0f)) % 9) - 4.0f;
+                    fastTypeAccum_ = 0.0f;
+                }
+            } else {
+                fastTypeAccum_ = std::max(0.0f, fastTypeAccum_ - dt * 0.9f);
+            }
+            angerIntensity.target = 0.0f;
+        }
         angerIntensity.step(dt, 70.0f, 14.0f);
         float anger = std::clamp(angerIntensity.value, 0.0f, 1.0f);
 
@@ -949,7 +984,9 @@ public:
         }
 
         // Count held physical keys, never key-repeat events or mouse buttons.
-        tailTyping.target = (settings.tailEasterEgg && activeKeys.size() == 4) ? 1.0f : 0.0f;
+        bool tailOnlyTrigger = !settings.footEasterEgg && (orderedKeys.size() >= 3 || (mouseActivelyUsed && leftKey == PhysicalKey::None && rightCandidates.size() >= 2));
+        bool tailActiveNow = settings.tailEasterEgg && (activeKeys.size() >= 4 || tailOnlyTrigger);
+        tailTyping.target = tailActiveNow ? 1.0f : 0.0f;
         tailTyping.step(dt, 180.0f, 24.0f);
         // Marquee chase across the keyboard deck: a steady sweep that speeds up while
         // several keys are held, so a chord visibly "fan out" the light.

@@ -8,6 +8,8 @@
 #include <functional>
 #include <algorithm>
 #include <chrono>
+#include <string>
+#include <cwctype>
 #include "KeyMap.hpp"
 
 /// High-precision monotonic clock in seconds.
@@ -105,8 +107,110 @@ public:
 
     bool isTabletConnected() const {
         if (tabletHardwareFound_) return true;
-        if (lastTabletEventTime_ > 0.0 && (nowSeconds() - lastTabletEventTime_) < 600.0) return true;
-        return false;
+        if (lastTabletEventTime_ <= 0.0) return false;
+        double now = nowSeconds();
+        if (now - lastTabletEventTime_ >= 20.0) return false;
+        // If no external physical tablet is connected and regular mouse input resumed, return cleanly to mouse
+        if (lastRegularMouseEventTime_ > lastTabletEventTime_ + 1.2) return false;
+        return true;
+    }
+
+    static bool isKnownTabletVid(DWORD vid) {
+        switch (vid) {
+            case 0x056A: // Wacom
+            case 0x256C: // Huion / Gaomon
+            case 0x28BD: // XP-Pen / UGEE
+            case 0x5543: // UC-Logic / UGEE
+            case 0x2FEB: // Veikk
+            case 0x2179: // Hanvon
+            case 0x33F8: // Xencelabs
+            case 0x2FBB: // Parblo
+                return true;
+            default: return false;
+        }
+    }
+
+    static bool isExcludedNonTabletVid(DWORD vid) {
+        switch (vid) {
+            case 0x05AC: // Apple USB
+            case 0x004C: // Apple Bluetooth (Magic Trackpad)
+            case 0x1B96: // N-Trig built-in laptop touchscreen
+            case 0x045E: // Microsoft Surface built-in digitizer
+            case 0x06CB: // Synaptics Precision Touchpad
+            case 0x04F3: // ELAN laptop touchpad/touchscreen
+            case 0x0488: // Cirque touchpad
+            case 0x27C6: // Goodix touchscreen
+            case 0x222A: // ILI Technology touchscreen
+                return true;
+            default: return false;
+        }
+    }
+
+    static bool isExternalPhysicalDevicePath(HANDLE hDevice) {
+        UINT nameLen = 0;
+        if (GetRawInputDeviceInfoW(hDevice, RIDI_DEVICENAME, nullptr, &nameLen) != 0 || nameLen == 0) {
+            return false;
+        }
+        std::wstring path(nameLen, L'\0');
+        if (GetRawInputDeviceInfoW(hDevice, RIDI_DEVICENAME, path.data(), &nameLen) == (UINT)-1) {
+            return false;
+        }
+        for (wchar_t& ch : path) ch = (wchar_t)towupper(ch);
+        // Reject virtual / root-enumerated / ACPI / I2C built-in laptop digitizers & remote-desktop virtual HIDs
+        if (path.find(L"ROOT#") != std::wstring::npos ||
+            path.find(L"ACPI#") != std::wstring::npos ||
+            path.find(L"SWD#") != std::wstring::npos ||
+            path.find(L"VIRTUAL") != std::wstring::npos ||
+            path.find(L"VHID") != std::wstring::npos ||
+            path.find(L"RDP_") != std::wstring::npos ||
+            path.find(L"I2C") != std::wstring::npos) {
+            return false;
+        }
+        if (path.find(L"VEN_") != std::wstring::npos && path.find(L"USB#") == std::wstring::npos) {
+            return false;
+        }
+        return (path.find(L"USB#") != std::wstring::npos ||
+                path.find(L"VID_") != std::wstring::npos ||
+                path.find(L"BTH") != std::wstring::npos);
+    }
+
+    static bool isExternalTabletDevice(HANDLE hDevice) {
+        RID_DEVICE_INFO info = {};
+        info.cbSize = sizeof(info);
+        UINT cb = sizeof(info);
+        if (GetRawInputDeviceInfoW(hDevice, RIDI_DEVICEINFO, &info, &cb) == (UINT)-1) return false;
+        if (info.dwType != RIM_TYPEHID) return false;
+        if (isExcludedNonTabletVid(info.hid.dwVendorId)) return false;
+        if (!isExternalPhysicalDevicePath(hDevice)) return false;
+        // Known dedicated graphics tablet vendor: require Digitizer (0x0D) or vendor-specific (>= 0xFF00) interface
+        if (isKnownTabletVid(info.hid.dwVendorId)) {
+            return info.hid.usUsagePage == 0x0D || info.hid.usUsagePage >= 0xFF00;
+        }
+        // Unknown external USB/BT vendor: require EXPLICIT Pen usage (0x02) — NEVER generic Digitizer (0x01) / TouchScreen (0x04) / TouchPad (0x05)
+        return info.hid.usUsagePage == 0x0D && info.hid.usUsage == 0x02;
+    }
+
+    static bool isVerifiedPenEventDevice(HANDLE hDevice) {
+        RID_DEVICE_INFO info = {};
+        info.cbSize = sizeof(info);
+        UINT cb = sizeof(info);
+        if (GetRawInputDeviceInfoW(hDevice, RIDI_DEVICEINFO, &info, &cb) == (UINT)-1) return false;
+        if (info.dwType != RIM_TYPEHID) return false;
+        if (info.hid.usUsagePage != 0x0D || info.hid.usUsage != 0x02) return false;
+        UINT nameLen = 0;
+        if (GetRawInputDeviceInfoW(hDevice, RIDI_DEVICENAME, nullptr, &nameLen) == 0 && nameLen > 0) {
+            std::wstring path(nameLen, L'\0');
+            if (GetRawInputDeviceInfoW(hDevice, RIDI_DEVICENAME, path.data(), &nameLen) != (UINT)-1) {
+                for (wchar_t& ch : path) ch = (wchar_t)towupper(ch);
+                if (path.find(L"ROOT#") != std::wstring::npos ||
+                    path.find(L"VIRTUAL") != std::wstring::npos ||
+                    path.find(L"VHID") != std::wstring::npos ||
+                    path.find(L"RDP_") != std::wstring::npos) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     void refreshTabletPresence(double now) {
@@ -121,30 +225,10 @@ public:
             tabletHardwareFound_ = false;
             return;
         }
-        auto isKnownTabletVid = [](DWORD vid) -> bool {
-            switch (vid) {
-                case 0x056A: // Wacom
-                case 0x256C: // Huion / Gaomon
-                case 0x28BD: // XP-Pen / UGEE
-                case 0x5543: // UC-Logic / UGEE
-                case 0x2FEB: // Veikk
-                case 0x2179: // Hanvon
-                case 0x33F8: // Xencelabs
-                case 0x2FBB: // Parblo
-                case 0x1B96: // N-Trig
-                    return true;
-                default: return false;
-            }
-        };
         bool found = false;
         for (UINT i = 0; i < numDevices; ++i) {
             if (list[i].dwType != RIM_TYPEHID) continue;
-            RID_DEVICE_INFO info = {};
-            info.cbSize = sizeof(info);
-            UINT cb = sizeof(info);
-            if (GetRawInputDeviceInfoW(list[i].hDevice, RIDI_DEVICEINFO, &info, &cb) == (UINT)-1) continue;
-            if (isKnownTabletVid(info.hid.dwVendorId) ||
-                (info.hid.usUsagePage == 0x0D && (info.hid.usUsage == 0x01 || info.hid.usUsage == 0x02))) {
+            if (isExternalTabletDevice(list[i].hDevice)) {
                 found = true;
                 break;
             }
@@ -214,7 +298,9 @@ public:
                 rawDeltaAccumX += (float)m.lLastX;
                 rawDeltaAccumY += (float)m.lLastY;
                 lastMouseMoveTime = now;
+                lastRegularMouseEventTime_ = now;
             }
+            if (m.usButtonFlags != 0) lastRegularMouseEventTime_ = now;
             if (m.usButtonFlags & RI_MOUSE_LEFT_BUTTON_DOWN)   updateMouseButton(0, true);
             if (m.usButtonFlags & RI_MOUSE_LEFT_BUTTON_UP)     updateMouseButton(0, false);
             if (m.usButtonFlags & RI_MOUSE_RIGHT_BUTTON_DOWN)  updateMouseButton(1, true);
@@ -223,9 +309,12 @@ public:
             if (m.usButtonFlags & RI_MOUSE_MIDDLE_BUTTON_UP)   updateMouseButton(2, false);
             if (m.usButtonFlags & RI_MOUSE_WHEEL)              lastMouseMoveTime = now;
         } else if (raw->header.dwType == RIM_TYPEHID) {
-            double now = nowSeconds();
-            lastTabletEventTime_ = now;
-            lastMouseMoveTime = now;
+            if (raw->data.hid.dwSizeHid > 0 && raw->data.hid.dwCount > 0 &&
+                isVerifiedPenEventDevice(raw->header.hDevice)) {
+                double now = nowSeconds();
+                lastTabletEventTime_ = now;
+                lastMouseMoveTime = now;
+            }
         }
     }
 
@@ -279,6 +368,7 @@ private:
     double lastRawMouseTime_ = 0.0;
     bool tabletHardwareFound_ = false;
     double lastTabletEventTime_ = 0.0;
+    double lastRegularMouseEventTime_ = 0.0;
     double lastTabletScanTime_ = 0.0;
 
     void setRawKeyState(PhysicalKey key, bool isDown) {

@@ -52,7 +52,7 @@ using std::max;
 
 namespace {
 
-constexpr const wchar_t* APP_VERSION = L"1.4.3";
+constexpr const wchar_t* APP_VERSION = L"1.4.4";
 constexpr const wchar_t* VERSION_PROP = L"KuroCatVersion"; // set on the tray owner window so newer builds can take over older ones
 constexpr const wchar_t* TRAY_OWNER_CLASS = L"KuroCatTrayOwnerClass";
 constexpr const wchar_t* OVERLAY_CLASS = L"KuroCatOverlayWindowClass";
@@ -938,10 +938,14 @@ void applyOBSMode(AppState& app) {
     if (!app.hwnd) return;
     LONG_PTR ex = GetWindowLongPtrW(app.hwnd, GWL_EXSTYLE);
     bool wantToolWindow = (app.settings.obsCaptureMode == 0);
+    bool wantLayered = (app.settings.obsCaptureMode != 2);
     bool isToolWindow = (ex & WS_EX_TOOLWINDOW) != 0;
-    if (wantToolWindow != isToolWindow) {
+    bool isLayered = (ex & WS_EX_LAYERED) != 0;
+    if (wantToolWindow != isToolWindow || wantLayered != isLayered) {
         if (wantToolWindow) ex |= WS_EX_TOOLWINDOW;
         else ex &= ~WS_EX_TOOLWINDOW;
+        if (wantLayered) ex |= WS_EX_LAYERED;
+        else ex &= ~WS_EX_LAYERED;
         bool wasVis = app.isVisible && !app.hiddenByFullscreen;
         if (wasVis) ShowWindow(app.hwnd, SW_HIDE);
         SetWindowLongPtrW(app.hwnd, GWL_EXSTYLE, ex);
@@ -950,7 +954,7 @@ void applyOBSMode(AppState& app) {
     }
     bool hideDesk = (app.settings.obsCaptureMode > 0 && app.settings.obsHideDesktop);
     if (hideDesk) {
-        // Move off-monitor & remove topmost so desktop stays clean while OBS WGC captures live frames!
+        // Move off-monitor & remove topmost so desktop stays clean while OBS WGC/BitBlt captures live frames!
         int offX = GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN) + 120;
         int offY = GetSystemMetrics(SM_YVIRTUALSCREEN) + 40;
         SetWindowPos(app.hwnd, HWND_BOTTOM, offX, offY, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
@@ -1400,12 +1404,14 @@ enum CtrlId : int {
     ID_CHK_FLIP,
     ID_CHK_OUTLINE,
     ID_BTN_RESET_POS,
+    ID_CHK_DRAG_ANIM,
     ID_CHK_ANGER,
     ID_CHK_PET,
     ID_CHK_BADGES,
+    ID_CHK_MOUSE_BADGES,
     ID_CHK_LEGENDS,
     ID_CHK_MARQUEE,
-    ID_CHK_EASTER,
+    ID_TYPING_LIMB_COMBO,
     ID_TABLET_COMBO,
     ID_CHK_TOPMOST,
     ID_CHK_AUTOHIDE_FS,
@@ -1531,12 +1537,13 @@ void rebuildCombosAndSync(AppState& app) {
     };
     setChk(ID_CHK_FLIP, app.settings.flipHorizontal);
     setChk(ID_CHK_OUTLINE, app.settings.whiteOutline);
+    setChk(ID_CHK_DRAG_ANIM, app.settings.enableDragAnimation);
     setChk(ID_CHK_ANGER, app.settings.enableAnger);
     setChk(ID_CHK_PET, app.settings.petInteraction);
     setChk(ID_CHK_BADGES, app.settings.showKeyBadges);
+    setChk(ID_CHK_MOUSE_BADGES, app.settings.showMouseBadges);
     setChk(ID_CHK_LEGENDS, app.settings.showKeyLegends);
     setChk(ID_CHK_MARQUEE, app.settings.keyboardMarquee);
-    setChk(ID_CHK_EASTER, app.settings.footEasterEgg || app.settings.tailEasterEgg);
     setChk(ID_CHK_TOPMOST, app.settings.alwaysOnTop);
     setChk(ID_CHK_AUTOHIDE_FS, app.settings.autoHideFullscreen);
     setChk(ID_CHK_CLICKTHROUGH, app.settings.fullClickThrough);
@@ -1546,6 +1553,10 @@ void rebuildCombosAndSync(AppState& app) {
     EnableWindow(GetDlgItem(hwnd, ID_CHK_OBS_HIDE), app.settings.obsCaptureMode != 0);
     EnableWindow(GetDlgItem(hwnd, ID_BTN_RELAUNCH_ADMIN), !app.isElevated);
 
+    int limbIdx = app.settings.footEasterEgg
+        ? (app.settings.tailEasterEgg ? 0 : 1)
+        : (app.settings.tailEasterEgg ? 2 : 3);
+    SendMessageW(GetDlgItem(hwnd, ID_TYPING_LIMB_COMBO), CB_SETCURSEL, (WPARAM)limbIdx, 0);
     SendMessageW(GetDlgItem(hwnd, ID_TABLET_COMBO), CB_SETCURSEL, (WPARAM)app.settings.tabletMode, 0);
     SendMessageW(GetDlgItem(hwnd, ID_OBS_COMBO), CB_SETCURSEL, (WPARAM)app.settings.obsCaptureMode, 0);
     SendMessageW(GetDlgItem(hwnd, ID_LANG_COMBO), CB_SETCURSEL, (WPARAM)(app.settings.isEnglish ? 1 : 0), 0);
@@ -1657,6 +1668,10 @@ LRESULT CALLBACK settingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                         app->settings.customKeyboard = app->kbLibrary.skins[sel - 3].id;
                     }
                     app->settings.saveToRegistry();
+                } else if (id == ID_TYPING_LIMB_COMBO && sel <= 3) {
+                    app->settings.footEasterEgg = (sel == 0 || sel == 1);
+                    app->settings.tailEasterEgg = (sel == 0 || sel == 2);
+                    app->settings.saveToRegistry();
                 } else if (id == ID_TABLET_COMBO && sel <= 2) {
                     app->settings.tabletMode = sel;
                     app->settings.saveToRegistry();
@@ -1707,6 +1722,10 @@ LRESULT CALLBACK settingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                         app->settings.whiteOutline = isChk(id);
                         app->settings.saveToRegistry();
                         break;
+                    case ID_CHK_DRAG_ANIM:
+                        app->settings.enableDragAnimation = isChk(id);
+                        app->settings.saveToRegistry();
+                        break;
                     case ID_CHK_ANGER:
                         app->settings.enableAnger = isChk(id);
                         app->settings.saveToRegistry();
@@ -1719,6 +1738,10 @@ LRESULT CALLBACK settingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                         app->settings.showKeyBadges = isChk(id);
                         app->settings.saveToRegistry();
                         break;
+                    case ID_CHK_MOUSE_BADGES:
+                        app->settings.showMouseBadges = isChk(id);
+                        app->settings.saveToRegistry();
+                        break;
                     case ID_CHK_LEGENDS:
                         app->settings.showKeyLegends = isChk(id);
                         app->settings.saveToRegistry();
@@ -1727,13 +1750,6 @@ LRESULT CALLBACK settingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                         app->settings.keyboardMarquee = isChk(id);
                         app->settings.saveToRegistry();
                         break;
-                    case ID_CHK_EASTER: {
-                        bool on = isChk(id);
-                        app->settings.footEasterEgg = on;
-                        app->settings.tailEasterEgg = on;
-                        app->settings.saveToRegistry();
-                        break;
-                    }
                     case ID_CHK_TOPMOST:
                         app->settings.alwaysOnTop = isChk(id);
                         applyWindowScaleAndPosition(*app, false, true);
@@ -1836,7 +1852,7 @@ void showSettingsWindow(AppState& app) {
     bool en = app.settings.isEnglish;
     auto tr = [&](const wchar_t* zh, const wchar_t* eng) -> const wchar_t* { return en ? eng : zh; };
 
-    const int W = 540, H = 618;
+    const int W = 540, H = 678;
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
     RECT rc = { 0, 0, px(W), px(H) };
     AdjustWindowRectEx(&rc, style, FALSE, 0);
@@ -1890,44 +1906,52 @@ void showSettingsWindow(AppState& app) {
     addCtrl(L"BUTTON", tr(L"\u91CD\u7F6E\u4F4D\u7F6E\u4E0E\u671D\u5411", L"Reset Pose"), BS_PUSHBUTTON | WS_TABSTOP, 384, 200, 128, 24, ID_BTN_RESET_POS);
 
     // Section 2: Interaction & Effects
-    addCtrl(L"BUTTON", tr(L"\u4E92\u52A8\u4E0E\u7279\u6548", L"Interaction & Effects"), BS_GROUPBOX, 14, 252, 512, 148, 0, true);
-    addCtrl(L"BUTTON", tr(L"\u9AD8\u901F\u6253\u5B57\u751F\u6C14\u8868\u60C5", L"Angry Expression on Fast Typing"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 278, 236, 22, ID_CHK_ANGER);
-    addCtrl(L"BUTTON", tr(L"\u6478\u732B\u4E92\u52A8\u4E0E\u5495\u565C\u7279\u6548", L"Petting & Purr Sparkles"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 278, 236, 22, ID_CHK_PET);
-    addCtrl(L"BUTTON", tr(L"\u663E\u793A\u6309\u952E\u6C14\u6CE1", L"Show Key & Click Badges"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 306, 236, 22, ID_CHK_BADGES);
-    addCtrl(L"BUTTON", tr(L"\u663E\u793A\u952E\u76D8\u5B57\u7B26", L"Show Keycap Legends"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 306, 236, 22, ID_CHK_LEGENDS);
-    addCtrl(L"BUTTON", tr(L"\u952E\u76D8\u8DD1\u9A6C\u706F\u6D41\u5149", L"Keyboard RGB Marquee"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 334, 236, 22, ID_CHK_MARQUEE);
-    addCtrl(L"BUTTON", tr(L"\u8E29\u952E\u4E0E\u7529\u5C3E\u5F69\u86CB", L"Hind-Foot & Tail Easter Eggs"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 334, 236, 22, ID_CHK_EASTER);
+    addCtrl(L"BUTTON", tr(L"\u4E92\u52A8\u4E0E\u7279\u6548", L"Interaction & Effects"), BS_GROUPBOX, 14, 252, 512, 208, 0, true);
+    addCtrl(L"BUTTON", tr(L"\u62CE\u8D77\u62D6\u62FD\u52A8\u753B", L"Scruff-Drag Lift Animation"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 278, 236, 22, ID_CHK_DRAG_ANIM);
+    addCtrl(L"BUTTON", tr(L"\u9AD8\u901F\u6253\u5B57\u751F\u6C14\u8868\u60C5", L"Angry Expression on Fast Typing"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 278, 236, 22, ID_CHK_ANGER);
+    addCtrl(L"BUTTON", tr(L"\u6478\u732B\u4E92\u52A8\u4E0E\u5495\u565C\u7279\u6548", L"Petting & Purr Sparkles"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 306, 236, 22, ID_CHK_PET);
+    addCtrl(L"BUTTON", tr(L"\u663E\u793A\u6309\u952E\u6C14\u6CE1", L"Show Keyboard Key Badges"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 306, 236, 22, ID_CHK_BADGES);
+    addCtrl(L"BUTTON", tr(L"\u663E\u793A\u9F20\u6807\u70B9\u51FB", L"Show Mouse Click Badges"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 334, 236, 22, ID_CHK_MOUSE_BADGES);
+    addCtrl(L"BUTTON", tr(L"\u663E\u793A\u952E\u76D8\u5B57\u7B26", L"Show Keycap Legends"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 334, 236, 22, ID_CHK_LEGENDS);
+    addCtrl(L"BUTTON", tr(L"\u952E\u76D8\u8DD1\u9A6C\u706F\u6D41\u5149", L"Keyboard RGB Marquee"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 362, 236, 22, ID_CHK_MARQUEE);
 
-    addCtrl(L"STATIC", tr(L"\u6570\u4F4D\u677F\u6A21\u5F0F", L"Tablet Mode"), SS_LEFT, 28, 366, 90, 20, 0);
-    HWND tabCb = addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, 124, 362, 388, 120, ID_TABLET_COMBO);
+    addCtrl(L"STATIC", tr(L"\u591A\u952E\u6253\u5B57", L"Multi-Key"), SS_LEFT, 28, 394, 90, 20, 0);
+    HWND limbCb = addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, 124, 390, 388, 140, ID_TYPING_LIMB_COMBO);
+    SendMessageW(limbCb, CB_ADDSTRING, 0, (LPARAM)tr(L"\u540E\u811A + \u5C3E\u5DF4\uFF083\u952E\u540E\u811A / 4\u952E\u5C3E\u5DF4\uFF09", L"Hind Foot + Tail (3-Key / 4-Key)"));
+    SendMessageW(limbCb, CB_ADDSTRING, 0, (LPARAM)tr(L"\u7528\u7B2C\u4E09\u53EA\u811A\u6253\u5B57\uFF08\u4EC5\u540E\u811A\uFF09", L"3rd Hind Foot Only"));
+    SendMessageW(limbCb, CB_ADDSTRING, 0, (LPARAM)tr(L"\u7528\u5C3E\u5DF4\u6253\u5B57\uFF08\u4EC5\u5C3E\u5DF4\uFF09", L"Tail Typing Only"));
+    SendMessageW(limbCb, CB_ADDSTRING, 0, (LPARAM)tr(L"\u53EA\u7528\u4E24\u53EA\u722A\u722A\u6253\u5B57", L"Two Front Paws Only"));
+
+    addCtrl(L"STATIC", tr(L"\u6570\u4F4D\u677F\u6A21\u5F0F", L"Tablet Mode"), SS_LEFT, 28, 426, 90, 20, 0);
+    HWND tabCb = addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, 124, 422, 388, 120, ID_TABLET_COMBO);
     SendMessageW(tabCb, CB_ADDSTRING, 0, (LPARAM)tr(L"\u81EA\u52A8\u68C0\u6D4B\uFF08\u8FDE\u63A5\u6570\u4F4D\u677F\u65F6\u81EA\u52A8\u5207\u6362\uFF09", L"Auto-Detect (Switch When Connected)"));
     SendMessageW(tabCb, CB_ADDSTRING, 0, (LPARAM)tr(L"\u59CB\u7EC8\u663E\u793A\u6570\u4F4D\u677F\u4E0E\u89E6\u63A7\u7B14", L"Always Show Tablet & Stylus"));
     SendMessageW(tabCb, CB_ADDSTRING, 0, (LPARAM)tr(L"\u59CB\u7EC8\u663E\u793A\u9F20\u6807", L"Always Show Mouse"));
 
     // Section 3: Window & System
-    addCtrl(L"BUTTON", tr(L"\u7A97\u53E3\u4E0E\u7CFB\u7EDF", L"Window & System"), BS_GROUPBOX, 14, 410, 512, 194, 0, true);
-    addCtrl(L"BUTTON", tr(L"\u7A97\u53E3\u7F6E\u9876\u663E\u793A", L"Always On Top"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 436, 236, 22, ID_CHK_TOPMOST);
-    addCtrl(L"BUTTON", tr(L"\u5168\u5C4F\u5E94\u7528\u65F6\u81EA\u52A8\u9690\u85CF", L"Auto-Hide in Fullscreen"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 436, 236, 22, ID_CHK_AUTOHIDE_FS);
-    addCtrl(L"BUTTON", tr(L"\u5B8C\u5168\u9F20\u6807\u7A7F\u900F (Alt \u4E34\u65F6\u89E3\u9501)", L"Full Click-Through (Hold Alt)"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 464, 236, 22, ID_CHK_CLICKTHROUGH);
-    addCtrl(L"BUTTON", tr(L"\u5F00\u673A\u81EA\u52A8\u542F\u52A8", L"Launch at Startup"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 464, 236, 22, ID_CHK_AUTOSTART);
-    addCtrl(L"BUTTON", tr(L"\u59CB\u7EC8\u4EE5\u7BA1\u7406\u5458\u8EAB\u4EFD\u8FD0\u884C", L"Always Run as Administrator"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 492, 236, 22, ID_CHK_RUN_ADMIN);
+    addCtrl(L"BUTTON", tr(L"\u7A97\u53E3\u4E0E\u7CFB\u7EDF", L"Window & System"), BS_GROUPBOX, 14, 470, 512, 194, 0, true);
+    addCtrl(L"BUTTON", tr(L"\u7A97\u53E3\u7F6E\u9876\u663E\u793A", L"Always On Top"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 496, 236, 22, ID_CHK_TOPMOST);
+    addCtrl(L"BUTTON", tr(L"\u5168\u5C4F\u5E94\u7528\u65F6\u81EA\u52A8\u9690\u85CF", L"Auto-Hide in Fullscreen"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 496, 236, 22, ID_CHK_AUTOHIDE_FS);
+    addCtrl(L"BUTTON", tr(L"\u5B8C\u5168\u9F20\u6807\u7A7F\u900F (Alt \u4E34\u65F6\u89E3\u9501)", L"Full Click-Through (Hold Alt)"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 524, 236, 22, ID_CHK_CLICKTHROUGH);
+    addCtrl(L"BUTTON", tr(L"\u5F00\u673A\u81EA\u52A8\u542F\u52A8", L"Launch at Startup"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 524, 236, 22, ID_CHK_AUTOSTART);
+    addCtrl(L"BUTTON", tr(L"\u59CB\u7EC8\u4EE5\u7BA1\u7406\u5458\u8EAB\u4EFD\u8FD0\u884C", L"Always Run as Administrator"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 552, 236, 22, ID_CHK_RUN_ADMIN);
     addCtrl(L"BUTTON", app.isElevated ? tr(L"\u2713 \u5DF2\u7BA1\u7406\u5458\u8FD0\u884C", L"\u2713 Running as Admin")
                                       : tr(L"\u7BA1\u7406\u5458\u8EAB\u4EFD\u91CD\u542F", L"Restart as Admin"),
-            BS_PUSHBUTTON | WS_TABSTOP, 276, 490, 148, 24, ID_BTN_RELAUNCH_ADMIN);
+            BS_PUSHBUTTON | WS_TABSTOP, 276, 550, 148, 24, ID_BTN_RELAUNCH_ADMIN);
 
-    addCtrl(L"STATIC", tr(L"OBS \u76F4\u64AD", L"OBS Capture"), SS_LEFT, 28, 526, 78, 20, 0);
-    HWND obsCb = addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, 110, 522, 210, 120, ID_OBS_COMBO);
+    addCtrl(L"STATIC", tr(L"OBS \u76F4\u64AD", L"OBS Capture"), SS_LEFT, 28, 586, 78, 20, 0);
+    HWND obsCb = addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, 110, 582, 210, 120, ID_OBS_COMBO);
     SendMessageW(obsCb, CB_ADDSTRING, 0, (LPARAM)tr(L"\u5173\u95ED\uFF08\u6B63\u5E38\u60AC\u6D6E\uFF09", L"Off (Normal Overlay)"));
-    SendMessageW(obsCb, CB_ADDSTRING, 0, (LPARAM)tr(L"OBS \u900F\u660E\u7A97\u53E3\u6355\u83B7", L"OBS Transparent Window"));
-    SendMessageW(obsCb, CB_ADDSTRING, 0, (LPARAM)tr(L"OBS \u7EFF\u5E55 (#00FF00)", L"OBS Green Screen"));
-    addCtrl(L"BUTTON", tr(L"\u540E\u53F0\u6355\u83B7\uFF08\u9690\u85CF\u684C\u9762\uFF09", L"Hide on Desktop"), BS_AUTOCHECKBOX | WS_TABSTOP, 332, 524, 180, 22, ID_CHK_OBS_HIDE);
+    SendMessageW(obsCb, CB_ADDSTRING, 0, (LPARAM)tr(L"OBS \u900F\u660E\u7A97\u53E3\uFF08\u9700 WGC \u91C7\u96C6\uFF09", L"OBS Transparent (Needs WGC)"));
+    SendMessageW(obsCb, CB_ADDSTRING, 0, (LPARAM)tr(L"OBS \u7EFF\u5E55\uFF08\u901A\u7528\u517C\u5BB9\uFF0C\u63A8\u8350\u76F4\u64AD\u59EC\uFF09", L"OBS Green Screen (Universal)"));
+    addCtrl(L"BUTTON", tr(L"\u540E\u53F0\u6355\u83B7\uFF08\u9690\u85CF\u684C\u9762\uFF09", L"Hide on Desktop"), BS_AUTOCHECKBOX | WS_TABSTOP, 332, 584, 180, 22, ID_CHK_OBS_HIDE);
 
-    addCtrl(L"STATIC", tr(L"\u754C\u9762\u8BED\u8A00", L"Language"), SS_LEFT, 28, 560, 78, 20, 0);
-    HWND langCb = addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, 110, 556, 150, 90, ID_LANG_COMBO);
+    addCtrl(L"STATIC", tr(L"\u754C\u9762\u8BED\u8A00", L"Language"), SS_LEFT, 28, 620, 78, 20, 0);
+    HWND langCb = addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, 110, 616, 150, 90, ID_LANG_COMBO);
     SendMessageW(langCb, CB_ADDSTRING, 0, (LPARAM)L"\u7B80\u4F53\u4E2D\u6587");
     SendMessageW(langCb, CB_ADDSTRING, 0, (LPARAM)L"English");
-    addCtrl(L"BUTTON", tr(L"\u76AE\u80A4\u76EE\u5F55", L"Skins Dir"), BS_PUSHBUTTON | WS_TABSTOP, 290, 556, 106, 24, ID_BTN_SKINS_DIR);
-    addCtrl(L"BUTTON", tr(L"\u952E\u76D8\u76EE\u5F55", L"Keyboards Dir"), BS_PUSHBUTTON | WS_TABSTOP, 406, 556, 106, 24, ID_BTN_KB_DIR);
+    addCtrl(L"BUTTON", tr(L"\u76AE\u80A4\u76EE\u5F55", L"Skins Dir"), BS_PUSHBUTTON | WS_TABSTOP, 290, 616, 106, 24, ID_BTN_SKINS_DIR);
+    addCtrl(L"BUTTON", tr(L"\u952E\u76D8\u76EE\u5F55", L"Keyboards Dir"), BS_PUSHBUTTON | WS_TABSTOP, 406, 616, 106, 24, ID_BTN_KB_DIR);
 
     settings_ui::rebuildCombosAndSync(app);
     ShowWindow(win, SW_SHOWNORMAL);
@@ -2369,23 +2393,34 @@ void tickAndRender(AppState& app) {
     g.ScaleTransform((float)w / CatPhysics::CanvasWidth, (float)h / CatPhysics::CanvasHeight);
     CatRenderer::draw(g, app.physics, app.settings, activeSkin(app), activeKeyboardSkin(app));
 
-    POINT ptDst = { wr.left, wr.top };
-    SIZE szWnd = { w, h };
-    POINT ptSrc = { 0, 0 };
-    BLENDFUNCTION blend = {};
-    blend.BlendOp = AC_SRC_OVER;
-    blend.SourceConstantAlpha = 255;
-    blend.AlphaFormat = AC_SRC_ALPHA;
+    // Green-screen mode (#00FF00) disables WS_EX_LAYERED so BitBlt / PrintWindow / Bilibili Live / OBS
+    // all capture the solid window directly without black-screen issues; transparent modes use UpdateLayeredWindow.
+    if (app.settings.obsCaptureMode == 2) {
+        HDC wndDC = GetDC(app.hwnd);
+        if (wndDC) {
+            BitBlt(wndDC, 0, 0, w, h, app.memDC, 0, 0, SRCCOPY);
+            ReleaseDC(app.hwnd, wndDC);
+        }
+        app.ulwFailures = 0;
+    } else {
+        POINT ptDst = { wr.left, wr.top };
+        SIZE szWnd = { w, h };
+        POINT ptSrc = { 0, 0 };
+        BLENDFUNCTION blend = {};
+        blend.BlendOp = AC_SRC_OVER;
+        blend.SourceConstantAlpha = 255;
+        blend.AlphaFormat = AC_SRC_ALPHA;
 
-    HDC screenDC = GetDC(nullptr);
-    BOOL presented = UpdateLayeredWindow(app.hwnd, screenDC, &ptDst, &szWnd, app.memDC, &ptSrc, 0, &blend, ULW_ALPHA);
-    ReleaseDC(nullptr, screenDC);
-    if (presented) {
-        app.ulwFailures = 0;
-    } else if (++app.ulwFailures > 30) {
-        // Surface lost (typically after Win+L / display reconnect): rebuild the DIB next frame.
-        app.ulwFailures = 0;
-        app.destroyBuffer();
+        HDC screenDC = GetDC(nullptr);
+        BOOL presented = UpdateLayeredWindow(app.hwnd, screenDC, &ptDst, &szWnd, app.memDC, &ptSrc, 0, &blend, ULW_ALPHA);
+        ReleaseDC(nullptr, screenDC);
+        if (presented) {
+            app.ulwFailures = 0;
+        } else if (++app.ulwFailures > 30) {
+            // Surface lost (typically after Win+L / display reconnect): rebuild the DIB next frame.
+            app.ulwFailures = 0;
+            app.destroyBuffer();
+        }
     }
 }
 
@@ -2541,7 +2576,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 app->isDragging = true;
                 app->dragStartCursor = cur;
                 app->dragStartWinOrigin = { wr.left, wr.top };
-                app->physics.setDragging(true, 0.0f);
+                app->physics.setDragging(app->settings.enableDragAnimation, 0.0f);
                 SetCapture(hwnd);
             }
             return 0;
@@ -2604,7 +2639,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 float c = std::cos(rad), s = std::sin(rad);
                 float localDx = stepDx * c - stepDy * s;
                 float localDy = stepDx * s + stepDy * c;
-                app->physics.setDragging(true, app->settings.flipHorizontal ? -localDx : localDx, localDy);
+                app->physics.setDragging(app->settings.enableDragAnimation, app->settings.flipHorizontal ? -localDx : localDx, localDy);
                 SetWindowPos(hwnd, nullptr, nx, ny, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
             }
             return 0;
@@ -2778,6 +2813,33 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             return 0;
         }
+
+        case WM_ERASEBKGND:
+            if (app && hwnd == app->hwnd) return 1;
+            break;
+
+        case WM_PAINT:
+            if (app && hwnd == app->hwnd) {
+                PAINTSTRUCT ps = {};
+                HDC hdc = BeginPaint(hwnd, &ps);
+                if (app->memDC && app->bufW > 0 && app->bufH > 0) {
+                    BitBlt(hdc, 0, 0, app->bufW, app->bufH, app->memDC, 0, 0, SRCCOPY);
+                }
+                EndPaint(hwnd, &ps);
+                return 0;
+            }
+            break;
+
+        case WM_PRINT:
+        case WM_PRINTCLIENT:
+            if (app && hwnd == app->hwnd) {
+                HDC hdc = (HDC)wParam;
+                if (hdc && app->memDC && app->bufW > 0 && app->bufH > 0) {
+                    BitBlt(hdc, 0, 0, app->bufW, app->bufH, app->memDC, 0, 0, SRCCOPY);
+                }
+                return 0;
+            }
+            break;
 
         case WM_DROPFILES:
             // A .kurocat dropped onto the cat is imported and worn right away.
@@ -3047,7 +3109,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         computeDefaultOrigin(initW, initH, initX, initY);
     }
 
-    DWORD exStyle = WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT
+    DWORD exStyle = (app.settings.obsCaptureMode != 2 ? WS_EX_LAYERED : 0)
+                  | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT
                   | (app.settings.obsCaptureMode == 0 ? WS_EX_TOOLWINDOW : 0)
                   | (app.settings.alwaysOnTop ? WS_EX_TOPMOST : 0);
 

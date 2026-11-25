@@ -46,12 +46,19 @@ final class InputEngine {
     private(set) var isPenInProximity = false
     private var tabletHardwareDevices = Set<UInt>()
     private var lastTabletEventTime: CFTimeInterval = 0
+    private var lastRegularMouseEventTime: CFTimeInterval = 0
     private var tabletHIDManager: IOHIDManager?
 
     var isTabletConnected: Bool {
         if !tabletHardwareDevices.isEmpty { return true }
-        if lastTabletEventTime > 0 && (CACurrentMediaTime() - lastTabletEventTime) < 600.0 { return true }
-        return false
+        guard lastTabletEventTime > 0 else { return false }
+        let now = CACurrentMediaTime()
+        let sincePen = now - lastTabletEventTime
+        let timeout: CFTimeInterval = isPenInProximity ? 25.0 : 15.0
+        if sincePen >= timeout { return false }
+        // If no external tablet hardware is plugged in and regular mouse/trackpad input resumed, fall back cleanly to mouse
+        if lastRegularMouseEventTime > lastTabletEventTime + 1.2 { return false }
+        return true
     }
 
     // Stats
@@ -302,7 +309,7 @@ final class InputEngine {
         if otherMouseDown { updateMouseButton(2, isDown: false) }
     }
 
-    // MARK: - Graphics Tablet / Stylus Detection (USB/Bluetooth HID + Live Tablet Events)
+    // MARK: - Graphics Tablet / Stylus Detection (Strict External USB/BT HID + Verified Pen Events)
 
     private static let knownTabletVendorIDs: Set<Int> = [
         0x056A, // Wacom
@@ -312,25 +319,33 @@ final class InputEngine {
         0x2FEB, // Veikk
         0x2179, // Hanvon
         0x33F8, // Xencelabs
-        0x2FBB, // Parblo
-        0x1B96  // N-Trig
+        0x2FBB  // Parblo
     ]
 
     private func isDrawingTabletDevice(_ device: IOHIDDevice) -> Bool {
         let vid = (IOHIDDeviceGetProperty(device, kIOHIDVendorIDKey as CFString) as? NSNumber)?.intValue ?? 0
         let usagePage = (IOHIDDeviceGetProperty(device, kIOHIDPrimaryUsagePageKey as CFString) as? NSNumber)?.intValue ?? 0
         let usage = (IOHIDDeviceGetProperty(device, kIOHIDPrimaryUsageKey as CFString) as? NSNumber)?.intValue ?? 0
-        // Apple built-in trackpads use 0x05AC + Digitizer(0x0D)/TouchPad(0x05) — only count Apple if explicit Pen(0x02)
-        if vid == 0x05AC {
-            return usagePage == kHIDPage_Digitizer && usage == kHIDUsage_Dig_Pen
-        }
+        let builtIn = (IOHIDDeviceGetProperty(device, kIOHIDBuiltInKey as CFString) as? NSNumber)?.boolValue ?? false
+        let transport = (IOHIDDeviceGetProperty(device, kIOHIDTransportKey as CFString) as? String ?? "").lowercased()
+        let product = (IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String ?? "").lowercased()
+
+        // 1. Reject built-in laptop hardware, Apple trackpads/mice (USB 0x05AC & Bluetooth 0x004C), and virtual/residual driver stubs
+        if builtIn || vid == 0x05AC || vid == 0x004C || vid == 0x1B96 { return false }
+        let isPhysicalExternal = transport == "usb" || transport == "bluetooth" || transport == "bluetoothlowenergy"
+        if !isPhysicalExternal { return false }
+
+        // 2. Reject touchpads, touchscreens, virtual displays, remotes, and plain mice/keyboards by product name
+        let excludedKeywords = ["touchpad", "trackpad", "touchscreen", "touch screen", "virtual", "sidecar", "remote", "mouse", "keyboard"]
+        for kw in excludedKeywords where product.contains(kw) { return false }
+
+        // 3. Dedicated graphics tablet vendors: must expose a Digitizer (0x0D) or vendor-specific (>= 0xFF00) tablet interface
         if Self.knownTabletVendorIDs.contains(vid) {
-            return true
+            return usagePage == kHIDPage_Digitizer || usagePage >= 0xFF00
         }
-        if usagePage == kHIDPage_Digitizer && (usage == kHIDUsage_Dig_Pen || usage == kHIDUsage_Dig_Digitizer) {
-            return true
-        }
-        return false
+
+        // 4. Other USB/BT vendors: require EXPLICIT Pen usage (0x02) — never generic Digitizer (0x01) / TouchScreen (0x04) / TouchPad (0x05)
+        return usagePage == kHIDPage_Digitizer && usage == kHIDUsage_Dig_Pen
     }
 
     private func startTabletHardwareMonitor() {
@@ -340,10 +355,6 @@ final class InputEngine {
             [
                 kIOHIDDeviceUsagePageKey as String: kHIDPage_Digitizer,
                 kIOHIDDeviceUsageKey as String: kHIDUsage_Dig_Pen
-            ],
-            [
-                kIOHIDDeviceUsagePageKey as String: kHIDPage_Digitizer,
-                kIOHIDDeviceUsageKey as String: kHIDUsage_Dig_Digitizer
             ]
         ]
         for vid in Self.knownTabletVendorIDs {
@@ -387,12 +398,35 @@ final class InputEngine {
     }
 
     private func checkTabletEvent(_ event: CGEvent) {
+        let now = CACurrentMediaTime()
         let subtype = event.getIntegerValueField(.mouseEventSubtype)
-        if subtype == 1 || subtype == 2 {
-            lastTabletEventTime = CACurrentMediaTime()
-            isPenInProximity = true
+        if subtype == 2 {
+            // TabletProximity: only accept real Pen (1) or Eraser (3) entering proximity
+            let entering = event.getIntegerValueField(.tabletProximityEventEnterProximity) != 0
+            let devType = event.getIntegerValueField(.tabletProximityEventPointerType)
+            if devType == 1 || devType == 3 {
+                isPenInProximity = entering
+                if entering {
+                    lastTabletEventTime = now
+                } else {
+                    penPressure = 0.0
+                }
+            }
+        } else if subtype == 1 {
+            // TabletPoint: require confirmed pen proximity, real tablet deviceID, or non-zero pen pressure
+            let devId = event.getIntegerValueField(.tabletEventDeviceID)
             let p = CGFloat(event.getDoubleValueField(.tabletEventPointPressure))
-            if p > 0.001 { penPressure = p }
+            if isPenInProximity || devId != 0 || p > 0.001 {
+                lastTabletEventTime = now
+                isPenInProximity = true
+                if p > 0.001 { penPressure = p }
+            }
+        } else {
+            // Regular mouse / trackpad event
+            lastRegularMouseEventTime = now
+            if tabletHardwareDevices.isEmpty {
+                isPenInProximity = false
+            }
         }
     }
 
@@ -626,21 +660,30 @@ final class InputEngine {
             checkTabletEvent(event)
             lastMouseMoveTime = CACurrentMediaTime()
         case .tabletPointer:
-            lastTabletEventTime = CACurrentMediaTime()
-            isPenInProximity = true
-            penPressure = CGFloat(event.getDoubleValueField(.tabletEventPointPressure))
-            lastMouseMoveTime = CACurrentMediaTime()
+            let devId = event.getIntegerValueField(.tabletEventDeviceID)
+            let p = CGFloat(event.getDoubleValueField(.tabletEventPointPressure))
+            if isPenInProximity || devId != 0 || p > 0.001 {
+                lastTabletEventTime = CACurrentMediaTime()
+                isPenInProximity = true
+                penPressure = p
+                lastMouseMoveTime = CACurrentMediaTime()
+            }
         case .tabletProximity:
             let entering = event.getIntegerValueField(.tabletProximityEventEnterProximity) != 0
-            isPenInProximity = entering
-            if entering {
-                lastTabletEventTime = CACurrentMediaTime()
-            } else {
-                penPressure = 0.0
+            let devType = event.getIntegerValueField(.tabletProximityEventPointerType)
+            if devType == 1 || devType == 3 {
+                isPenInProximity = entering
+                if entering {
+                    lastTabletEventTime = CACurrentMediaTime()
+                } else {
+                    penPressure = 0.0
+                }
             }
         case .rightMouseDown:
+            checkTabletEvent(event)
             updateMouseButton(1, isDown: true)
         case .rightMouseUp:
+            checkTabletEvent(event)
             updateMouseButton(1, isDown: false)
         case .otherMouseDown:
             updateMouseButton(2, isDown: true)

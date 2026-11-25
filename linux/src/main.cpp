@@ -34,7 +34,7 @@
 #include <fcntl.h>
 #include <glib-unix.h>
 
-#define KUROCAT_VERSION_STR "1.4.3"
+#define KUROCAT_VERSION_STR "1.4.4"
 static constexpr const char* APP_VERSION = KUROCAT_VERSION_STR;
 // Other KuroCat builds scan installed binaries for this marker (see readBinaryVersion) to find the
 // newest copy WITHOUT executing it. Always derived from KUROCAT_VERSION_STR.
@@ -75,12 +75,14 @@ struct LinuxApp {
     GtkWidget* setRotLabel = nullptr;
     GtkWidget* setFlipChk = nullptr;
     GtkWidget* setOutlineChk = nullptr;
+    GtkWidget* setDragAnimChk = nullptr;
     GtkWidget* setAngerChk = nullptr;
     GtkWidget* setPetChk = nullptr;
     GtkWidget* setBadgesChk = nullptr;
+    GtkWidget* setMouseBadgesChk = nullptr;
     GtkWidget* setLegendsChk = nullptr;
     GtkWidget* setMarqueeChk = nullptr;
-    GtkWidget* setEasterChk = nullptr;
+    GtkWidget* setTypingLimbCombo = nullptr;
     GtkWidget* setTabletCombo = nullptr;
     GtkWidget* setTopmostChk = nullptr;
     GtkWidget* setAutohideChk = nullptr;
@@ -1310,12 +1312,13 @@ static void refreshSettingsWindow(LinuxApp& app) {
     };
     setChk(app.setFlipChk, app.settings.flipHorizontal);
     setChk(app.setOutlineChk, app.settings.whiteOutline);
+    setChk(app.setDragAnimChk, app.settings.enableDragAnimation);
     setChk(app.setAngerChk, app.settings.enableAnger);
     setChk(app.setPetChk, app.settings.petInteraction);
     setChk(app.setBadgesChk, app.settings.showKeyBadges);
+    setChk(app.setMouseBadgesChk, app.settings.showMouseBadges);
     setChk(app.setLegendsChk, app.settings.showKeyLegends);
     setChk(app.setMarqueeChk, app.settings.keyboardMarquee);
-    setChk(app.setEasterChk, app.settings.footEasterEgg || app.settings.tailEasterEgg);
     setChk(app.setTopmostChk, app.settings.alwaysOnTop);
     setChk(app.setAutohideChk, app.settings.autoHideFullscreen);
     setChk(app.setClickThroughChk, app.settings.fullClickThrough);
@@ -1324,6 +1327,12 @@ static void refreshSettingsWindow(LinuxApp& app) {
     setChk(app.setObsHideChk, app.settings.obsHideDesktop);
     if (app.setObsHideChk) gtk_widget_set_sensitive(app.setObsHideChk, app.settings.obsCaptureMode != 0);
 
+    if (app.setTypingLimbCombo) {
+        int limbIdx = app.settings.footEasterEgg
+            ? (app.settings.tailEasterEgg ? 0 : 1)
+            : (app.settings.tailEasterEgg ? 2 : 3);
+        gtk_combo_box_set_active(GTK_COMBO_BOX(app.setTypingLimbCombo), limbIdx);
+    }
     if (app.setTabletCombo) gtk_combo_box_set_active(GTK_COMBO_BOX(app.setTabletCombo), app.settings.tabletMode);
     if (app.setObsCombo) gtk_combo_box_set_active(GTK_COMBO_BOX(app.setObsCombo), app.settings.obsCaptureMode);
     if (app.setLangCombo) gtk_combo_box_set_active(GTK_COMBO_BOX(app.setLangCombo), app.settings.isEnglish ? 1 : 0);
@@ -1353,7 +1362,7 @@ static void showSettingsWindow() {
         g_app->setCoatCombo = g_app->setEyeCombo = g_app->setKbCombo = nullptr;
         g_app->setScaleSlider = g_app->setScaleLabel = g_app->setRotSlider = g_app->setRotLabel = nullptr;
         g_app->setFlipChk = g_app->setOutlineChk = g_app->setAngerChk = g_app->setPetChk = nullptr;
-        g_app->setBadgesChk = g_app->setLegendsChk = g_app->setMarqueeChk = g_app->setEasterChk = nullptr;
+        g_app->setBadgesChk = g_app->setMouseBadgesChk = g_app->setLegendsChk = g_app->setMarqueeChk = g_app->setTypingLimbCombo = nullptr;
         g_app->setTabletCombo = g_app->setTopmostChk = g_app->setAutohideChk = g_app->setClickThroughChk = nullptr;
         g_app->setAutostartChk = g_app->setHighFpsChk = g_app->setObsCombo = g_app->setObsHideChk = g_app->setLangCombo = nullptr;
     }), nullptr);
@@ -1551,27 +1560,44 @@ static void showSettingsWindow() {
         GtkWidget* g = makeSection(tr("互动与特效", "Interaction & Effects"));
         int r = 0;
 
+        app.setDragAnimChk = gtk_check_button_new_with_label(tr("拎起拖拽动画", "Scruff-Drag Lift Animation"));
+        g_signal_connect(app.setDragAnimChk, "toggled", G_CALLBACK(+[](GtkToggleButton* b, gpointer) {
+            if (g_app->settingsUpdating) return;
+            g_app->settings.enableDragAnimation = gtk_toggle_button_get_active(b);
+            g_app->settings.save();
+        }), nullptr);
         app.setAngerChk = gtk_check_button_new_with_label(tr("高速打字生气表情", "Angry Expression on Fast Typing"));
         g_signal_connect(app.setAngerChk, "toggled", G_CALLBACK(+[](GtkToggleButton* b, gpointer) {
             if (g_app->settingsUpdating) return;
             g_app->settings.enableAnger = gtk_toggle_button_get_active(b);
             g_app->settings.save();
         }), nullptr);
+        gtk_grid_attach(GTK_GRID(g), app.setDragAnimChk, 0, r, 1, 1);
+        gtk_grid_attach(GTK_GRID(g), app.setAngerChk, 1, r++, 2, 1);
+
         app.setPetChk = gtk_check_button_new_with_label(tr("摸猫互动与咕噜特效", "Petting & Purr Sparkles"));
         g_signal_connect(app.setPetChk, "toggled", G_CALLBACK(+[](GtkToggleButton* b, gpointer) {
             if (g_app->settingsUpdating) return;
             g_app->settings.petInteraction = gtk_toggle_button_get_active(b);
             g_app->settings.save();
         }), nullptr);
-        gtk_grid_attach(GTK_GRID(g), app.setAngerChk, 0, r, 1, 1);
-        gtk_grid_attach(GTK_GRID(g), app.setPetChk, 1, r++, 2, 1);
+        gtk_grid_attach(GTK_GRID(g), app.setPetChk, 0, r++, 3, 1);
 
-        app.setBadgesChk = gtk_check_button_new_with_label(tr("显示按键气泡", "Show Key & Click Badges"));
+        app.setBadgesChk = gtk_check_button_new_with_label(tr("显示按键气泡", "Show Keyboard Key Badges"));
         g_signal_connect(app.setBadgesChk, "toggled", G_CALLBACK(+[](GtkToggleButton* b, gpointer) {
             if (g_app->settingsUpdating) return;
             g_app->settings.showKeyBadges = gtk_toggle_button_get_active(b);
             g_app->settings.save();
         }), nullptr);
+        app.setMouseBadgesChk = gtk_check_button_new_with_label(tr("显示鼠标点击", "Show Mouse Click Badges"));
+        g_signal_connect(app.setMouseBadgesChk, "toggled", G_CALLBACK(+[](GtkToggleButton* b, gpointer) {
+            if (g_app->settingsUpdating) return;
+            g_app->settings.showMouseBadges = gtk_toggle_button_get_active(b);
+            g_app->settings.save();
+        }), nullptr);
+        gtk_grid_attach(GTK_GRID(g), app.setBadgesChk, 0, r, 1, 1);
+        gtk_grid_attach(GTK_GRID(g), app.setMouseBadgesChk, 1, r++, 2, 1);
+
         app.setLegendsChk = gtk_check_button_new_with_label(tr("显示键盘字符", "Show Keycap Legends"));
         g_signal_connect(app.setLegendsChk, "toggled", G_CALLBACK(+[](GtkToggleButton* b, gpointer) {
             if (g_app->settingsUpdating) return;
@@ -1579,25 +1605,32 @@ static void showSettingsWindow() {
             g_app->settings.save();
             if (g_app->drawArea) gtk_widget_queue_draw(g_app->drawArea);
         }), nullptr);
-        gtk_grid_attach(GTK_GRID(g), app.setBadgesChk, 0, r, 1, 1);
-        gtk_grid_attach(GTK_GRID(g), app.setLegendsChk, 1, r++, 2, 1);
-
         app.setMarqueeChk = gtk_check_button_new_with_label(tr("键盘跑马灯流光", "Keyboard RGB Marquee"));
         g_signal_connect(app.setMarqueeChk, "toggled", G_CALLBACK(+[](GtkToggleButton* b, gpointer) {
             if (g_app->settingsUpdating) return;
             g_app->settings.keyboardMarquee = gtk_toggle_button_get_active(b);
             g_app->settings.save();
         }), nullptr);
-        app.setEasterChk = gtk_check_button_new_with_label(tr("踩键与甩尾彩蛋", "Hind-Foot & Tail Easter Eggs"));
-        g_signal_connect(app.setEasterChk, "toggled", G_CALLBACK(+[](GtkToggleButton* b, gpointer) {
+        gtk_grid_attach(GTK_GRID(g), app.setLegendsChk, 0, r, 1, 1);
+        gtk_grid_attach(GTK_GRID(g), app.setMarqueeChk, 1, r++, 2, 1);
+
+        gtk_grid_attach(GTK_GRID(g), leftLabel(tr("多键打字方式", "Multi-Key Typing")), 0, r, 1, 1);
+        app.setTypingLimbCombo = gtk_combo_box_text_new();
+        gtk_widget_set_hexpand(app.setTypingLimbCombo, TRUE);
+        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app.setTypingLimbCombo), tr("后脚 + 尾巴（3键后脚 / 4键尾巴）", "Hind Foot + Tail (3-Key / 4-Key)"));
+        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app.setTypingLimbCombo), tr("用第三只脚打字（仅后脚）", "3rd Hind Foot Only"));
+        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app.setTypingLimbCombo), tr("用尾巴打字（仅尾巴）", "Tail Typing Only"));
+        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app.setTypingLimbCombo), tr("只用两只爪爪打字", "Two Front Paws Only"));
+        g_signal_connect(app.setTypingLimbCombo, "changed", G_CALLBACK(+[](GtkComboBox* cb, gpointer) {
             if (g_app->settingsUpdating) return;
-            bool on = gtk_toggle_button_get_active(b);
-            g_app->settings.footEasterEgg = on;
-            g_app->settings.tailEasterEgg = on;
-            g_app->settings.save();
+            int idx = gtk_combo_box_get_active(cb);
+            if (idx >= 0 && idx <= 3) {
+                g_app->settings.footEasterEgg = (idx == 0 || idx == 1);
+                g_app->settings.tailEasterEgg = (idx == 0 || idx == 2);
+                g_app->settings.save();
+            }
         }), nullptr);
-        gtk_grid_attach(GTK_GRID(g), app.setMarqueeChk, 0, r, 1, 1);
-        gtk_grid_attach(GTK_GRID(g), app.setEasterChk, 1, r++, 2, 1);
+        gtk_grid_attach(GTK_GRID(g), app.setTypingLimbCombo, 1, r++, 2, 1);
 
         gtk_grid_attach(GTK_GRID(g), leftLabel(tr("数位板模式", "Tablet Mode")), 0, r, 1, 1);
         app.setTabletCombo = gtk_combo_box_text_new();
@@ -1958,7 +1991,7 @@ static gboolean onButtonPress(GtkWidget*, GdkEventButton* evt, gpointer) {
         g_app->lastDragRootX = evt->x_root;
         g_app->lastDragRootY = evt->y_root;
         gtk_window_get_position(GTK_WINDOW(g_app->window), &g_app->dragStartWinX, &g_app->dragStartWinY);
-        g_app->physics.setDragging(true, 0.0f, 0.0f);
+        g_app->physics.setDragging(g_app->settings.enableDragAnimation, 0.0f, 0.0f);
         return TRUE;
     }
     return FALSE;
@@ -2015,7 +2048,7 @@ static gboolean onMotionNotify(GtkWidget*, GdkEventMotion* evt, gpointer) {
         float c = std::cos(rad), s = std::sin(rad);
         float localDx = dx * c - dy * s;
         float localDy = dx * s + dy * c;
-        g_app->physics.setDragging(true, g_app->settings.flipHorizontal ? -localDx : localDx, localDy);
+        g_app->physics.setDragging(g_app->settings.enableDragAnimation, g_app->settings.flipHorizontal ? -localDx : localDx, localDy);
         gtk_window_move(GTK_WINDOW(g_app->window), nx, ny);
         return TRUE;
     }

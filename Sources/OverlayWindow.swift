@@ -851,13 +851,16 @@ final class SettingsWindowController: NSWindowController {
     private var kbPopup: NSPopUpButton!
     private var eyePopup: NSPopUpButton!
     private var tabletPopup: NSPopUpButton!
+    private var typingLimbPopup: NSPopUpButton!
     private var obsPopup: NSPopUpButton!
     private var langSeg: NSSegmentedControl!
 
     private var whiteOutlineSwitch: NSSwitch!
     private var flipSwitch: NSSwitch!
     private var angerSwitch: NSSwitch!
+    private var dragAnimSwitch: NSSwitch!
     private var badgesSwitch: NSSwitch!
+    private var mouseBadgesSwitch: NSSwitch!
     private var legendsSwitch: NSSwitch!
     private var marqueeSwitch: NSSwitch!
     private var fullscreenOverlaySwitch: NSSwitch!
@@ -1095,38 +1098,71 @@ final class SettingsWindowController: NSWindowController {
 
         // MARK: Card 2 — Interaction & Effects
         addSectionHeader(tr("互动与特效", "Interaction & Effects"))
-        addCard(rows: 5) { card, rh in
-            // Row 0: Fast-typing anger toggle
-            card.addSubview(makeLabel(tr("打字过快时生气表情", "Angry Expression on Fast Typing"), yPos: 4, width: 320))
-            angerSwitch = makeSwitch(s.enableAnger, action: #selector(onToggleAnger), yPos: 4)
-            card.addSubview(angerSwitch)
+        addCard(rows: 8) { card, rh in
+            // Row 0: Scruff-drag animation toggle
+            card.addSubview(makeLabel(tr("拎起拖拽动画（拖动时切换拎起姿态）", "Scruff-Drag Lift Animation"), yPos: 4, width: 320))
+            dragAnimSwitch = makeSwitch(s.enableDragAnimation, action: #selector(onToggleDragAnim), yPos: 4)
+            card.addSubview(dragAnimSwitch)
             addRowDivider(card, yPos: 4 + rh)
 
-            // Row 1: Key badges
+            // Row 1: Fast-typing anger toggle
             let r1 = 4 + rh
-            card.addSubview(makeLabel(tr("显示按键气泡 ([S] [W] [⇧])", "Show Key & Click Badges"), yPos: r1, width: 320))
-            badgesSwitch = makeSwitch(s.showKeyBadges, action: #selector(onToggleBadges), yPos: r1)
-            card.addSubview(badgesSwitch)
+            card.addSubview(makeLabel(tr("打字过快时生气表情", "Angry Expression on Fast Typing"), yPos: r1, width: 320))
+            angerSwitch = makeSwitch(s.enableAnger, action: #selector(onToggleAnger), yPos: r1)
+            card.addSubview(angerSwitch)
             addRowDivider(card, yPos: r1 + rh)
 
-            // Row 2: Key legends
+            // Row 2: Key badges
             let r2 = 4 + rh * 2
-            card.addSubview(makeLabel(tr("显示键盘字符", "Show Keycap Legends"), yPos: r2, width: 320))
-            legendsSwitch = makeSwitch(s.showKeyLegends, action: #selector(onToggleLegends), yPos: r2)
-            card.addSubview(legendsSwitch)
+            card.addSubview(makeLabel(tr("显示按键气泡 ([S] [W] [⇧])", "Show Keyboard Key Badges"), yPos: r2, width: 320))
+            badgesSwitch = makeSwitch(s.showKeyBadges, action: #selector(onToggleBadges), yPos: r2)
+            card.addSubview(badgesSwitch)
             addRowDivider(card, yPos: r2 + rh)
 
-            // Row 3: Keyboard marquee
+            // Row 3: Mouse click badges
             let r3 = 4 + rh * 3
-            card.addSubview(makeLabel(tr("键盘跑马灯流光", "Keyboard RGB Marquee"), yPos: r3, width: 320))
-            marqueeSwitch = makeSwitch(s.keyboardMarquee, action: #selector(onToggleMarquee), yPos: r3)
-            card.addSubview(marqueeSwitch)
+            card.addSubview(makeLabel(tr("显示鼠标点击 (左键 / 右键)", "Show Mouse Click Badges"), yPos: r3, width: 320))
+            mouseBadgesSwitch = makeSwitch(s.showMouseBadges, action: #selector(onToggleMouseBadges), yPos: r3)
+            card.addSubview(mouseBadgesSwitch)
             addRowDivider(card, yPos: r3 + rh)
 
-            // Row 4: Drawing Tablet & Stylus
+            // Row 4: Multi-key typing limb mode (3rd hind foot / tail / two paws only)
             let r4 = 4 + rh * 4
-            card.addSubview(makeLabel(tr("数位板与触控笔", "Tablet & Stylus"), yPos: r4, width: 130))
-            tabletPopup = NSPopUpButton(frame: NSRect(x: 150, y: r4 + 5, width: 292, height: 24), pullsDown: false)
+            card.addSubview(makeLabel(tr("多键打字方式", "Multi-Key Typing"), yPos: r4, width: 130))
+            typingLimbPopup = NSPopUpButton(frame: NSRect(x: 150, y: r4 + 5, width: 292, height: 24), pullsDown: false)
+            typingLimbPopup.addItems(withTitles: [
+                tr("后脚 + 尾巴（3键后脚 / 4键尾巴）", "Hind Foot + Tail (3-Key / 4-Key)"),
+                tr("用第三只脚打字（仅后脚）", "3rd Hind Foot Only"),
+                tr("用尾巴打字（仅尾巴）", "Tail Typing Only"),
+                tr("只用两只爪爪打字", "Two Front Paws Only")
+            ])
+            let limbIdx: Int = s.footEasterEgg
+                ? (s.tailEasterEgg ? 0 : 1)
+                : (s.tailEasterEgg ? 2 : 3)
+            typingLimbPopup.selectItem(at: limbIdx)
+            typingLimbPopup.target = self
+            typingLimbPopup.action = #selector(onTypingLimbSelected)
+            card.addSubview(typingLimbPopup)
+            addRowDivider(card, yPos: r4 + rh)
+
+            // Row 5: Key legends
+            let r5 = 4 + rh * 5
+            card.addSubview(makeLabel(tr("显示键盘字符", "Show Keycap Legends"), yPos: r5, width: 320))
+            legendsSwitch = makeSwitch(s.showKeyLegends, action: #selector(onToggleLegends), yPos: r5)
+            card.addSubview(legendsSwitch)
+            addRowDivider(card, yPos: r5 + rh)
+
+            // Row 6: Keyboard marquee
+            let r6 = 4 + rh * 6
+            card.addSubview(makeLabel(tr("键盘跑马灯流光", "Keyboard RGB Marquee"), yPos: r6, width: 320))
+            marqueeSwitch = makeSwitch(s.keyboardMarquee, action: #selector(onToggleMarquee), yPos: r6)
+            card.addSubview(marqueeSwitch)
+            addRowDivider(card, yPos: r6 + rh)
+
+            // Row 7: Drawing Tablet & Stylus
+            let r7 = 4 + rh * 7
+            card.addSubview(makeLabel(tr("数位板与触控笔", "Tablet & Stylus"), yPos: r7, width: 130))
+            tabletPopup = NSPopUpButton(frame: NSRect(x: 150, y: r7 + 5, width: 292, height: 24), pullsDown: false)
             tabletPopup.addItems(withTitles: [
                 tr("自动检测（连接数位板时切换）", "Auto-Detect When Connected"),
                 tr("始终显示数位板与触控笔", "Always Show Tablet & Stylus"),
@@ -1321,6 +1357,11 @@ final class SettingsWindowController: NSWindowController {
     @objc private func onTapDressingRoom() { onOpenDressingRoom?() }
     @objc private func onTapImportKB() { onImportKeyboardSkin?() }
 
+    @objc private func onToggleDragAnim() {
+        CatSettings.shared.enableDragAnimation = (dragAnimSwitch.state == .on)
+        onSettingsChanged?()
+    }
+
     @objc private func onToggleAnger() {
         CatSettings.shared.enableAnger = (angerSwitch.state == .on)
         onSettingsChanged?()
@@ -1328,6 +1369,18 @@ final class SettingsWindowController: NSWindowController {
 
     @objc private func onToggleBadges() {
         CatSettings.shared.showKeyBadges = (badgesSwitch.state == .on)
+        onSettingsChanged?()
+    }
+
+    @objc private func onToggleMouseBadges() {
+        CatSettings.shared.showMouseBadges = (mouseBadgesSwitch.state == .on)
+        onSettingsChanged?()
+    }
+
+    @objc private func onTypingLimbSelected() {
+        let idx = max(0, min(3, typingLimbPopup.indexOfSelectedItem))
+        CatSettings.shared.footEasterEgg = (idx == 0 || idx == 1)
+        CatSettings.shared.tailEasterEgg = (idx == 0 || idx == 2)
         onSettingsChanged?()
     }
 

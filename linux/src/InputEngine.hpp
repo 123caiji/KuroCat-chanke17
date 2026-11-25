@@ -12,6 +12,7 @@
 #include <cctype>
 #include <cmath>
 #include <fstream>
+#include <sstream>
 #include <dirent.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -157,6 +158,31 @@ public:
         return tabletHardwareFound_;
     }
 
+    static bool hasEvdevCapBit(const std::string& capPath, int bit) {
+        std::ifstream f(capPath);
+        if (!f) return false;
+        std::string line;
+        if (!std::getline(f, line)) return false;
+        std::istringstream iss(line);
+        std::vector<unsigned long> words;
+        std::string tok;
+        while (iss >> tok) {
+            try {
+                words.push_back(std::stoul(tok, nullptr, 16));
+            } catch (...) {
+                return false;
+            }
+        }
+        if (words.empty()) return false;
+        // sysfs lists capability bitmask words MSB-first; reverse to index from bit 0
+        std::reverse(words.begin(), words.end());
+        constexpr int bitsPerWord = (int)(sizeof(unsigned long) * 8);
+        int wordIdx = bit / bitsPerWord;
+        int bitIdx = bit % bitsPerWord;
+        if (wordIdx < 0 || wordIdx >= (int)words.size()) return false;
+        return ((words[wordIdx] >> bitIdx) & 1UL) != 0;
+    }
+
     void refreshTabletPresence(double now) {
         lastTabletScanTime_ = now;
         bool found = false;
@@ -164,26 +190,63 @@ public:
             struct dirent* ent = nullptr;
             while ((ent = readdir(dir)) != nullptr) {
                 if (std::strncmp(ent->d_name, "event", 5) != 0) continue;
-                std::string namePath = std::string("/sys/class/input/") + ent->d_name + "/device/name";
-                std::ifstream nf(namePath);
+                std::string devBase = std::string("/sys/class/input/") + ent->d_name + "/device";
+
+                // 1. Require physical external USB (0003) or Bluetooth (0005) bus — rejects internal I2C/ACPI touchscreens, Tablet Mode switches & virtual uinput
+                std::string bustype;
+                {
+                    std::ifstream bf(devBase + "/id/bustype");
+                    if (!bf || !std::getline(bf, bustype)) continue;
+                }
+                unsigned long busVal = 0;
+                try { busVal = std::stoul(bustype, nullptr, 16); } catch (...) { continue; }
+                if (busVal != 0x0003 && busVal != 0x0005) continue;
+
+                // 2. Read device name and reject touchpads / touchscreens / virtual / switches / plain mice & keyboards
                 std::string name;
-                if (!nf || !std::getline(nf, name)) continue;
+                {
+                    std::ifstream nf(devBase + "/name");
+                    if (!nf || !std::getline(nf, name)) continue;
+                }
                 for (char& ch : name) ch = (char)std::tolower((unsigned char)ch);
-                if (name.find("touchpad") != std::string::npos || name.find("trackpad") != std::string::npos) continue;
-                if (name.find("wacom") != std::string::npos ||
-                    name.find("huion") != std::string::npos ||
-                    name.find("xp-pen") != std::string::npos ||
-                    name.find("gaomon") != std::string::npos ||
-                    name.find("ugee") != std::string::npos ||
-                    name.find("veikk") != std::string::npos ||
-                    name.find("xencelabs") != std::string::npos ||
-                    name.find("hanvon") != std::string::npos ||
-                    name.find("parblo") != std::string::npos ||
-                    name.find("stylus") != std::string::npos ||
-                    name.find("pen") != std::string::npos ||
-                    name.find("tablet") != std::string::npos) {
+                if (name.find("touchpad") != std::string::npos ||
+                    name.find("trackpad") != std::string::npos ||
+                    name.find("touchscreen") != std::string::npos ||
+                    name.find("touch screen") != std::string::npos ||
+                    name.find("virtual") != std::string::npos ||
+                    name.find("tablet mode") != std::string::npos ||
+                    name.find("switch") != std::string::npos ||
+                    name.find("buttons") != std::string::npos ||
+                    name.find("hotkey") != std::string::npos ||
+                    name.find("mouse") != std::string::npos ||
+                    name.find("keyboard") != std::string::npos) {
+                    continue;
+                }
+
+                // 3. Verify real kernel evdev stylus capabilities (BTN_TOOL_PEN=320 or BTN_STYLUS=331 + ABS_X=0 & ABS_Y=1)
+                bool hasPenCap = hasEvdevCapBit(devBase + "/capabilities/key", 320) ||
+                                 hasEvdevCapBit(devBase + "/capabilities/key", 331);
+                bool hasAbsXY  = hasEvdevCapBit(devBase + "/capabilities/abs", 0) &&
+                                 hasEvdevCapBit(devBase + "/capabilities/abs", 1);
+                if (hasPenCap && hasAbsXY) {
                     found = true;
                     break;
+                }
+
+                // 4. Fallback for dedicated external USB/BT drawing tablet VIDs exposing ABS_X/Y + ABS_PRESSURE(24)
+                std::string vendorHex;
+                {
+                    std::ifstream vf(devBase + "/id/vendor");
+                    if (vf && std::getline(vf, vendorHex)) {
+                        unsigned long vid = 0;
+                        try { vid = std::stoul(vendorHex, nullptr, 16); } catch (...) { vid = 0; }
+                        bool knownVid = (vid == 0x056A || vid == 0x256C || vid == 0x28BD || vid == 0x5543 ||
+                                         vid == 0x2FEB || vid == 0x2179 || vid == 0x33F8 || vid == 0x2FBB);
+                        if (knownVid && hasAbsXY && hasEvdevCapBit(devBase + "/capabilities/abs", 24)) {
+                            found = true;
+                            break;
+                        }
+                    }
                 }
             }
             closedir(dir);
