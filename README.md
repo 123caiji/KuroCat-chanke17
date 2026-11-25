@@ -139,6 +139,7 @@ cmake -B build && cmake --build build --config Release
 | **OBS 直播与权限配置指南** | https://kurocat.cc/obs-guide/ | OBS Studio 透明窗口 / `#00FF00` 绿幕抠像、抖音直播伴侣、B 站直播姬与游戏防误触教程 |
 | **在线皮肤工坊 & 社区广场** | https://workshop.kurocat.cc/ | 照片取色捏猫、贝塞尔花纹分区、免费下载小豆泥 / 怪猎呆猫（艾露猫）/ 狸花猫等 `.kurocat` 皮肤与 `.kurokb` 键盘 |
 | **国内极速直链下载页** | https://kurocat-download.app.workbuddy.host/?sharecode=JVAABIVZ7L | 国内免代理高速镜像，附带评论区 10 问高频答疑 |
+| **KuroCat MCP Server** | [mcp/README.md](mcp/README.md) | 零依赖 Node.js MCP 服务器：让 Claude / Cursor / LobeChat 直接 AI 捏猫生成 `.kurocat` / `.kurokb` 并一键搜索安装社区皮肤 |
 
 ---
 

@@ -133,6 +133,7 @@ Supports **Ubuntu 20.04+ / Debian 11+ / Deepin / UOS (x86_64 & ARM64) / Kylin / 
 - **Official Website (Chinese)**: https://kurocat.cc/
 - **OBS Streaming & Setup Guide**: https://kurocat.cc/obs-guide/ (OBS transparent capture, `#00FF00` green screen, gaming click-through, OS permissions)
 - **Skin Workshop & Community Plaza**: https://workshop.kurocat.cc/ (browser-based 2.5D coat editor + free Xiao Douni, Monster Hunter Palico, Tabby `.kurocat` skins & `.kurokb` mechanical keyboards)
+- **KuroCat MCP Server (`kurocat-mcp`)**: [mcp/README.md](mcp/README.md) (zero-dependency Model Context Protocol server for Claude Desktop, Cursor, LobeChat & Antigravity to generate `.kurocat` skins, design `.kurokb` mechanical keyboards, and install skins directly from the Community Plaza)
 - **AI / LLM Technical Reference**: https://kurocat.cc/llms.txt · https://kurocat.cc/llms-full.txt
 
 ---

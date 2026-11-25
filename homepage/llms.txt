@@ -14,6 +14,7 @@
 - [GitHub Releases](https://github.com/chanke17/KuroCat/releases): Automated GitHub Actions builds with SHA-256 checksums.
 - [Fast Direct Download Mirror (China)](https://kurocat-download.app.workbuddy.host/?sharecode=JVAABIVZ7L): High-speed direct mirror with verified SHA-256 hashes.
 - [Workshop Repository (`chanke17/KuroCat-Workshop`)](https://github.com/chanke17/KuroCat-Workshop): Community skin, accessory, and keyboard PR submissions.
+- [KuroCat MCP Server (`kurocat-mcp`)](https://github.com/chanke17/KuroCat/tree/main/mcp): Zero-dependency Model Context Protocol (MCP) server for AI assistants (Claude, Cursor, LobeChat) to design custom `.kurocat` skins, `.kurokb` keyboard themes, and install creations from the Community Plaza.
 - [`.kurocat` v1 Skin Format Specification](https://github.com/chanke17/KuroCat/blob/main/docs/skin-format.md): Open vector skin schema.
 
 ## Core Differentiators (Quick Reference)
