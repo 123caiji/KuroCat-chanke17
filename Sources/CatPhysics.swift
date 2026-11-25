@@ -1404,12 +1404,14 @@ struct SkinShape {
     var tailLength: CGFloat = 1, tailThickness: CGFloat = 1, tailRootY: CGFloat = 0
     var cheekFullness: CGFloat = 1, neckWidth: CGFloat = 1, pawStagger: CGFloat = 1
     var armSpacing: CGFloat = 1, armLength: CGFloat = 1, armRootY: CGFloat = 0
+    var hindLegRootX: CGFloat = 0, hindLegRootY: CGFloat = 0, hindLegWidth: CGFloat = 1, hindLegReach: CGFloat = 1
 }
 
 struct SkinPartGradient {
     var from: SkinColor
     var to: SkinColor
     var angle: CGFloat = 90
+    var stop: CGFloat = 0.5
 }
 
 struct SkinDecoration {
@@ -1675,6 +1677,10 @@ struct SkinSpec {
             spec.shape.armSpacing = try number(sh["armSpacing"], "shape.armSpacing", 0.50, 1.60, 1)
             spec.shape.armLength = try number(sh["armLength"], "shape.armLength", 0.60, 1.50, 1)
             spec.shape.armRootY = try number(sh["armRootY"], "shape.armRootY", -30, 30, 0)
+            spec.shape.hindLegRootX = try number(sh["hindLegRootX"], "shape.hindLegRootX", -24, 24, 0)
+            spec.shape.hindLegRootY = try number(sh["hindLegRootY"], "shape.hindLegRootY", -24, 24, 0)
+            spec.shape.hindLegWidth = try number(sh["hindLegWidth"], "shape.hindLegWidth", 0.60, 1.60, 1)
+            spec.shape.hindLegReach = try number(sh["hindLegReach"], "shape.hindLegReach", 0.65, 1.50, 1)
         }
         if let pg = root["partGradients"] as? [String: Any] {
             for (k, vAny) in pg {
@@ -1684,7 +1690,8 @@ struct SkinSpec {
                 if let fromCol = try? color(fromAny, "partGradients.\(k).from"),
                    let toCol = try? color(toAny, "partGradients.\(k).to") {
                     let angle = (try? number(g["angle"], "partGradients.\(k).angle", -360, 360, 90)) ?? 90
-                    spec.partGradients[k] = SkinPartGradient(from: fromCol, to: toCol, angle: angle)
+                    let stop = (try? number(g["stop"], "partGradients.\(k).stop", 0.1, 0.9, 0.5)) ?? 0.5
+                    spec.partGradients[k] = SkinPartGradient(from: fromCol, to: toCol, angle: angle, stop: stop)
                 }
             }
         }

@@ -59,11 +59,13 @@ struct SkinShape {
     float tailLength = 1, tailThickness = 1, tailRootY = 0;
     float cheekFullness = 1, neckWidth = 1, pawStagger = 1;
     float armSpacing = 1, armLength = 1, armRootY = 0;
+    float hindLegRootX = 0, hindLegRootY = 0, hindLegWidth = 1, hindLegReach = 1;
 };
 
 struct SkinPartGradient {
     SkinColor from, to;
     float angle = 90.0f; // degrees (90 = top to bottom)
+    float stop = 0.5f;   // 0.1..0.9 mid-transition fraction matching Workshop
     bool set = false;
 };
 
@@ -505,7 +507,11 @@ inline bool SkinSpec::parse(const std::string& bytes, SkinSpec& out, std::string
             !number(c, sh->get("pawStagger"), "shape.pawStagger", 0.0, 1.0, h.pawStagger) ||
             !number(c, sh->get("armSpacing"), "shape.armSpacing", 0.50, 1.60, h.armSpacing) ||
             !number(c, sh->get("armLength"), "shape.armLength", 0.60, 1.50, h.armLength) ||
-            !number(c, sh->get("armRootY"), "shape.armRootY", -30.0, 30.0, h.armRootY)) { error = c.error; return false; }
+            !number(c, sh->get("armRootY"), "shape.armRootY", -30.0, 30.0, h.armRootY) ||
+            !number(c, sh->get("hindLegRootX"), "shape.hindLegRootX", -24.0, 24.0, h.hindLegRootX) ||
+            !number(c, sh->get("hindLegRootY"), "shape.hindLegRootY", -24.0, 24.0, h.hindLegRootY) ||
+            !number(c, sh->get("hindLegWidth"), "shape.hindLegWidth", 0.60, 1.60, h.hindLegWidth) ||
+            !number(c, sh->get("hindLegReach"), "shape.hindLegReach", 0.65, 1.50, h.hindLegReach)) { error = c.error; return false; }
     }
     if (const Value* pg = root.get("partGradients"); pg && pg->type == Value::JObject) {
         for (size_t i = 0; i < pg->keys.size(); ++i) {
@@ -518,6 +524,7 @@ inline bool SkinSpec::parse(const std::string& bytes, SkinSpec& out, std::string
             if (!color(gc, vFrom, "partGradients.from", grad.from) || !color(gc, vTo, "partGradients.to", grad.to)) continue;
             if (!grad.from.set || !grad.to.set) continue;
             number(gc, g.get("angle"), "partGradients.angle", -360.0, 360.0, grad.angle);
+            number(gc, g.get("stop"), "partGradients.stop", 0.1, 0.9, grad.stop);
             grad.set = true;
             s.partGradients[pg->keys[i]] = grad;
         }

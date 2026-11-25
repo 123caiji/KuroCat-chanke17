@@ -96,16 +96,18 @@ int main() {
     auto jaw = skinJawSide(true, 1.0f);
     CHECK(jaw.size() == 3 + 1 + 32 + 1, "jaw polygon size");
 
-    // 1.4.5 heterochromia, pupil, headBody, transparent mouth, extended shape & partGradients
+    // 1.4.5+ heterochromia, pupil, headBody, transparent mouth, extended shape & partGradients
     SkinSpec ext = accepts(R"({"formatVersion":1,"name":"异瞳猫","palette":{"body":"#FAF5EC","headBody":"#222226","mouth":"#00000000","iris":"#E5A63B","irisLeft":"#4DA6FF","irisRight":"#F5C542","pupil":"#111111","pupilLeft":"#220033","pupilRight":"#002211"},
-        "shape":{"earSpacing":1.2,"tailRootY":-8,"armSpacing":1.15,"armLength":0.9,"armRootY":5},
-        "partGradients":{"body":{"from":"#FAF5EC","to":"#E0D4C0","angle":90}}})");
+        "shape":{"earSpacing":1.2,"tailRootY":-8,"armSpacing":1.15,"armLength":0.9,"armRootY":5,"hindLegRootX":-6,"hindLegRootY":4,"hindLegWidth":1.25,"hindLegReach":1.15},
+        "partGradients":{"body":{"from":"#FAF5EC","to":"#E0D4C0","angle":90,"stop":0.35},"head":{"from":"#1A1A1E","to":"#FFFFFF","stop":0.01}}})");
     CHECK(ext.palette.headBody.set && ext.palette.irisLeft.set && ext.palette.irisRight.set, "headBody + heterochromia iris");
     CHECK(ext.palette.pupil.set && ext.palette.pupilLeft.set && ext.palette.pupilRight.set, "pupil + heterochromia pupil");
     CHECK(ext.palette.mouth.set && ext.palette.mouth.a < 0.01, "transparent mouth parsed for hiding");
     CHECK(std::fabs(ext.shape.earSpacing - 1.2f) < 1e-4f && std::fabs(ext.shape.tailRootY - (-8.0f)) < 1e-4f, "earSpacing + tailRootY");
     CHECK(std::fabs(ext.shape.armSpacing - 1.15f) < 1e-4f && std::fabs(ext.shape.armLength - 0.9f) < 1e-4f && std::fabs(ext.shape.armRootY - 5.0f) < 1e-4f, "arm shape params");
-    CHECK(ext.partGradients.count("body") == 1 && ext.partGradients["body"].set, "partGradients parsed");
+    CHECK(std::fabs(ext.shape.hindLegRootX - (-6.0f)) < 1e-4f && std::fabs(ext.shape.hindLegRootY - 4.0f) < 1e-4f && std::fabs(ext.shape.hindLegWidth - 1.25f) < 1e-4f && std::fabs(ext.shape.hindLegReach - 1.15f) < 1e-4f, "hindLeg shape params");
+    CHECK(ext.partGradients.count("body") == 1 && ext.partGradients["body"].set && std::fabs(ext.partGradients["body"].stop - 0.35f) < 1e-4f, "partGradients.stop parsed");
+    CHECK(ext.partGradients.count("head") == 1 && std::fabs(ext.partGradients["head"].stop - 0.1f) < 1e-4f, "partGradients.stop clamped");
 
     if (failures) { std::printf("%d check(s) failed\n", failures); return 1; }
     std::printf("PASS: .kurocat parser — templates/sample load, 28 malformed inputs rejected in Chinese, clamping/defaults/escapes/stickers OK\n");

@@ -324,6 +324,9 @@ enum CatRenderer {
 
         if !tailInFront {
             drawTail(in: ctx, seatX: seatX, seatY: seatY, physics: physics, skin: skin)
+            if !skin.decorations.isEmpty {
+                drawDecorations(in: ctx, seatX: seatX, seatY: seatY, head: localHeadCenter, physics: physics, skin: skin, anchors: [.tailTip])
+            }
         }
 
         // 4. 3D-Projected Ears (behind crown silhouette so seal-point ears emerge cleanly from cream skull!)
@@ -345,24 +348,32 @@ enum CatRenderer {
             drawHindFoot(in: ctx, seatX: seatX, seatY: seatY, physics: physics, skin: skin)
         }
 
-        // 7. 2.5D Turning Head Features: Luminous Eyes & Whiskers (+ optional nose/mouth)
-        drawHeadFeatures(in: ctx, center: localHeadCenter, physics: physics, eyeTheme: settings.eyeTheme, skin: skin)
-
-        // 7b. Skin stickers anchored to head / neck / tail tip
-        if !skin.decorations.isEmpty {
-            drawDecorations(in: ctx, seatX: seatX, seatY: seatY, head: localHeadCenter, physics: physics, skin: skin)
-        }
-
-        // 8. Front Arms / Paws (over torso & keyboard/mouse with crisp separation outlines / colour-point socks!)
+        // 7. Front Arms / Paws (over torso & keyboard/mouse with crisp separation outlines / colour-point socks!)
         drawFrontPaws(in: ctx, seatX: seatX, seatY: seatY, breath: breath, physics: physics, skin: skin)
 
-        // 8b. Held Stylus gripped cleanly in the cat's paw when drawing on the graphics tablet!
+        // 7b. Held Stylus gripped cleanly in the cat's paw when drawing on the graphics tablet!
         if physics.isTabletActive && physics.leftPawOnMouse && scruff <= 0.25 && dizzy <= 0.35 && lie <= 0.45 {
             drawHeldStylus(in: ctx, physics: physics, theme: settings.keyboardTheme, eyeTheme: settings.eyeTheme)
         }
 
+        // 7c. Neck stickers (collar/scarf/bowtie) over chest & arm roots, cleanly behind head features
+        if !skin.decorations.isEmpty {
+            drawDecorations(in: ctx, seatX: seatX, seatY: seatY, head: localHeadCenter, physics: physics, skin: skin, anchors: [.neck])
+        }
+
+        // 8. 2.5D Turning Head Features: Luminous Eyes & Whiskers (+ optional nose/mouth)
+        drawHeadFeatures(in: ctx, center: localHeadCenter, physics: physics, eyeTheme: settings.eyeTheme, skin: skin)
+
+        // 8b. Face & head-top stickers cleanly above eyes, ears & features
+        if !skin.decorations.isEmpty {
+            drawDecorations(in: ctx, seatX: seatX, seatY: seatY, head: localHeadCenter, physics: physics, skin: skin, anchors: [.face, .headTop])
+        }
+
         if tailInFront {
             drawTail(in: ctx, seatX: seatX, seatY: seatY, physics: physics, skin: skin)
+            if !skin.decorations.isEmpty {
+                drawDecorations(in: ctx, seatX: seatX, seatY: seatY, head: localHeadCenter, physics: physics, skin: skin, anchors: [.tailTip])
+            }
         }
 
         ctx.restoreGState()
@@ -1712,6 +1723,28 @@ enum CatRenderer {
         ctx.restoreGState()
     }
 
+    private static func drawClampedPartGradient(
+        in ctx: CGContext,
+        _ g: SkinPartGradient,
+        start: CGPoint,
+        end: CGPoint
+    ) {
+        if hypot(end.x - start.x, end.y - start.y) < 1.0 {
+            ctx.setFillColor(g.to.ns.cgColor)
+            ctx.fill(ctx.boundingBoxOfClipPath)
+            return
+        }
+        let stop = max(0.1, min(0.9, g.stop))
+        let cs = CGColorSpaceCreateDeviceRGB()
+        let cols = [g.from.ns.cgColor, g.to.ns.cgColor, g.to.ns.cgColor] as CFArray
+        if let grad = CGGradient(colorsSpace: cs, colors: cols, locations: [0.0, stop, 1.0]) {
+            ctx.drawLinearGradient(grad, start: start, end: end, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+        } else {
+            ctx.setFillColor(g.to.ns.cgColor)
+            ctx.fill(ctx.boundingBoxOfClipPath)
+        }
+    }
+
     private static func drawTail(in ctx: CGContext, seatX: CGFloat, seatY: CGFloat, physics: CatPhysics, skin: SkinSpec, outlineOnly: Bool = false) {
         let curve = tailCurve(seatX: seatX, seatY: seatY, physics: physics, skin: skin)
         let width = (skin.renderStyle == .dazed) ? 13.0 : (build(skin).tailWidth * skin.shape.tailThickness)
@@ -1730,14 +1763,25 @@ enum CatRenderer {
             ctx.restoreGState()
             return
         }
-        ctx.setStrokeColor(skin.palette.tail.ns.cgColor)
-        ctx.setLineWidth(width)
-        ctx.setLineCap(.round)
-        ctx.setLineJoin(.round)
-        ctx.move(to: curve.root)
-        ctx.addCurve(to: curve.tip, control1: curve.c1, control2: curve.c2)
-        let tailLine = ctx.path
-        ctx.strokePath()
+        let tailPath = CGMutablePath()
+        tailPath.move(to: curve.root)
+        tailPath.addCurve(to: curve.tip, control1: curve.c1, control2: curve.c2)
+        let tailLine: CGPath? = tailPath
+        if let tailGrad = skin.partGradients["tail"] {
+            let strokedTail = tailPath.copy(strokingWithWidth: width, lineCap: .round, lineJoin: .round, miterLimit: 2)
+            ctx.saveGState()
+            ctx.addPath(strokedTail)
+            ctx.clip()
+            drawClampedPartGradient(in: ctx, tailGrad, start: curve.root, end: curve.tip)
+            ctx.restoreGState()
+        } else {
+            ctx.setStrokeColor(skin.palette.tail.ns.cgColor)
+            ctx.setLineWidth(width)
+            ctx.setLineCap(.round)
+            ctx.setLineJoin(.round)
+            ctx.addPath(tailPath)
+            ctx.strokePath()
+        }
         // Crisp upper separation rim on wrapped sleeping tail so it stands out cleanly against the curled torso!
         if lieS > 0.35 {
             let rAlpha = min(1.0, (lieS - 0.35) / 0.45) * 0.72
@@ -1923,7 +1967,7 @@ enum CatRenderer {
                 ctx.addPath(join); ctx.strokePath()
             }
         }
-        if pal.bodyShade != nil || pal.headBody != nil || skin.colorpoint || hasRegions || hasMarks {
+        if pal.bodyShade != nil || pal.headBody != nil || skin.partGradients["body"] != nil || skin.partGradients["head"] != nil || skin.colorpoint || hasRegions || hasMarks {
             ctx.saveGState(); ctx.addPath(path); ctx.clip()
             let cs = CGColorSpaceCreateDeviceRGB()
 
@@ -1940,6 +1984,15 @@ enum CatRenderer {
                 }
             }
 
+            if let bodyGrad = skin.partGradients["body"] {
+                ctx.saveGState()
+                let bodySide = SkinSpec.jawSide(head: false, cheekFullness: skin.shape.cheekFullness)
+                ctx.addPath(polyline(bodySide, closed: true, map: headMap))
+                ctx.clip()
+                drawClampedPartGradient(in: ctx, bodyGrad, start: CGPoint(x: seatX, y: seatY - 78), end: CGPoint(x: seatX, y: seatY + 16))
+                ctx.restoreGState()
+            }
+
             if let headBody = pal.headBody {
                 ctx.saveGState()
                 let headSide = SkinSpec.jawSide(head: true, cheekFullness: skin.shape.cheekFullness)
@@ -1951,13 +2004,12 @@ enum CatRenderer {
                 ctx.restoreGState()
             }
 
-            // Curve regions: head/skull above the jaw line, body below it.
-            for region in skin.regions where partSpaces.contains(region.space) {
+            if let headGrad = skin.partGradients["head"] {
                 ctx.saveGState()
-                let side = SkinSpec.jawSide(head: region.space != .body, cheekFullness: skin.shape.cheekFullness)
-                ctx.addPath(polyline(side, closed: true, map: headMap))
+                let headSide = SkinSpec.jawSide(head: true, cheekFullness: skin.shape.cheekFullness)
+                ctx.addPath(polyline(headSide, closed: true, map: headMap))
                 ctx.clip()
-                drawRegion(in: ctx, region, map: region.space == .body ? bodyMap : (region.space == .skull ? skullMap : headMap))
+                drawClampedPartGradient(in: ctx, headGrad, start: CGPoint(x: headCenter.x, y: headCenter.y - 44), end: CGPoint(x: headCenter.x, y: headCenter.y + 40))
                 ctx.restoreGState()
             }
 
@@ -2017,6 +2069,24 @@ enum CatRenderer {
                 ctx.restoreGState()
             }
 
+            // Curve regions: body regions below jawline first, then skull/head regions above jawline.
+            let bodyRegSide = SkinSpec.jawSide(head: false, cheekFullness: skin.shape.cheekFullness)
+            for region in skin.regions where region.space == .body {
+                ctx.saveGState()
+                ctx.addPath(polyline(bodyRegSide, closed: true, map: headMap))
+                ctx.clip()
+                drawRegion(in: ctx, region, map: bodyMap)
+                ctx.restoreGState()
+            }
+            let headRegSide = SkinSpec.jawSide(head: true, cheekFullness: skin.shape.cheekFullness)
+            for region in skin.regions where region.space == .head || region.space == .skull {
+                ctx.saveGState()
+                ctx.addPath(polyline(headRegSide, closed: true, map: headMap))
+                ctx.clip()
+                drawRegion(in: ctx, region, map: region.space == .skull ? skullMap : headMap)
+                ctx.restoreGState()
+            }
+
             let overlap = min(1, abs(yaw) * max(0, pitch))
             let coverage = overlap * overlap * (3 - 2 * overlap)
             let bib = skin.marks.first { $0.space == .head && !$0.stroke && isMilkMark($0) && $0.points.contains { abs($0.x) > 46 } }
@@ -2025,8 +2095,7 @@ enum CatRenderer {
                 switch mark.space {
                 case .body:
                     ctx.saveGState()
-                    let bodySide = SkinSpec.jawSide(head: false, cheekFullness: skin.shape.cheekFullness)
-                    ctx.addPath(polyline(bodySide, closed: true, map: headMap))
+                    ctx.addPath(polyline(bodyRegSide, closed: true, map: headMap))
                     ctx.clip()
                     drawMark(in: ctx, mark, map: bodyMap)
                     ctx.restoreGState()
@@ -2118,11 +2187,19 @@ enum CatRenderer {
     // MARK: - 3rd Key Hind Foot Easter Egg
 
     private static func drawHindFoot(in ctx: CGContext, seatX: CGFloat, seatY: CGFloat, physics: CatPhysics, skin: SkinSpec) {
-        let hip = CGPoint(x: seatX + 26 * skin.shape.bodyWidth, y: seatY + 2)
-        let target = physics.hindFoot.point
+        let hlRX = skin.shape.hindLegRootX
+        let hlRY = skin.shape.hindLegRootY
+        let hlW = skin.shape.hindLegWidth
+        let hlReach = skin.shape.hindLegReach
+        let hip = CGPoint(x: seatX + 26 * skin.shape.bodyWidth + hlRX, y: seatY + 2 + hlRY)
+        let rawT = physics.hindFoot.point
+        let target = CGPoint(
+            x: hip.x + (rawT.x - hip.x) * hlReach,
+            y: hip.y + (rawT.y - hip.y) * hlReach
+        )
         let mid = CGPoint(
-            x: (hip.x + target.x) * 0.5 + 10,
-            y: (hip.y + target.y) * 0.5 - 8
+            x: (hip.x + target.x) * 0.5 + 10 * hlReach,
+            y: (hip.y + target.y) * 0.5 - 8 * hlReach
         )
 
         drawLimb(
@@ -2130,8 +2207,8 @@ enum CatRenderer {
             start: hip,
             control: mid,
             end: target,
-            startWidth: 15.0,
-            endWidth: 12.0,
+            startWidth: 15.0 * hlW,
+            endWidth: 12.0 * hlW,
             outlineOnLeftSide: true,
             outlineAlpha: 0.85 * physics.hindFootActive.value,
             skin: skin
@@ -2461,9 +2538,19 @@ enum CatRenderer {
             ctx.restoreGState()
             return
         }
-        ctx.setFillColor(skin.palette.earOuter.ns.cgColor)
-        ctx.addPath(ear)
-        ctx.fillPath()
+        let space: SkinSpace = isLeft ? .leftEar : .rightEar
+        if let earGrad = skin.partGradients[space.rawValue] {
+            let earMid = CGPoint(x: (innerBase3D.x + outerBase3D.x) * 0.5, y: (innerBase3D.y + outerBase3D.y) * 0.5)
+            ctx.saveGState()
+            ctx.addPath(ear)
+            ctx.clip()
+            drawClampedPartGradient(in: ctx, earGrad, start: earMid, end: tip3D)
+            ctx.restoreGState()
+        } else {
+            ctx.setFillColor(skin.palette.earOuter.ns.cgColor)
+            ctx.addPath(ear)
+            ctx.fillPath()
+        }
 
         // Optional inner ear hollow (warm dusty cocoa on the Siamese)
         if let innerColor = skin.palette.earInner {
@@ -2483,7 +2570,6 @@ enum CatRenderer {
             ctx.fillPath()
         }
 
-        let space: SkinSpace = isLeft ? .leftEar : .rightEar
         if skin.hasPartArt(space) {
             // Ear space: (-50,0) inner base, (50,0) outer base, (0,-100) tip; mirrored per ear.
             let m = CGPoint(x: (innerBase3D.x + outerBase3D.x) * 0.5, y: (innerBase3D.y + outerBase3D.y) * 0.5)
@@ -2777,9 +2863,11 @@ enum CatRenderer {
     // MARK: - Decorations (anchored PNG stickers)
 
     private static func drawDecorations(in ctx: CGContext, seatX: CGFloat, seatY: CGFloat, head: CGPoint, physics: CatPhysics, skin: SkinSpec,
-                                        neckOverride: CGPoint? = nil, tailTipOverride: CGPoint? = nil) {
+                                        neckOverride: CGPoint? = nil, tailTipOverride: CGPoint? = nil,
+                                        anchors: Set<SkinAnchorPoint>? = nil) {
         let yawRad = physics.headYaw.value * 0.50, pitchRad = physics.headPitch.value * 0.36
         for deco in skin.decorations {
+            if let anchors = anchors, !anchors.contains(deco.anchor) { continue }
             var at = CGPoint.zero
             var rot: CGFloat = 0, kx: CGFloat = 1, ky: CGFloat = 1
             switch deco.anchor {
@@ -2794,7 +2882,11 @@ enum CatRenderer {
                     at = CGPoint(x: n.x + deco.offsetX, y: n.y + deco.offsetY)
                     rot = 0
                 } else {
-                    at = bodyPoint(CGPoint(x: deco.offsetX, y: -64 + deco.offsetY), skin: skin, seatX: seatX, seatY: seatY, physics: physics)
+                    let baseNeck = bodyPoint(CGPoint(x: 0, y: -64), skin: skin, seatX: seatX, seatY: seatY, physics: physics)
+                    let minChinNeckY = head.y + 36.0 * skin.shape.headScale
+                    let chinDrop = max(0, minChinNeckY - baseNeck.y)
+                    let rawPt = bodyPoint(CGPoint(x: deco.offsetX, y: -64 + deco.offsetY), skin: skin, seatX: seatX, seatY: seatY, physics: physics)
+                    at = CGPoint(x: rawPt.x, y: rawPt.y + chinDrop)
                     rot = physics.bodyTilt.value
                 }
             case .tailTip:
@@ -2973,24 +3065,30 @@ enum CatRenderer {
                 control: CGPoint(x: top.x - sign * 6.5, y: (top.y + bottom.y) * 0.5)
             )
             legShape.closeSubpath()
-            if skin.idleLegsTinted {
-            ctx.saveGState()
-            ctx.addPath(legShape)
-            ctx.clip()
-            let cs = CGColorSpaceCreateDeviceRGB()
-            let legCols = [pal.legs.withAlpha(0.0).cgColor, pal.legs.ns.cgColor, pal.legs.ns.cgColor] as CFArray
-            if let legGrad = CGGradient(colorsSpace: cs, colors: legCols, locations: [0.04, 0.32, 1.0]) {
-                ctx.drawLinearGradient(
-                    legGrad,
-                    start: CGPoint(x: top.x, y: top.y),
-                    end: CGPoint(x: bottom.x, y: bottom.y + 5.0),
-                    options: [.drawsAfterEndLocation]
-                )
-            }
-            ctx.restoreGState()
+            let armSpace: SkinSpace = isLeft ? .leftArm : .rightArm
+            if let armGrad = skin.partGradients[armSpace.rawValue] {
+                ctx.saveGState()
+                ctx.addPath(legShape)
+                ctx.clip()
+                drawClampedPartGradient(in: ctx, armGrad, start: top, end: CGPoint(x: bottom.x, y: bottom.y + 5.0))
+                ctx.restoreGState()
+            } else if skin.idleLegsTinted {
+                ctx.saveGState()
+                ctx.addPath(legShape)
+                ctx.clip()
+                let cs = CGColorSpaceCreateDeviceRGB()
+                let legCols = [pal.legs.withAlpha(0.0).cgColor, pal.legs.ns.cgColor, pal.legs.ns.cgColor] as CFArray
+                if let legGrad = CGGradient(colorsSpace: cs, colors: legCols, locations: [0.04, 0.32, 1.0]) {
+                    ctx.drawLinearGradient(
+                        legGrad,
+                        start: CGPoint(x: top.x, y: top.y),
+                        end: CGPoint(x: bottom.x, y: bottom.y + 5.0),
+                        options: [.drawsAfterEndLocation]
+                    )
+                }
+                ctx.restoreGState()
             }
 
-            let armSpace: SkinSpace = isLeft ? .leftArm : .rightArm
             if skin.hasPartArt(armSpace) {
                 let map: (CGPoint) -> CGPoint = { p in
                     let t = max(0, min(1, p.x / 100.0))
@@ -3158,11 +3256,17 @@ enum CatRenderer {
                 ctx.strokePath()
             }
         } else {
+            let isLeftArm = frontPaw && !outlineOnLeftSide
+            let limbSpace: SkinSpace = frontPaw ? (isLeftArm ? .leftArm : .rightArm) : .hindLeg
             let limbBaseCol = frontPaw ? pal.legs : (pal.hindLeg ?? pal.legs)
             let limbPawCol = frontPaw ? pal.paws : (pal.hindPaw ?? pal.paws)
             ctx.setFillColor(limbBaseCol.ns.cgColor)
             ctx.addPath(limbPath)
-            if frontPaw, let chest = pal.belly, chest != limbBaseCol {
+            if let limbGrad = skin.partGradients[limbSpace.rawValue] {
+                ctx.saveGState(); ctx.clip()
+                drawClampedPartGradient(in: ctx, limbGrad, start: start, end: end)
+                ctx.restoreGState()
+            } else if frontPaw, let chest = pal.belly, chest != limbBaseCol {
                 // White chest fading into the leg colour along the first 30% of the arm.
                 ctx.saveGState(); ctx.clip()
                 let colors = [chest.ns.cgColor, limbBaseCol.ns.cgColor] as CFArray
@@ -3172,8 +3276,6 @@ enum CatRenderer {
                 }
                 ctx.restoreGState()
             } else { ctx.fillPath() }
-            let isLeftArm = frontPaw && !outlineOnLeftSide
-            let limbSpace: SkinSpace = frontPaw ? (isLeftArm ? .leftArm : .rightArm) : .hindLeg
             if skin.hasPartArt(limbSpace) {
                 let sideSign: CGFloat = isLeftArm ? 1.0 : -1.0
                 let map: (CGPoint) -> CGPoint = { pt in
@@ -6666,6 +6768,8 @@ enum CatRenderer {
                 if let grad = CGGradient(colorsSpace: cs, colors: cols, locations: [0.0, 0.20, 0.54, 0.88]) {
                     ctx.drawLinearGradient(grad, start: limb.root, end: limb.tip, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
                 }
+            } else if let armSpace = limb.armSpace, let limbGrad = skin.partGradients[armSpace.rawValue] {
+                drawClampedPartGradient(in: ctx, limbGrad, start: limb.root, end: limb.tip)
             } else if !limb.isBehindBody && pal.legs != pal.body {
                 let cols = [pal.body.ns.cgColor, pal.body.ns.cgColor, pal.legs.ns.cgColor, pal.paws.ns.cgColor] as CFArray
                 if let grad = CGGradient(colorsSpace: cs, colors: cols, locations: [0.0, 0.14, 0.42, 0.82]) {
@@ -6770,10 +6874,19 @@ enum CatRenderer {
         // 1. Limp drooping/whipping tail behind the lower body
         ctx.saveGState()
         ctx.setLineCap(.round)
-        ctx.setStrokeColor(isDazed ? dazedColor(0x283157) : pal.tail.ns.cgColor)
-        ctx.setLineWidth(tailW)
-        ctx.addPath(tailCurvePath)
-        ctx.strokePath()
+        if !isDazed, let tailGrad = skin.partGradients["tail"] {
+            let strokedTail = tailCurvePath.copy(strokingWithWidth: tailW, lineCap: .round, lineJoin: .round, miterLimit: 2)
+            ctx.saveGState()
+            ctx.addPath(strokedTail)
+            ctx.clip()
+            drawClampedPartGradient(in: ctx, tailGrad, start: tailPivot, end: tailTip)
+            ctx.restoreGState()
+        } else {
+            ctx.setStrokeColor(isDazed ? dazedColor(0x283157) : pal.tail.ns.cgColor)
+            ctx.setLineWidth(tailW)
+            ctx.addPath(tailCurvePath)
+            ctx.strokePath()
+        }
         if let stripes = pal.stripes, !isBlackRim && !skin.colorpoint && !isDazed {
             func evalTailPt(_ t: CGFloat) -> CGPoint {
                 let u = 1.0 - t
@@ -6807,6 +6920,11 @@ enum CatRenderer {
             ctx.strokePath()
         }
         ctx.restoreGState()
+
+        if !skin.decorations.isEmpty {
+            drawDecorations(in: ctx, seatX: rumpCenterX, seatY: torsoBottomY, head: headCenter, physics: physics, skin: skin,
+                            tailTipOverride: tailTip, anchors: [.tailTip])
+        }
 
         // 2. Dangling hind legs emerging from the lower belly hem
         drawDragLimb(backLeftLimb)
@@ -6897,6 +7015,15 @@ enum CatRenderer {
                 }
             }
 
+            if let bodyGrad = skin.partGradients["body"] {
+                ctx.saveGState()
+                let bodySide = SkinSpec.jawSide(head: false, cheekFullness: skin.shape.cheekFullness)
+                ctx.addPath(polyline(bodySide, closed: true, map: headMap))
+                ctx.clip()
+                drawClampedPartGradient(in: ctx, bodyGrad, start: CGPoint(x: headCenter.x, y: headCenter.y + 20), end: CGPoint(x: rumpCenterX, y: torsoBottomY + bottomDip))
+                ctx.restoreGState()
+            }
+
             if let headBody = pal.headBody {
                 ctx.saveGState()
                 let headSide = SkinSpec.jawSide(head: true, cheekFullness: skin.shape.cheekFullness)
@@ -6908,14 +7035,12 @@ enum CatRenderer {
                 ctx.restoreGState()
             }
 
-            // Curve regions with EXACT seated jaw-line clipping — 100% faithful to every custom skin!
-            for region in skin.regions where region.space == .head || region.space == .skull || region.space == .body {
+            if let headGrad = skin.partGradients["head"] {
                 ctx.saveGState()
-                let side = SkinSpec.jawSide(head: region.space != .body, cheekFullness: skin.shape.cheekFullness)
-                ctx.addPath(polyline(side, closed: true, map: headMap))
+                let headSide = SkinSpec.jawSide(head: true, cheekFullness: skin.shape.cheekFullness)
+                ctx.addPath(polyline(headSide, closed: true, map: headMap))
                 ctx.clip()
-                let map: (CGPoint) -> CGPoint = (region.space == .body) ? dragBodyMap : (region.space == .skull ? skullMap : headMap)
-                drawRegion(in: ctx, region, map: map)
+                drawClampedPartGradient(in: ctx, headGrad, start: CGPoint(x: headCenter.x, y: headCenter.y - 48), end: CGPoint(x: headCenter.x, y: headCenter.y + 40))
                 ctx.restoreGState()
             }
 
@@ -6932,18 +7057,39 @@ enum CatRenderer {
                 ctx.restoreGState()
             }
 
-            // Marks: body marks first (clipped below jaw line), then skull/head marks on top (exact seated draw order!)
-            for mark in skin.marks where mark.space == .body {
+            // Curve regions: body regions below jawline first, then skull/head regions above jawline
+            let dragBodySide = SkinSpec.jawSide(head: false, cheekFullness: skin.shape.cheekFullness)
+            for region in skin.regions where region.space == .body {
                 ctx.saveGState()
-                let bodySide = SkinSpec.jawSide(head: false, cheekFullness: skin.shape.cheekFullness)
-                ctx.addPath(polyline(bodySide, closed: true, map: headMap))
+                ctx.addPath(polyline(dragBodySide, closed: true, map: headMap))
                 ctx.clip()
-                drawMark(in: ctx, mark, map: dragBodyMap)
+                drawRegion(in: ctx, region, map: dragBodyMap)
                 ctx.restoreGState()
             }
-            for mark in skin.marks where mark.space == .head || mark.space == .skull {
-                let map: (CGPoint) -> CGPoint = mark.space == .skull ? skullMap : (isMilkMark(mark) ? headWhiteMap : headMap)
-                drawMark(in: ctx, mark, map: map)
+            let dragHeadSide = SkinSpec.jawSide(head: true, cheekFullness: skin.shape.cheekFullness)
+            for region in skin.regions where region.space == .head || region.space == .skull {
+                ctx.saveGState()
+                ctx.addPath(polyline(dragHeadSide, closed: true, map: headMap))
+                ctx.clip()
+                drawRegion(in: ctx, region, map: region.space == .skull ? skullMap : headMap)
+                ctx.restoreGState()
+            }
+
+            // Marks: preserve skin mark order with body marks clipped below jawline
+            for mark in skin.marks {
+                switch mark.space {
+                case .body:
+                    ctx.saveGState()
+                    ctx.addPath(polyline(dragBodySide, closed: true, map: headMap))
+                    ctx.clip()
+                    drawMark(in: ctx, mark, map: dragBodyMap)
+                    ctx.restoreGState()
+                case .skull:
+                    drawMark(in: ctx, mark, map: skullMap)
+                case .head:
+                    drawMark(in: ctx, mark, map: isMilkMark(mark) ? headWhiteMap : headMap)
+                default: break
+                }
             }
             ctx.restoreGState()
 
@@ -6984,11 +7130,11 @@ enum CatRenderer {
         drawDragLimb(frontLeftLimb)
         drawDragLimb(frontRightLimb)
 
-        // 7. Skin stickers / decorations stay anchored cleanly to the lifted cat's head, neck, and whipping tail tip!
+        // 7. Skin stickers / decorations stay anchored cleanly to the lifted cat's head and neck!
         if !skin.decorations.isEmpty {
             let dragNeck = CGPoint(x: headCenter.x + hipLagX * 0.08, y: headCenter.y + 36.0 * hs)
             drawDecorations(in: ctx, seatX: rumpCenterX, seatY: torsoBottomY, head: headCenter, physics: physics, skin: skin,
-                            neckOverride: dragNeck, tailTipOverride: tailTip)
+                            neckOverride: dragNeck, tailTipOverride: tailTip, anchors: [.neck, .face, .headTop])
         }
 
         ctx.restoreGState()

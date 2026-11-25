@@ -313,7 +313,12 @@ public:
             drawUnifiedSilhouette(g, seatX, seatY, headCenter, breath, physics, skin, true);
         }
         // 3. Tail (behind body unless 4-key tail typing or curled up asleep)
-        if (!tailInFront) drawTail(g, seatX, seatY, physics, skin);
+        if (!tailInFront) {
+            drawTail(g, seatX, seatY, physics, skin);
+            if (!skin.decorations.empty()) {
+                drawDecorations(g, seatX, seatY, headCenter, physics, skin, nullptr, nullptr, anchorBit(SkinAnchorPoint::TailTip));
+            }
+        }
 
         // 4. 3D-Projected Ears (behind crown silhouette)
         drawEarsLayer(g, headCenter, physics, skin);
@@ -326,23 +331,33 @@ public:
             drawHindFoot(g, seatX, seatY, physics, skin);
         }
 
-        // 7. 2.5D Eyes & Whiskers (+ optional nose/mouth, yawn, angry vein)
-        drawHeadFeatures(g, headCenter, physics, settings.eyeTheme, skin);
-
-        // 7b. Skin stickers anchored to head / neck / tail tip
-        if (!skin.decorations.empty()) drawDecorations(g, seatX, seatY, headCenter, physics, skin);
-
-        // 8. Front Paws (Idle Sitting & Dynamic Reaching)
+        // 7. Front Paws (Idle Sitting & Dynamic Reaching)
         drawFrontPaws(g, seatX, seatY, breath, physics, skin);
 
-        // 8b. Held Stylus gripped cleanly in the cat's paw when drawing on the graphics tablet!
+        // 7b. Held Stylus gripped cleanly in the cat's paw when drawing on the graphics tablet!
         if (physics.isTabletActive && physics.leftPawOnMouse && scruff <= 0.25f && dizzy <= 0.35f && lie <= 0.45f) {
             drawHeldStylus(g, physics, settings.keyboardTheme, settings.eyeTheme);
         }
 
-        if (tailInFront) {
+        // 7c. Neck stickers (collar/scarf/bowtie) over chest & arm roots, cleanly behind head features
+        if (!skin.decorations.empty()) {
+            drawDecorations(g, seatX, seatY, headCenter, physics, skin, nullptr, nullptr, anchorBit(SkinAnchorPoint::Neck));
+        }
 
+        // 8. 2.5D Eyes & Whiskers (+ optional nose/mouth, yawn, angry vein)
+        drawHeadFeatures(g, headCenter, physics, settings.eyeTheme, skin);
+
+        // 8b. Face & head-top stickers cleanly above eyes, ears & features
+        if (!skin.decorations.empty()) {
+            drawDecorations(g, seatX, seatY, headCenter, physics, skin, nullptr, nullptr,
+                            anchorBit(SkinAnchorPoint::Face) | anchorBit(SkinAnchorPoint::HeadTop));
+        }
+
+        if (tailInFront) {
             drawTail(g, seatX, seatY, physics, skin);
+            if (!skin.decorations.empty()) {
+                drawDecorations(g, seatX, seatY, headCenter, physics, skin, nullptr, nullptr, anchorBit(SkinAnchorPoint::TailTip));
+            }
         }
 
         g.Restore(fallState);
@@ -1305,7 +1320,14 @@ private:
             tabby::drawTail(g, tailPen, c.root, c.c1, c.c2, c.tip);
             return;
         }
-        g.DrawBezier(&tailPen, c.root, c.c1, c.c2, c.tip);
+        if (auto tg = skin.partGradients.find("tail"); tg != skin.partGradients.end()) {
+            GraphicsPath tailFill;
+            tailFill.AddBezier(c.root, c.c1, c.c2, c.tip);
+            tailFill.Widen(&tailPen);
+            fillPartGradient(g, &tailFill, c.root, c.tip, tg->second);
+        } else {
+            g.DrawBezier(&tailPen, c.root, c.c1, c.c2, c.tip);
+        }
 
         float lie = std::clamp(physics.lieIntensity.value, 0.0f, 1.0f);
         float lieS = lie * lie * (3.0f - 2.0f * lie);
@@ -1426,8 +1448,15 @@ private:
             g.DrawPath(&outPen, &ear);
             return;
         }
-        SolidBrush b(col(skin.palette.earOuter));
-        g.FillPath(&b, &ear);
+        SkinSpace space = isLeft ? SkinSpace::LeftEar : SkinSpace::RightEar;
+        const char* earKey = isLeft ? "leftEar" : "rightEar";
+        if (auto eg = skin.partGradients.find(earKey); eg != skin.partGradients.end()) {
+            Pt earMid = { (innerBase.x + outerBase.x) * 0.5f, (innerBase.y + outerBase.y) * 0.5f };
+            fillPartGradient(g, &ear, PointF(earMid.x, earMid.y), PointF(tip3D.x, tip3D.y), eg->second);
+        } else {
+            SolidBrush b(col(skin.palette.earOuter));
+            g.FillPath(&b, &ear);
+        }
 
         if (skin.palette.earInner.set) {
             Pt inI  = { innerBase.x + (tip3D.x - innerBase.x) * 0.24f + sign * 3.0f, innerBase.y + (tip3D.y - innerBase.y) * 0.16f };
@@ -1441,7 +1470,6 @@ private:
             g.FillPath(&ib, &inner);
         }
 
-        SkinSpace space = isLeft ? SkinSpace::LeftEar : SkinSpace::RightEar;
         if (skin.hasPartArt(space)) {
             // Ear space: (-50,0) inner base, (50,0) outer base, (0,-100) tip; mirrored per ear.
             Pt m = { (innerBase.x + outerBase.x) * 0.5f, (innerBase.y + outerBase.y) * 0.5f };
@@ -1613,7 +1641,7 @@ private:
                 SolidBrush b(col(pal.body));
                 g.FillPath(&b, &path);
             }
-            if (pal.bodyShade.set || pal.headBody.set || skin.colorpoint() || hasRegions || hasMarks) {
+            if (pal.bodyShade.set || pal.headBody.set || skin.partGradients.count("body") || skin.partGradients.count("head") || skin.colorpoint() || hasRegions || hasMarks) {
                 GraphicsState cs = g.Save();
                 g.SetClip(&path, CombineModeIntersect);
 
@@ -1627,6 +1655,15 @@ private:
                     g.FillPath(&bodyGrad, &path);
                 }
 
+                if (auto bg = skin.partGradients.find("body"); bg != skin.partGradients.end()) {
+                    GraphicsState bsState = g.Save();
+                    GraphicsPath bodySide;
+                    jawSide(bodySide, false, skin, headCenter, physics);
+                    g.SetClip(&bodySide, CombineModeIntersect);
+                    fillPartGradient(g, &path, PointF(seatX, seatY - 78.0f), PointF(seatX, seatY + 16.0f), bg->second);
+                    g.Restore(bsState);
+                }
+
                 if (pal.headBody.set) {
                     GraphicsState hsState = g.Save();
                     GraphicsPath headSide;
@@ -1637,17 +1674,13 @@ private:
                     g.Restore(hsState);
                 }
 
-                // Curve regions: head/skull above the jaw line, body below it.
-                for (const SkinRegion& r : skin.regions) {
-                    if (r.space != SkinSpace::Head && r.space != SkinSpace::Skull && r.space != SkinSpace::Body) continue;
-                    GraphicsState rs = g.Save();
-                    GraphicsPath side;
-                    jawSide(side, r.space != SkinSpace::Body, skin, headCenter, physics);
-                    g.SetClip(&side, CombineModeIntersect);
-                    if (r.space == SkinSpace::Body) drawRegion(g, r, bodyMap);
-                    else if (r.space == SkinSpace::Skull) drawRegion(g, r, skullMap);
-                    else drawRegion(g, r, headMap);
-                    g.Restore(rs);
+                if (auto hg = skin.partGradients.find("head"); hg != skin.partGradients.end()) {
+                    GraphicsState hgState = g.Save();
+                    GraphicsPath headSide;
+                    jawSide(headSide, true, skin, headCenter, physics);
+                    g.SetClip(&headSide, CombineModeIntersect);
+                    fillPartGradient(g, &path, PointF(headCenter.x, headCenter.y - 44.0f), PointF(headCenter.x, headCenter.y + 40.0f), hg->second);
+                    g.Restore(hgState);
                 }
 
                 if (skin.colorpoint()) {
@@ -1691,6 +1724,27 @@ private:
                     muzBrush.SetInterpolationColors(mCols, mPos, 3);
                     g.FillPath(&muzBrush, &muzEllipse);
                     g.Restore(ms2);
+                }
+
+                // Curve regions: body regions below the jaw line first, then head/skull above it.
+                for (const SkinRegion& r : skin.regions) {
+                    if (r.space != SkinSpace::Body) continue;
+                    GraphicsState rs = g.Save();
+                    GraphicsPath side;
+                    jawSide(side, false, skin, headCenter, physics);
+                    g.SetClip(&side, CombineModeIntersect);
+                    drawRegion(g, r, bodyMap);
+                    g.Restore(rs);
+                }
+                for (const SkinRegion& r : skin.regions) {
+                    if (r.space != SkinSpace::Head && r.space != SkinSpace::Skull) continue;
+                    GraphicsState rs = g.Save();
+                    GraphicsPath side;
+                    jawSide(side, true, skin, headCenter, physics);
+                    g.SetClip(&side, CombineModeIntersect);
+                    if (r.space == SkinSpace::Skull) drawRegion(g, r, skullMap);
+                    else drawRegion(g, r, headMap);
+                    g.Restore(rs);
                 }
 
                 for (const SkinMark& m : skin.marks) {
@@ -1886,10 +1940,18 @@ private:
     // MARK: - 3rd Key Hind Foot
 
     static void drawHindFoot(Gdiplus::Graphics& g, float seatX, float seatY, const CatPhysics& physics, const SkinSpec& skin) {
-        Pt hip = { seatX + 26.0f * skin.shape.bodyWidth, seatY + 2.0f };
-        Pt target = physics.hindFoot.point();
-        Pt mid = { (hip.x + target.x) * 0.5f + 10.0f, (hip.y + target.y) * 0.5f - 8.0f };
-        drawLimb(g, hip, mid, target, 15.0f, 12.0f, true, 0.85f * physics.hindFootActive.value, skin);
+        float hlRX = skin.shape.hindLegRootX;
+        float hlRY = skin.shape.hindLegRootY;
+        float hlW = skin.shape.hindLegWidth;
+        float hlReach = skin.shape.hindLegReach;
+        Pt hip = { seatX + 26.0f * skin.shape.bodyWidth + hlRX, seatY + 2.0f + hlRY };
+        Pt rawT = physics.hindFoot.point();
+        Pt target = {
+            hip.x + (rawT.x - hip.x) * hlReach,
+            hip.y + (rawT.y - hip.y) * hlReach
+        };
+        Pt mid = { (hip.x + target.x) * 0.5f + 10.0f * hlReach, (hip.y + target.y) * 0.5f - 8.0f * hlReach };
+        drawLimb(g, hip, mid, target, 15.0f * hlW, 12.0f * hlW, true, 0.85f * physics.hindFootActive.value, skin);
     }
 
     // MARK: - 2.5D Eyes & Whiskers
@@ -2444,11 +2506,22 @@ private:
         return bmp->GetWidth() > 1 || d.pixelWidth == 1 ? bmp : nullptr;
     }
 
+    static constexpr int anchorBit(SkinAnchorPoint a) {
+        switch (a) {
+            case SkinAnchorPoint::HeadTop: return 1;
+            case SkinAnchorPoint::Face:    return 2;
+            case SkinAnchorPoint::Neck:    return 4;
+            case SkinAnchorPoint::TailTip: return 8;
+        }
+        return 0;
+    }
+
     static void drawDecorations(Gdiplus::Graphics& g, float seatX, float seatY, Pt head, const CatPhysics& physics, const SkinSpec& skin,
-                                const Pt* neckOverride = nullptr, const Pt* tailTipOverride = nullptr) {
+                                const Pt* neckOverride = nullptr, const Pt* tailTipOverride = nullptr, int anchorMask = 0xF) {
         using namespace Gdiplus;
         float yawRad = physics.headYaw.value * 0.50f, pitchRad = physics.headPitch.value * 0.36f;
         for (const SkinDecoration& d : skin.decorations) {
+            if ((anchorMask & anchorBit(d.anchor)) == 0) continue;
             Bitmap* img = decorationBitmap(d);
             if (!img) continue;
             PointF at;
@@ -2468,7 +2541,11 @@ private:
                         at = PointF(neckOverride->x + d.offsetX, neckOverride->y + d.offsetY);
                         rot = 0.0f;
                     } else {
-                        at = bodyPoint({d.offsetX, -64.0f + d.offsetY}, skin, seatX, seatY, physics);
+                        PointF baseNeck = bodyPoint({0.0f, -64.0f}, skin, seatX, seatY, physics);
+                        float minChinNeckY = head.y + 36.0f * skin.shape.headScale;
+                        float chinDrop = std::max(0.0f, minChinNeckY - baseNeck.Y);
+                        PointF rawPt = bodyPoint({d.offsetX, -64.0f + d.offsetY}, skin, seatX, seatY, physics);
+                        at = PointF(rawPt.X, rawPt.Y + chinDrop);
                         rot = physics.bodyTilt.value;
                     }
                     break;
@@ -2578,7 +2655,11 @@ private:
             addQuadBezier(legShape, { bottom.x + sign * 0.8f, bottom.y + 5.2f }, { bottom.x - sign * 6.2f, bottom.y + 5.2f }, { bottom.x - sign * 6.0f, bottom.y - 1.0f });
             addQuadBezier(legShape, { bottom.x - sign * 6.0f, bottom.y - 1.0f }, { top.x - sign * 6.5f, (top.y + bottom.y) * 0.5f }, { top.x - sign * 7.0f, top.y + 4.0f });
             legShape.CloseFigure();
-            if (skin.idleLegsTinted) {
+            SkinSpace armSpace = isLeft ? SkinSpace::LeftArm : SkinSpace::RightArm;
+            const char* armKey = isLeft ? "leftArm" : "rightArm";
+            if (auto ag = skin.partGradients.find(armKey); ag != skin.partGradients.end()) {
+                fillPartGradient(g, &legShape, PointF(top.x, top.y), PointF(bottom.x, bottom.y + 5.0f), ag->second);
+            } else if (skin.idleLegsTinted) {
                 float pad = 10.0f;
                 float span = std::max(1.0f, (bottom.y + 5.0f) - top.y);
                 float total = span + pad * 2.0f;
@@ -2590,7 +2671,6 @@ private:
                 g.FillPath(&legGrad, &legShape);
             }
 
-            SkinSpace armSpace = isLeft ? SkinSpace::LeftArm : SkinSpace::RightArm;
             if (skin.hasPartArt(armSpace)) {
                 auto map = [&](SkinPoint p) {
                     float t = std::clamp(p.x / 100.0f, 0.0f, 1.0f);
@@ -2758,11 +2838,16 @@ private:
         if (isTabby(skin)) {
             tabby::drawLimb(g, limbPath, pawRect, start, ctrl, end, startW, endW);
         } else if (!skin.colorpoint()) {
+            bool isLeftArm = frontPaw && !outlineOnLeft;
+            SkinSpace limbSpace = frontPaw ? (isLeftArm ? SkinSpace::LeftArm : SkinSpace::RightArm) : SkinSpace::HindLeg;
+            const char* limbKey = frontPaw ? (isLeftArm ? "leftArm" : "rightArm") : "hindLeg";
             const SkinColor& limbBase = frontPaw ? pal.legs : (pal.hindLeg.set ? pal.hindLeg : pal.legs);
             const SkinColor& limbPaw = frontPaw ? pal.paws : (pal.hindPaw.set ? pal.hindPaw : pal.paws);
             Color legs = col(limbBase);
             SolidBrush b(legs);
-            if (frontPaw && pal.belly.set && !pal.belly.sameAs(limbBase)) {
+            if (auto pgIt = skin.partGradients.find(limbKey); pgIt != skin.partGradients.end()) {
+                fillPartGradient(g, &limbPath, PointF(start.x, start.y), PointF(end.x, end.y), pgIt->second);
+            } else if (frontPaw && pal.belly.set && !pal.belly.sameAs(limbBase)) {
                 // White chest fading into the leg colour along the first 30% of the arm.
                 Color chest = col(pal.belly);
                 LinearGradientBrush gradient(PointF(start.x,start.y),PointF(end.x,end.y),chest,legs);
@@ -2771,8 +2856,6 @@ private:
                 REAL positions[3]={0,0.30f,1};gradient.SetInterpolationColors(colors,positions,3);
                 g.FillPath(&gradient,&limbPath);
             } else g.FillPath(&b, &limbPath);
-            bool isLeftArm = frontPaw && !outlineOnLeft;
-            SkinSpace limbSpace = frontPaw ? (isLeftArm ? SkinSpace::LeftArm : SkinSpace::RightArm) : SkinSpace::HindLeg;
             if (skin.hasPartArt(limbSpace)) {
                 float sideSign = isLeftArm ? 1.0f : -1.0f;
                 auto map = [&](SkinPoint pt) {
@@ -3081,6 +3164,20 @@ private:
         brush.SetInterpolationColors(extCols.data(), extPos.data(), count + 2);
         if (path) g.FillPath(&brush, path);
         else if (rect && rect->Width > 0.0f && rect->Height > 0.0f) g.FillRectangle(&brush, *rect);
+    }
+
+    static void fillPartGradient(
+        Gdiplus::Graphics& g,
+        const Gdiplus::GraphicsPath* path,
+        Gdiplus::PointF p0,
+        Gdiplus::PointF p1,
+        const SkinPartGradient& pg
+    ) {
+        using namespace Gdiplus;
+        float stop = std::clamp(pg.stop, 0.1f, 0.9f);
+        Color cols[3] = { col(pg.from), col(pg.to), col(pg.to) };
+        REAL locs[3] = { 0.0f, stop, 1.0f };
+        fillClampedLinearGradient(g, path, nullptr, p0, p1, cols, locs, 3);
     }
 
     /// Rounded arbitrary quadrilateral path with exact circular-arc cubic Bezier corners (mirrors CGPath.addArc(tangent1End:tangent2End:radius:)).
@@ -5771,6 +5868,8 @@ private:
                     return;
                 }
 
+                SkinSpace limbSpace = (limb.armDir < 0) ? SkinSpace::LeftArm : ((limb.armDir > 0) ? SkinSpace::RightArm : SkinSpace::HindLeg);
+                const char* limbKey = (limb.armDir < 0) ? "leftArm" : ((limb.armDir > 0) ? "rightArm" : "hindLeg");
                 if (isDazed) {
                     Color cols[2] = { Color(255, 227, 201, 159), Color(255, 200, 167, 122) };
                     REAL locs[2] = { 0.0f, 1.0f };
@@ -5780,6 +5879,8 @@ private:
                     Color cols[4] = { col(pal.body), col(pal.body), col(midC), col(pal.paws) };
                     REAL locs[4] = { 0.0f, 0.20f, 0.54f, 0.88f };
                     fillClampedLinearGradient(lg, &fillP, nullptr, PointF(limb.root.x, limb.root.y), PointF(limb.tip.x, limb.tip.y), cols, locs, 4);
+                } else if (auto pgIt = skin.partGradients.find(limbKey); pgIt != skin.partGradients.end()) {
+                    fillPartGradient(lg, &fillP, PointF(limb.root.x, limb.root.y), PointF(limb.tip.x, limb.tip.y), pgIt->second);
                 } else if (!limb.isBehindBody && !pal.legs.sameAs(pal.body)) {
                     Color cols[4] = { col(pal.body), col(pal.body), col(pal.legs), col(pal.paws) };
                     REAL locs[4] = { 0.0f, 0.14f, 0.42f, 0.82f };
@@ -5792,7 +5893,6 @@ private:
                     fillClampedLinearGradient(lg, &fillP, nullptr, PointF(limb.root.x, limb.root.y), PointF(limb.tip.x, limb.tip.y), cols, locs, 2);
                 }
 
-                SkinSpace limbSpace = (limb.armDir < 0) ? SkinSpace::LeftArm : ((limb.armDir > 0) ? SkinSpace::RightArm : SkinSpace::HindLeg);
                 if (skin.hasPartArt(limbSpace)) {
                     float sign = (limb.armDir != 0) ? (float)limb.armDir : ((limb.bendX < 0.0f) ? -1.0f : 1.0f);
                     auto armMap = [&](SkinPoint p) -> PointF {
@@ -5871,7 +5971,14 @@ private:
                 if (isTabby(skin) && !isDazed) {
                     tabby::drawTail(lg, tailPen, PointF(tailRoot.x, tailRoot.y), PointF(tailC1.x, tailC1.y), PointF(tailC2.x, tailC2.y), PointF(tailTip.x, tailTip.y));
                 } else {
-                    lg.DrawPath(&tailPen, &tailCurvePath);
+                    if (!isDazed && skin.partGradients.count("tail")) {
+                        GraphicsPath tailFill;
+                        tailFill.AddBezier(PointF(tailRoot.x, tailRoot.y), PointF(tailC1.x, tailC1.y), PointF(tailC2.x, tailC2.y), PointF(tailTip.x, tailTip.y));
+                        tailFill.Widen(&tailPen);
+                        fillPartGradient(lg, &tailFill, PointF(tailRoot.x, tailRoot.y), PointF(tailTip.x, tailTip.y), skin.partGradients.at("tail"));
+                    } else {
+                        lg.DrawPath(&tailPen, &tailCurvePath);
+                    }
                     if (pal.stripes.set && !isBlackRim && !skin.colorpoint() && !isDazed) {
                         auto evalTailPt = [&](float t) -> PointF {
                             float u = 1.0f - t;
@@ -5901,6 +6008,10 @@ private:
                         lg.DrawPath(&subtlePen, &strokedTail);
                     }
                 }
+            }
+
+            if (!skin.decorations.empty()) {
+                drawDecorations(lg, rumpCenterX, torsoBottomY, headCenter, physics, skin, nullptr, &tailTip, anchorBit(SkinAnchorPoint::TailTip));
             }
 
             // 2. Dangling hind legs emerging from lower belly hem
@@ -5977,6 +6088,15 @@ private:
                         fillClampedLinearGradient(lg, &longCatPath, nullptr, PointF(headCenter.x, headCenter.y - 36.0f), PointF(rumpCenterX, torsoBottomY + bottomDip), cols, locs, 2);
                     }
 
+                    if (auto bg = skin.partGradients.find("body"); bg != skin.partGradients.end()) {
+                        GraphicsState bsState = lg.Save();
+                        GraphicsPath bodySide;
+                        jawSide(bodySide, false, skin, headCenter, physics);
+                        lg.SetClip(&bodySide, CombineModeIntersect);
+                        fillPartGradient(lg, &longCatPath, PointF(headCenter.x, headCenter.y + 20.0f), PointF(rumpCenterX, torsoBottomY + bottomDip), bg->second);
+                        lg.Restore(bsState);
+                    }
+
                     if (pal.headBody.set) {
                         GraphicsState hsState = lg.Save();
                         GraphicsPath headSide;
@@ -5987,16 +6107,13 @@ private:
                         lg.Restore(hsState);
                     }
 
-                    for (const SkinRegion& region : skin.regions) {
-                        if (region.space != SkinSpace::Head && region.space != SkinSpace::Skull && region.space != SkinSpace::Body) continue;
-                        GraphicsState rs = lg.Save();
-                        GraphicsPath side;
-                        jawSide(side, region.space != SkinSpace::Body, skin, headCenter, physics);
-                        lg.SetClip(&side, CombineModeIntersect);
-                        if (region.space == SkinSpace::Body) drawRegion(lg, region, dragBodyMap);
-                        else if (region.space == SkinSpace::Skull) drawRegion(lg, region, skullMap);
-                        else drawRegion(lg, region, headMap);
-                        lg.Restore(rs);
+                    if (auto hg = skin.partGradients.find("head"); hg != skin.partGradients.end()) {
+                        GraphicsState hgState = lg.Save();
+                        GraphicsPath headSide;
+                        jawSide(headSide, true, skin, headCenter, physics);
+                        lg.SetClip(&headSide, CombineModeIntersect);
+                        fillPartGradient(lg, &longCatPath, PointF(headCenter.x, headCenter.y - 48.0f), PointF(headCenter.x, headCenter.y + 40.0f), hg->second);
+                        lg.Restore(hgState);
                     }
 
                     if (pal.points.set) {
@@ -6015,6 +6132,26 @@ private:
                         lg.Restore(ms);
                     }
 
+                    for (const SkinRegion& region : skin.regions) {
+                        if (region.space != SkinSpace::Body) continue;
+                        GraphicsState rs = lg.Save();
+                        GraphicsPath side;
+                        jawSide(side, false, skin, headCenter, physics);
+                        lg.SetClip(&side, CombineModeIntersect);
+                        drawRegion(lg, region, dragBodyMap);
+                        lg.Restore(rs);
+                    }
+                    for (const SkinRegion& region : skin.regions) {
+                        if (region.space != SkinSpace::Head && region.space != SkinSpace::Skull) continue;
+                        GraphicsState rs = lg.Save();
+                        GraphicsPath side;
+                        jawSide(side, true, skin, headCenter, physics);
+                        lg.SetClip(&side, CombineModeIntersect);
+                        if (region.space == SkinSpace::Skull) drawRegion(lg, region, skullMap);
+                        else drawRegion(lg, region, headMap);
+                        lg.Restore(rs);
+                    }
+
                     for (const SkinMark& mark : skin.marks) {
                         if (mark.space == SkinSpace::Body) {
                             GraphicsState msState = lg.Save();
@@ -6023,11 +6160,9 @@ private:
                             lg.SetClip(&bodySide, CombineModeIntersect);
                             drawMark(lg, mark, dragBodyMap);
                             lg.Restore(msState);
-                        }
-                    }
-                    for (const SkinMark& mark : skin.marks) {
-                        if (mark.space == SkinSpace::Skull) drawMark(lg, mark, skullMap);
-                        else if (mark.space == SkinSpace::Head) {
+                        } else if (mark.space == SkinSpace::Skull) {
+                            drawMark(lg, mark, skullMap);
+                        } else if (mark.space == SkinSpace::Head) {
                             if (isMilkMark(mark)) drawMark(lg, mark, headWhiteMap);
                             else drawMark(lg, mark, headMap);
                         }
@@ -6062,10 +6197,11 @@ private:
             drawDragLimb(frontLeftLimb);
             drawDragLimb(frontRightLimb);
 
-            // 7. Skin stickers / decorations stay anchored cleanly to the lifted cat's head, neck, and whipping tail tip!
+            // 7. Skin stickers / decorations stay anchored cleanly to the lifted cat's head and neck!
             if (!skin.decorations.empty()) {
                 Pt dragNeck = { headCenter.x + hipLagX * 0.08f, headCenter.y + 36.0f * hs };
-                drawDecorations(lg, rumpCenterX, torsoBottomY, headCenter, physics, skin, &dragNeck, &tailTip);
+                drawDecorations(lg, rumpCenterX, torsoBottomY, headCenter, physics, skin, &dragNeck, &tailTip,
+                                anchorBit(SkinAnchorPoint::HeadTop) | anchorBit(SkinAnchorPoint::Face) | anchorBit(SkinAnchorPoint::Neck));
             }
             lg.Restore(pState);
         });
