@@ -35,13 +35,34 @@ struct SkinLibrary {
         DWORD n = GetEnvironmentVariableW(L"APPDATA", env, MAX_PATH);
         return (n > 0 && n < MAX_PATH ? std::wstring(env) : std::wstring(L".")) + L"\\KuroCat";
     }
-    static std::wstring dir() { return baseDir() + L"\\skins"; }
+    static std::wstring& customDir() {
+        static std::wstring d;
+        return d;
+    }
+    static std::wstring trimmedDir(std::wstring d) {
+        while (!d.empty() && (d.back() == L' ' || d.back() == L'\t' || d.back() == L'\r' || d.back() == L'\n')) d.pop_back();
+        size_t start = 0;
+        while (start < d.size() && (d[start] == L' ' || d[start] == L'\t')) ++start;
+        if (start > 0) d.erase(0, start);
+        while (d.size() > 3 && (d.back() == L'\\' || d.back() == L'/')) d.pop_back();
+        return d;
+    }
+    static std::wstring defaultDir() { return baseDir() + L"\\skins"; }
+    static std::wstring dir() {
+        std::wstring custom = trimmedDir(customDir());
+        return custom.empty() ? defaultDir() : custom;
+    }
+    static bool isUsingCustomDir() {
+        std::wstring custom = trimmedDir(customDir());
+        return !custom.empty() && _wcsicmp(custom.c_str(), defaultDir().c_str()) != 0;
+    }
 
     static bool ensureDir() {
-        for (const std::wstring& d : {baseDir(), dir()}) {
-            if (!CreateDirectoryW(d.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) return false;
-        }
-        return true;
+        std::wstring d = dir();
+        int rc = SHCreateDirectoryExW(nullptr, d.c_str(), nullptr);
+        if (rc == ERROR_SUCCESS || rc == ERROR_ALREADY_EXISTS || rc == ERROR_FILE_EXISTS) return true;
+        DWORD attrs = GetFileAttributesW(d.c_str());
+        return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
     }
 
     static bool readFile(const std::wstring& path, std::string& bytes, std::string& error) {
@@ -87,11 +108,11 @@ struct SkinLibrary {
         if (!readFile(path, bytes, error)) return false;
         SkinSpec spec;
         if (!SkinSpec::parse(bytes, spec, error)) return false;
-        if (!ensureDir()) { error = "无法创建皮肤文件夹 %APPDATA%\\KuroCat\\skins"; return false; }
+        if (!ensureDir()) { error = "无法创建皮肤文件夹 " + wideToUtf8(dir()); return false; }
         std::wstring target = dir() + L"\\" + utf8ToWide(spec.id) + L".kurocat";
         std::wstring tmp = target + L".tmp";
         HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (h == INVALID_HANDLE_VALUE) { error = "无法写入皮肤文件夹 %APPDATA%\\KuroCat\\skins"; return false; }
+        if (h == INVALID_HANDLE_VALUE) { error = "无法写入皮肤文件夹 " + wideToUtf8(dir()); return false; }
         DWORD written = 0;
         BOOL ok = WriteFile(h, bytes.data(), (DWORD)bytes.size(), &written, nullptr) && written == bytes.size();
         ok = CloseHandle(h) && ok;

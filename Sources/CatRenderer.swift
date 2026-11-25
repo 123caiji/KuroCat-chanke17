@@ -285,6 +285,7 @@ enum CatRenderer {
         drawStandardCatAndEffects(in: ctx, physics: physics, skin: settings.activeSkin,
                                   eyeTheme: settings.eyeTheme, keyboardTheme: settings.keyboardTheme,
                                   whiteOutline: settings.whiteOutline,
+                                  flipped: flipped,
                                   overrideSkinIris: settings.overrideSkinIris)
         ctx.restoreGState()
     }
@@ -357,7 +358,7 @@ enum CatRenderer {
                 marquee: settings.keyboardMarquee
             )
             if !physics.floatingKeycaps.isEmpty {
-                drawFloatingKeycaps(in: ctx, physics: physics)
+                drawFloatingKeycaps(in: ctx, physics: physics, flipped: flipped)
             }
             if hasCanvasTransform { ctx.restoreGState() }
             if showEdit {
@@ -379,7 +380,7 @@ enum CatRenderer {
                                     keyboardMarquee: settings.keyboardMarquee,
                                     overrideSkinIris: settings.overrideSkinIris)
             if !physics.floatingKeycaps.isEmpty {
-                drawFloatingKeycaps(in: ctx, physics: physics)
+                drawFloatingKeycaps(in: ctx, physics: physics, flipped: flipped)
             }
             if hasCanvasTransform { ctx.restoreGState() }
             if showEdit {
@@ -408,6 +409,7 @@ enum CatRenderer {
         drawStandardCatAndEffects(in: ctx, physics: physics, skin: skin,
                                   eyeTheme: settings.eyeTheme, keyboardTheme: settings.keyboardTheme,
                                   whiteOutline: settings.whiteOutline,
+                                  flipped: flipped,
                                   overrideSkinIris: settings.overrideSkinIris)
 
         if hasCanvasTransform {
@@ -430,6 +432,7 @@ enum CatRenderer {
     private static func drawStandardCatAndEffects(in ctx: CGContext, physics: CatPhysics,
                                                   skin: SkinSpec, eyeTheme: EyeColorTheme,
                                                   keyboardTheme: KeyboardTheme, whiteOutline: Bool,
+                                                  flipped: Bool = false,
                                                   overrideSkinIris: Bool = false) {
         let breath = physics.breathingOffset
         let scruff = max(0, min(1, physics.scruffDrag.value))
@@ -574,12 +577,12 @@ enum CatRenderer {
 
         // 8. Floating Mechanical Keycap Badges (keyboard + mouse clicks)
         if !physics.floatingKeycaps.isEmpty {
-            drawFloatingKeycaps(in: ctx, physics: physics)
+            drawFloatingKeycaps(in: ctx, physics: physics, flipped: flipped)
         }
 
         // 9. Subtle Petting Sparkles / Sleep Z
         if !physics.sparkles.isEmpty {
-            drawSparkles(in: ctx, physics: physics, eyeTheme: eyeTheme)
+            drawSparkles(in: ctx, physics: physics, eyeTheme: eyeTheme, flipped: flipped)
         }
     }
 
@@ -3092,21 +3095,24 @@ enum CatRenderer {
     private static func drawYawnMouth(in ctx: CGContext, yawRad: CGFloat, pitchRad: CGFloat, yawn: CGFloat, skin: SkinSpec) {
         let y = max(0, min(1, yawn))
         let center = projectHead3D(x: 0, y: 16.2 + y * 2.2, z: 30.2, yawRad: yawRad, pitchRad: pitchRad).pt
-        let rx = 3.2 + y * 5.8
-        let ry = 1.6 + y * 7.4
+        let rx = 3.0 + y * 6.2
+        let ry = 1.6 + y * 8.2
 
         ctx.saveGState()
         ctx.translateBy(x: center.x, y: center.y)
 
+        // Upper-narrow, lower-wide rounded inverted-triangle / pear-teardrop yawn contour
         let mouth = CGMutablePath()
         mouth.move(to: CGPoint(x: 0, y: -ry * 0.92))
-        mouth.addCurve(to: CGPoint(x: rx, y: ry * 0.08), control1: CGPoint(x: rx * 0.68, y: -ry * 0.92), control2: CGPoint(x: rx * 1.05, y: -ry * 0.42))
-        mouth.addCurve(to: CGPoint(x: 0, y: ry), control1: CGPoint(x: rx * 0.95, y: ry * 0.72), control2: CGPoint(x: rx * 0.50, y: ry))
-        mouth.addCurve(to: CGPoint(x: -rx, y: ry * 0.08), control1: CGPoint(x: -rx * 0.50, y: ry), control2: CGPoint(x: -rx * 0.95, y: ry * 0.72))
-        mouth.addCurve(to: CGPoint(x: 0, y: -ry * 0.92), control1: CGPoint(x: -rx * 1.05, y: -ry * 0.42), control2: CGPoint(x: -rx * 0.68, y: -ry * 0.92))
+        mouth.addCurve(to: CGPoint(x: rx * 0.68, y: -ry * 0.12), control1: CGPoint(x: rx * 0.34, y: -ry * 0.92), control2: CGPoint(x: rx * 0.52, y: -ry * 0.50))
+        mouth.addCurve(to: CGPoint(x: rx * 1.02, y: ry * 0.46), control1: CGPoint(x: rx * 0.86, y: ry * 0.16), control2: CGPoint(x: rx * 1.06, y: ry * 0.20))
+        mouth.addCurve(to: CGPoint(x: 0, y: ry), control1: CGPoint(x: rx * 0.98, y: ry * 0.78), control2: CGPoint(x: rx * 0.48, y: ry))
+        mouth.addCurve(to: CGPoint(x: -rx * 1.02, y: ry * 0.46), control1: CGPoint(x: -rx * 0.48, y: ry), control2: CGPoint(x: -rx * 0.98, y: ry * 0.78))
+        mouth.addCurve(to: CGPoint(x: -rx * 0.68, y: -ry * 0.12), control1: CGPoint(x: -rx * 1.06, y: ry * 0.20), control2: CGPoint(x: -rx * 0.86, y: ry * 0.16))
+        mouth.addCurve(to: CGPoint(x: 0, y: -ry * 0.92), control1: CGPoint(x: -rx * 0.52, y: -ry * 0.50), control2: CGPoint(x: -rx * 0.34, y: -ry * 0.92))
         mouth.closeSubpath()
 
-        ctx.setFillColor(NSColor(calibratedRed: 0.78, green: 0.19, blue: 0.25, alpha: 0.98).cgColor)
+        ctx.setFillColor(NSColor(calibratedRed: 0.76, green: 0.18, blue: 0.24, alpha: 0.98).cgColor)
         ctx.addPath(mouth)
         ctx.fillPath()
 
@@ -3114,48 +3120,68 @@ enum CatRenderer {
         ctx.addPath(mouth)
         ctx.clip()
 
-        ctx.setFillColor(NSColor(calibratedRed: 0.55, green: 0.10, blue: 0.16, alpha: 0.55).cgColor)
-        ctx.fillEllipse(in: CGRect(x: -rx * 0.65, y: -ry * 0.72, width: rx * 1.30, height: ry * 0.92))
+        // Inner upper-palate cavity shadow
+        ctx.setFillColor(NSColor(calibratedRed: 0.48, green: 0.08, blue: 0.14, alpha: 0.60).cgColor)
+        ctx.fillEllipse(in: CGRect(x: -rx * 0.54, y: -ry * 0.80, width: rx * 1.08, height: ry * 0.94))
+        ctx.setFillColor(NSColor(calibratedRed: 0.36, green: 0.05, blue: 0.10, alpha: 0.40).cgColor)
+        ctx.fillEllipse(in: CGRect(x: -rx * 0.34, y: -ry * 0.52, width: rx * 0.68, height: ry * 0.56))
 
-        if y > 0.22 {
-            let tAlpha = min(1.0, (y - 0.22) / 0.35)
-            ctx.setFillColor(NSColor(calibratedRed: 0.95, green: 0.48, blue: 0.55, alpha: 0.92 * tAlpha).cgColor)
+        // Cute pink tongue curling gently upward/forward from the wider lower jaw
+        if y > 0.18 {
+            let tAlpha = min(1.0, (y - 0.18) / 0.32)
+            ctx.setFillColor(NSColor(calibratedRed: 0.96, green: 0.48, blue: 0.56, alpha: 0.95 * tAlpha).cgColor)
             let tongue = CGMutablePath()
-            tongue.move(to: CGPoint(x: -rx * 0.62, y: ry * 0.55))
-            tongue.addQuadCurve(to: CGPoint(x: 0, y: ry * 0.36), control: CGPoint(x: -rx * 0.32, y: ry * 0.16))
-            tongue.addQuadCurve(to: CGPoint(x: rx * 0.62, y: ry * 0.55), control: CGPoint(x: rx * 0.32, y: ry * 0.16))
-            tongue.addQuadCurve(to: CGPoint(x: -rx * 0.62, y: ry * 0.55), control: CGPoint(x: 0, y: ry * 1.25))
+            tongue.move(to: CGPoint(x: -rx * 0.72, y: ry * 0.62))
+            tongue.addCurve(to: CGPoint(x: 0, y: ry * 0.22), control1: CGPoint(x: -rx * 0.66, y: ry * 0.14), control2: CGPoint(x: -rx * 0.26, y: ry * 0.06))
+            tongue.addCurve(to: CGPoint(x: rx * 0.72, y: ry * 0.62), control1: CGPoint(x: rx * 0.26, y: ry * 0.06), control2: CGPoint(x: rx * 0.66, y: ry * 0.14))
+            tongue.addQuadCurve(to: CGPoint(x: -rx * 0.72, y: ry * 0.62), control: CGPoint(x: 0, y: ry * 1.24))
             tongue.closeSubpath()
             ctx.addPath(tongue)
             ctx.fillPath()
+
+            ctx.setFillColor(NSColor(calibratedRed: 1.0, green: 0.72, blue: 0.78, alpha: 0.48 * tAlpha).cgColor)
+            ctx.fillEllipse(in: CGRect(x: -rx * 0.34, y: ry * 0.16, width: rx * 0.68, height: ry * 0.24))
+
+            ctx.setStrokeColor(NSColor(calibratedRed: 0.78, green: 0.25, blue: 0.34, alpha: 0.50 * tAlpha).cgColor)
+            ctx.setLineWidth(0.85)
+            ctx.setLineCap(.round)
+            ctx.move(to: CGPoint(x: 0, y: ry * 0.22))
+            ctx.addLine(to: CGPoint(x: 0, y: ry * 0.50))
+            ctx.strokePath()
+
+            ctx.setStrokeColor(NSColor(calibratedRed: 0.72, green: 0.20, blue: 0.29, alpha: 0.45 * tAlpha).cgColor)
+            ctx.setLineWidth(0.95)
+            ctx.move(to: CGPoint(x: -rx * 0.42, y: ry * 0.56))
+            ctx.addQuadCurve(to: CGPoint(x: rx * 0.42, y: ry * 0.56), control: CGPoint(x: 0, y: ry * 0.42))
+            ctx.strokePath()
         }
 
         if y > 0.28 {
             let fScale = min(1.0, (y - 0.28) / 0.32)
             ctx.setFillColor(NSColor(calibratedRed: 1.0, green: 0.99, blue: 0.96, alpha: 0.98).cgColor)
-            let upperBaseY = -ry * 0.80
-            let upperLen = (2.6 + y * 2.2) * fScale
-            let upperHalfW = (1.15 + y * 0.55) * fScale
+            let upperBaseY = -ry * 0.68
+            let upperLen = (2.1 + y * 1.9) * fScale
+            let upperHalfW = (0.95 + y * 0.42) * fScale
             for sign: CGFloat in [-1, 1] {
-                let fx = sign * rx * 0.46
+                let fx = sign * rx * 0.26
                 let fang = CGMutablePath()
                 fang.move(to: CGPoint(x: fx - upperHalfW, y: upperBaseY - 0.8))
                 fang.addLine(to: CGPoint(x: fx + upperHalfW, y: upperBaseY - 0.8))
-                fang.addQuadCurve(to: CGPoint(x: fx - sign * 0.25, y: upperBaseY + upperLen), control: CGPoint(x: fx + upperHalfW * 0.45, y: upperBaseY + upperLen * 0.62))
+                fang.addQuadCurve(to: CGPoint(x: fx - sign * 0.18, y: upperBaseY + upperLen), control: CGPoint(x: fx + upperHalfW * 0.45, y: upperBaseY + upperLen * 0.62))
                 fang.addQuadCurve(to: CGPoint(x: fx - upperHalfW, y: upperBaseY - 0.8), control: CGPoint(x: fx - upperHalfW * 0.45, y: upperBaseY + upperLen * 0.62))
                 fang.closeSubpath()
                 ctx.addPath(fang)
                 ctx.fillPath()
             }
             let lowerBaseY = ry * 0.84
-            let lowerLen = (1.6 + y * 1.3) * fScale
-            let lowerHalfW = (0.85 + y * 0.35) * fScale
+            let lowerLen = (1.4 + y * 1.2) * fScale
+            let lowerHalfW = (0.78 + y * 0.30) * fScale
             for sign: CGFloat in [-1, 1] {
-                let fx = sign * rx * 0.36
+                let fx = sign * rx * 0.42
                 let fang = CGMutablePath()
                 fang.move(to: CGPoint(x: fx - lowerHalfW, y: lowerBaseY + 0.8))
                 fang.addLine(to: CGPoint(x: fx + lowerHalfW, y: lowerBaseY + 0.8))
-                fang.addQuadCurve(to: CGPoint(x: fx - sign * 0.15, y: lowerBaseY - lowerLen), control: CGPoint(x: fx + lowerHalfW * 0.4, y: lowerBaseY - lowerLen * 0.55))
+                fang.addQuadCurve(to: CGPoint(x: fx - sign * 0.12, y: lowerBaseY - lowerLen), control: CGPoint(x: fx + lowerHalfW * 0.4, y: lowerBaseY - lowerLen * 0.55))
                 fang.addQuadCurve(to: CGPoint(x: fx - lowerHalfW, y: lowerBaseY + 0.8), control: CGPoint(x: fx - lowerHalfW * 0.4, y: lowerBaseY - lowerLen * 0.55))
                 fang.closeSubpath()
                 ctx.addPath(fang)
@@ -4071,12 +4097,10 @@ enum CatRenderer {
         return entry
     }
 
-    private static func drawFloatingKeycaps(in ctx: CGContext, physics: CatPhysics) {
+    private static func drawFloatingKeycaps(in ctx: CGContext, physics: CatPhysics, flipped: Bool = false) {
         let baseShadowColor = NSColor(calibratedRed: 0.15, green: 0.15, blue: 0.17, alpha: 0.95).cgColor
         let faceColor = NSColor(calibratedRed: 0.975, green: 0.972, blue: 0.952, alpha: 1.0).cgColor
         let strokeColor = NSColor(calibratedRed: 0.16, green: 0.16, blue: 0.18, alpha: 1.0).cgColor
-        let flipped = CatSettings.shared.flipHorizontal
-
         for badge in physics.floatingKeycaps {
             let progress = badge.age / badge.lifetime
             // Spring pop-in scale (starts crisp and readable immediately!)
@@ -4138,7 +4162,7 @@ enum CatRenderer {
 
     // MARK: - Subtle Petting Sparkles & Sleep Z
 
-    private static func drawSparkles(in ctx: CGContext, physics: CatPhysics, eyeTheme: EyeColorTheme) {
+    private static func drawSparkles(in ctx: CGContext, physics: CatPhysics, eyeTheme: EyeColorTheme, flipped: Bool = false) {
         for sp in physics.sparkles {
             let p = sp.age / sp.lifetime
             let alpha = sin(min(1.0, p) * .pi)
@@ -4150,8 +4174,15 @@ enum CatRenderer {
                     .foregroundColor: eyeTheme.primaryColor
                 ]
                 NSGraphicsContext.saveGraphicsState()
-                NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
-                NSAttributedString(string: "z", attributes: attrs).draw(at: sp.position)
+                if flipped {
+                    ctx.translateBy(x: sp.position.x, y: sp.position.y)
+                    ctx.scaleBy(x: -1, y: 1)
+                    NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+                    NSAttributedString(string: "z", attributes: attrs).draw(at: .zero)
+                } else {
+                    NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+                    NSAttributedString(string: "z", attributes: attrs).draw(at: sp.position)
+                }
                 NSGraphicsContext.restoreGraphicsState()
             } else {
                 // Tiny glowing chartreuse 4-point star
@@ -4379,7 +4410,7 @@ enum CatRenderer {
                 ctx.saveGState()
                 ctx.setAlpha(deskFade * loafS)
                 ctx.translateBy(x: 0, y: scruffS * 20.0)
-                drawDouniV1LoafInCanvas(in: ctx, physics: physics, skin: skin, loafMorph: 1.0)
+                drawDouniV1LoafInCanvas(in: ctx, physics: physics, skin: skin, loafMorph: 1.0, flipped: flipped)
                 ctx.restoreGState()
             }
             // Smoothly lift out of her resting seat instead of snapping into place!
@@ -4404,7 +4435,7 @@ enum CatRenderer {
         }
 
         if loafS > 0.01 {
-            drawDouniV1LoafInCanvas(in: ctx, physics: physics, skin: skin, loafMorph: loafS)
+            drawDouniV1LoafInCanvas(in: ctx, physics: physics, skin: skin, loafMorph: loafS, flipped: flipped)
         }
     }
 
@@ -4413,7 +4444,8 @@ enum CatRenderer {
         in ctx: CGContext,
         physics: CatPhysics,
         skin: SkinSpec,
-        loafMorph: CGFloat = 1.0
+        loafMorph: CGFloat = 1.0,
+        flipped: Bool = false
     ) {
         let m = max(0, min(1, loafMorph))
         // Tight swap window [0.36..0.56] right when V2 cat has already glided & squished into Loaf's exact spot!
@@ -4437,7 +4469,7 @@ enum CatRenderer {
         ctx.translateBy(x: -pivotX, y: -pivotY)
         ctx.translateBy(x: tx, y: ty)
         ctx.scaleBy(x: scale, y: scale)
-        drawDouniV1LoafInSpace(in: ctx, physics: physics, skin: skin, showStatusAccents: true)
+        drawDouniV1LoafInSpace(in: ctx, physics: physics, skin: skin, showStatusAccents: true, flipped: flipped)
         ctx.restoreGState()
     }
 
@@ -4512,7 +4544,8 @@ enum CatRenderer {
         in ctx: CGContext,
         physics: CatPhysics,
         skin: SkinSpec,
-        showStatusAccents: Bool = true
+        showStatusAccents: Bool = true,
+        flipped: Bool = false
     ) {
         let ink = skin.palette.outline?.ns ?? douniInkColor
         let cream = skin.palette.body.ns
@@ -4707,7 +4740,7 @@ enum CatRenderer {
                 let zy = 218 - p * 112
                 let alpha = sin(p * .pi) * min(1.0, physics.sleepiness * 1.3)
                 let sz: CGFloat = 24 + p * 18
-                drawComicZ(in: ctx, center: CGPoint(x: zx, y: zy), size: sz, alpha: alpha, ink: ink)
+                drawComicZ(in: ctx, center: CGPoint(x: zx, y: zy), size: sz, alpha: alpha, ink: ink, flipped: flipped)
             }
         }
     }
@@ -5533,7 +5566,7 @@ enum CatRenderer {
         ctx.restoreGState()
     }
 
-    private static func drawComicZ(in ctx: CGContext, center: CGPoint, size: CGFloat, alpha: CGFloat, ink: NSColor) {
+    private static func drawComicZ(in ctx: CGContext, center: CGPoint, size: CGFloat, alpha: CGFloat, ink: NSColor, flipped: Bool = false) {
         guard alpha > 0.02 else { return }
         ctx.saveGState()
         ctx.setAlpha(alpha)
@@ -5542,10 +5575,19 @@ enum CatRenderer {
         ctx.setLineCap(.round)
         ctx.setLineJoin(.round)
         let r = size * 0.55
-        ctx.move(to: CGPoint(x: center.x - r, y: center.y - r))
-        ctx.addLine(to: CGPoint(x: center.x + r, y: center.y - r))
-        ctx.addLine(to: CGPoint(x: center.x - r, y: center.y + r))
-        ctx.addLine(to: CGPoint(x: center.x + r, y: center.y + r))
+        if flipped {
+            ctx.translateBy(x: center.x, y: center.y)
+            ctx.scaleBy(x: -1, y: 1)
+            ctx.move(to: CGPoint(x: -r, y: -r))
+            ctx.addLine(to: CGPoint(x: r, y: -r))
+            ctx.addLine(to: CGPoint(x: -r, y: r))
+            ctx.addLine(to: CGPoint(x: r, y: r))
+        } else {
+            ctx.move(to: CGPoint(x: center.x - r, y: center.y - r))
+            ctx.addLine(to: CGPoint(x: center.x + r, y: center.y - r))
+            ctx.addLine(to: CGPoint(x: center.x - r, y: center.y + r))
+            ctx.addLine(to: CGPoint(x: center.x + r, y: center.y + r))
+        }
         ctx.strokePath()
         ctx.restoreGState()
     }

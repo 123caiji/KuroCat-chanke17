@@ -417,17 +417,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         visItem.target = self
         menu.addItem(visItem)
 
-        let editItem = NSMenuItem(
-            title: settings.isEditMode
-                ? tr("✓ 完成调整大小与方向", "✓ Finish Resize & Direction")
-                : tr("调整大小与方向 (双击小猫)", "Resize & Direction (Double-Click)"),
-            action: #selector(toggleEditMode),
-            keyEquivalent: ""
-        )
-        editItem.target = self
-        editItem.state = settings.isEditMode ? .on : .off
-        menu.addItem(editItem)
-
         // Quick Cat Skin switcher submenu
         let coatMenu = NSMenu()
         let library = SkinLibrary.shared
@@ -517,6 +506,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         topWorkshopItem.target = self
         menu.addItem(topWorkshopItem)
 
+        let websiteItem = NSMenuItem(
+            title: tr("🌐 软件官网 (kurocat.cc)", "🌐 Website (kurocat.cc)"),
+            action: #selector(openWebsite),
+            keyEquivalent: ""
+        )
+        websiteItem.target = self
+        menu.addItem(websiteItem)
+
         let levelKbItem = NSMenuItem(
             title: tr("键盘水平摆放（平行屏幕）", "Level Keyboard (Parallel to Screen)"),
             action: #selector(toggleLevelKeyboard),
@@ -584,6 +581,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             ctrl.onOpenDressingRoom = { [weak self] in
                 self?.showDressingRoom()
+            }
+            ctrl.onSkinsDirectoryChanged = { [weak self] in
+                self?.overlayWindow.catView.needsDisplay = true
+                self?.dressingRoom?.refresh()
             }
             ctrl.onRenameSkin = { [weak self] id in
                 self?.performRenameSkin(id: id)
@@ -838,11 +839,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return false
     }
 
-    @objc private func toggleEditMode() {
-        CatSettings.shared.isEditMode.toggle()
-        wakeToActive(immediateRedraw: true)
-    }
-
     @objc private func selectLanguage(_ sender: NSMenuItem) {
         guard let code = sender.representedObject as? String else { return }
         CatSettings.shared.language = code
@@ -881,6 +877,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private static let skinWorkshopURLString = "https://chanke17.github.io/KuroCat-Workshop/"
     private static let keyboardPlazaURLString = "https://chanke17.github.io/KuroCat-Workshop/#keyboards"
+    private static let websiteURLString = "https://kurocat.cc"
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
@@ -898,6 +895,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openSkinWorkshop() {
         if let url = URL(string: Self.skinWorkshopURLString) {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc private func openWebsite() {
+        if let url = URL(string: Self.websiteURLString) {
             NSWorkspace.shared.open(url)
         }
     }

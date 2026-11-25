@@ -178,6 +178,10 @@ final class CatSettings {
     var customKeyboard: String {
         didSet { UserDefaults.standard.set(customKeyboard, forKey: "KuroCat.CustomKeyboard") }
     }
+    /// User-chosen skins directory path; empty = default Application Support/KuroCat/skins.
+    var customSkinsDirectory: String {
+        didSet { UserDefaults.standard.set(customSkinsDirectory, forKey: SkinLibrary.customDirectoryKey) }
+    }
     /// The keyboard/mouse skin the renderer draws: the imported one while its file still exists, else built-in.
     var activeKeyboardSkin: KeyboardSkinSpec {
         let lib = KeyboardSkinLibrary.shared
@@ -225,6 +229,7 @@ final class CatSettings {
         overrideSkinIris = d.object(forKey: "KuroCat.OverrideSkinIris") as? Bool ?? false
         customSkin = d.string(forKey: "KuroCat.CustomSkin") ?? ""
         customKeyboard = d.string(forKey: "KuroCat.CustomKeyboard") ?? ""
+        customSkinsDirectory = d.string(forKey: SkinLibrary.customDirectoryKey) ?? ""
     }
 }
 
@@ -1101,7 +1106,9 @@ final class CatPhysics {
         }
 
         // Subtle mini-mouse movement driven by global cursor velocity
-        let targetMouseDx = max(-5.5, min(5.5, curMouseVel.dx * 0.0045))
+        let flipped = CatSettings.shared.flipHorizontal
+        let flipSign: CGFloat = flipped ? -1.0 : 1.0
+        let targetMouseDx = max(-5.5, min(5.5, curMouseVel.dx * 0.0045 * flipSign))
         let targetMouseDy = max(-4.5, min(4.5, -curMouseVel.dy * 0.0045))
         mouseOffset.target = CGPoint(x: targetMouseDx, y: targetMouseDy)
         mouseOffset.step(dt: dt, stiffness: 120, damping: 16)
@@ -1120,13 +1127,14 @@ final class CatPhysics {
         if isTabletActive {
             let screenFrame = engine.screenFrame(containing: curMouseLoc)
             let nx = max(0, min(1, (curMouseLoc.x - screenFrame.minX) / max(1, screenFrame.width)))
+            let mappedNx = flipped ? (1.0 - nx) : nx
             let ny = max(0, min(1, 1.0 - (curMouseLoc.y - screenFrame.minY) / max(1, screenFrame.height)))
-            tabletNib.target = CatPhysics.tabletQuadPoint(u: 0.25 + nx * 0.64, v: 0.16 + ny * 0.68)
+            tabletNib.target = CatPhysics.tabletQuadPoint(u: 0.25 + mappedNx * 0.64, v: 0.16 + ny * 0.68)
             tabletNib.step(dt: dt, stiffness: 240, damping: 20)
             let penDown = curLeftMouse || engine.penPressure > 0.02
             tabletPenPress.target = penDown ? max(0.65, min(1.0, engine.penPressure > 0.02 ? engine.penPressure : 0.85)) : 0.0
             tabletPenPress.step(dt: dt, stiffness: 360, damping: 22)
-            tabletPenTilt.target = max(-0.22, min(0.22, curMouseVel.dx * 0.00018))
+            tabletPenTilt.target = max(-0.22, min(0.22, curMouseVel.dx * 0.00018 * flipSign))
             tabletPenTilt.step(dt: dt, stiffness: 120, damping: 14)
         } else {
             tabletPenPress.target = 0
@@ -1357,10 +1365,11 @@ final class CatPhysics {
 
         // Compute normalized vector from cat head to real macOS screen cursor
         let scale = max(0.2, windowFrameInScreen.width / CatPhysics.canvasSize.width)
-        let headScreenX = windowFrameInScreen.minX + eyeOriginCanvas.x * scale
+        let headCanvasX = flipped ? (CatPhysics.canvasSize.width - eyeOriginCanvas.x) : eyeOriginCanvas.x
+        let headScreenX = windowFrameInScreen.minX + headCanvasX * scale
         let headScreenY = windowFrameInScreen.maxY - eyeOriginCanvas.y * scale
         let cursor = curMouseLoc
-        let curDx = (cursor.x - headScreenX) / 290.0
+        let curDx = ((cursor.x - headScreenX) / 290.0) * flipSign
         let curDy = -(cursor.y - headScreenY) / 260.0
         let curMag = hypot(curDx, curDy)
         let clampedCur = min(1.0, curMag)
@@ -1986,10 +1995,28 @@ final class SkinLibrary {
 
     private init() { reload() }
 
-    static var directory: URL {
+    static let customDirectoryKey = "KuroCat.CustomSkinsDirectory"
+
+    static var defaultDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         return base.appendingPathComponent("KuroCat/skins", isDirectory: true)
+    }
+
+    static var directory: URL {
+        let raw = (UserDefaults.standard.string(forKey: customDirectoryKey) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !raw.isEmpty {
+            let expanded = (raw as NSString).expandingTildeInPath
+            return URL(fileURLWithPath: expanded, isDirectory: true)
+        }
+        return defaultDirectory
+    }
+
+    static var isUsingCustomDirectory: Bool {
+        let raw = (UserDefaults.standard.string(forKey: customDirectoryKey) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return !raw.isEmpty && directory.standardizedFileURL.path != defaultDirectory.standardizedFileURL.path
     }
 
     func reload() {

@@ -236,9 +236,9 @@ public:
         float preWobble = std::clamp((dizzy - 0.12f) / 0.38f, 0.0f, 1.0f) * (1.0f - dizzyFall);
 
         if (skin.renderStyle == SkinRenderStyle::Douni) {
-            drawDouniScene(g, physics, skin, kbSkin, settings.eyeTheme, settings.keyboardMarquee);
+            drawDouniScene(g, physics, skin, kbSkin, settings.eyeTheme, settings.keyboardMarquee, settings.flipHorizontal);
             if (!physics.floatingKeycaps.empty()) {
-                drawFloatingKeycaps(g, physics);
+                drawFloatingKeycaps(g, physics, settings.flipHorizontal);
             }
             g.Restore(flipState);
             if (settings.isEditMode) {
@@ -251,9 +251,10 @@ public:
         // with scruff-lifted arched neck/back, 4 dangling swinging paws, carried peripherals, and limp drooping tail!)
         if (scruff > 0.005f) {
             drawNativeScruffDragCat(g, physics, skin, settings.eyeTheme, kbSkin, settings.keyboardTheme,
-                                    settings.showKeyLegends, settings.keyboardMarquee, settings.overrideSkinIris, scruff);
+                                    settings.showKeyLegends, settings.keyboardMarquee, settings.overrideSkinIris, scruff,
+                                    settings.flipHorizontal);
             if (!physics.floatingKeycaps.empty()) {
-                drawFloatingKeycaps(g, physics);
+                drawFloatingKeycaps(g, physics, settings.flipHorizontal);
             }
             g.Restore(flipState);
             if (settings.isEditMode) {
@@ -285,7 +286,7 @@ public:
         }
 
         // 2. Mini 65% Mechanical Keyboard (facing cat) + Backlit Glow
-        drawKeyboard(g, physics, kbSkin, settings.eyeTheme, settings.showKeyLegends, settings.keyboardMarquee);
+        drawKeyboard(g, physics, kbSkin, settings.eyeTheme, settings.showKeyLegends, settings.keyboardMarquee, settings.flipHorizontal);
 
         GraphicsState fallState = g.Save();
         if (dizzy > 0.01f) {
@@ -383,11 +384,11 @@ public:
 
         // 9. Floating Keycap Badges (keyboard + mouse clicks)
         if (!physics.floatingKeycaps.empty()) {
-            drawFloatingKeycaps(g, physics);
+            drawFloatingKeycaps(g, physics, settings.flipHorizontal);
         }
 
         // 10. Subtle Petting Sparkles & Sleep Z
-        drawSparkles(g, physics, settings.eyeTheme);
+        drawSparkles(g, physics, settings.eyeTheme, settings.flipHorizontal);
 
         g.Restore(flipState);
 
@@ -1026,7 +1027,7 @@ private:
         }
     }
 
-    static void drawKeyboard(Gdiplus::Graphics& g, const CatPhysics& physics, const KeyboardSkinSpec& kbSkin, EyeColorTheme eyeTheme, bool showLegends, bool marquee) {
+    static void drawKeyboard(Gdiplus::Graphics& g, const CatPhysics& physics, const KeyboardSkinSpec& kbSkin, EyeColorTheme eyeTheme, bool showLegends, bool marquee, bool flipped = false) {
         using namespace Gdiplus;
         Pt tl = KeyboardLayout::screenQuadPoint(-0.012f, -0.04f);
         Pt tr = KeyboardLayout::screenQuadPoint(1.012f, -0.04f);
@@ -1210,6 +1211,7 @@ private:
                     // The keyboard is laid out 180° to face the cat, so the legends must be too
                     // (upside-down to the viewer, upright from the cat's seat). +3° follows the classic sloped deck.
                     g.RotateTransform(KeyboardLayout::levelKeyboard() ? 180.0f : (180.0f + 3.0f));
+                    if (flipped) g.ScaleTransform(-1.0f, 1.0f);
                     g.DrawString(legend.c_str(), -1, &kf, RectF(-14.0f, -7.0f, 28.0f, 14.0f), &kbSF, &tb);
                     g.Restore(ks);
                 }
@@ -2151,56 +2153,74 @@ private:
 
     static void drawYawnMouth(Gdiplus::Graphics& g, Pt center, float y, const SkinSpec& skin) {
         using namespace Gdiplus;
-        float rx = 3.2f + y * 5.8f;
-        float ry = 1.6f + y * 7.4f;
+        float rx = 3.0f + y * 6.2f;
+        float ry = 1.6f + y * 8.2f;
 
         GraphicsState st = g.Save();
         g.TranslateTransform(center.x, center.y);
 
+        // Upper-narrow, lower-wide rounded inverted-triangle / pear-teardrop yawn contour
         GraphicsPath mouth;
-        mouth.AddBezier(0.0f, -ry * 0.92f, rx * 0.68f, -ry * 0.92f, rx * 1.05f, -ry * 0.42f, rx, ry * 0.08f);
-        mouth.AddBezier(rx, ry * 0.08f, rx * 0.95f, ry * 0.72f, rx * 0.50f, ry, 0.0f, ry);
-        mouth.AddBezier(0.0f, ry, -rx * 0.50f, ry, -rx * 0.95f, ry * 0.72f, -rx, ry * 0.08f);
-        mouth.AddBezier(-rx, ry * 0.08f, -rx * 1.05f, -ry * 0.42f, -rx * 0.68f, -ry * 0.92f, 0.0f, -ry * 0.92f);
+        mouth.AddBezier(0.0f, -ry * 0.92f, rx * 0.34f, -ry * 0.92f, rx * 0.52f, -ry * 0.50f, rx * 0.68f, -ry * 0.12f);
+        mouth.AddBezier(rx * 0.68f, -ry * 0.12f, rx * 0.86f, ry * 0.16f, rx * 1.06f, ry * 0.20f, rx * 1.02f, ry * 0.46f);
+        mouth.AddBezier(rx * 1.02f, ry * 0.46f, rx * 0.98f, ry * 0.78f, rx * 0.48f, ry, 0.0f, ry);
+        mouth.AddBezier(0.0f, ry, -rx * 0.48f, ry, -rx * 0.98f, ry * 0.78f, -rx * 1.02f, ry * 0.46f);
+        mouth.AddBezier(-rx * 1.02f, ry * 0.46f, -rx * 1.06f, ry * 0.20f, -rx * 0.86f, ry * 0.16f, -rx * 0.68f, -ry * 0.12f);
+        mouth.AddBezier(-rx * 0.68f, -ry * 0.12f, -rx * 0.52f, -ry * 0.50f, -rx * 0.34f, -ry * 0.92f, 0.0f, -ry * 0.92f);
         mouth.CloseFigure();
 
-        SolidBrush bgBrush(Color(250, 199, 48, 64));
+        SolidBrush bgBrush(Color(250, 194, 46, 61));
         g.FillPath(&bgBrush, &mouth);
 
         GraphicsState cs = g.Save();
         g.SetClip(&mouth, CombineModeIntersect);
 
-        SolidBrush shadowBrush(Color(140, 140, 26, 41));
-        g.FillEllipse(&shadowBrush, -rx * 0.65f, -ry * 0.72f, rx * 1.30f, ry * 0.92f);
+        SolidBrush shadowBrush(Color(153, 122, 20, 36));
+        g.FillEllipse(&shadowBrush, -rx * 0.54f, -ry * 0.80f, rx * 1.08f, ry * 0.94f);
+        SolidBrush deepShadowBrush(Color(102, 92, 13, 26));
+        g.FillEllipse(&deepShadowBrush, -rx * 0.34f, -ry * 0.52f, rx * 0.68f, ry * 0.56f);
 
-        if (y > 0.22f) {
-            float tAlpha = std::min(1.0f, (y - 0.22f) / 0.35f);
-            SolidBrush tongueBrush(Color((BYTE)(235 * tAlpha), 242, 122, 140));
+        if (y > 0.18f) {
+            float tAlpha = std::min(1.0f, (y - 0.18f) / 0.32f);
+            SolidBrush tongueBrush(Color((BYTE)(242 * tAlpha), 245, 122, 143));
             GraphicsPath tongue;
-            addQuadBezier(tongue, { -rx * 0.62f, ry * 0.55f }, { -rx * 0.32f, ry * 0.16f }, { 0.0f, ry * 0.36f });
-            addQuadBezier(tongue, { 0.0f, ry * 0.36f }, { rx * 0.32f, ry * 0.16f }, { rx * 0.62f, ry * 0.55f });
-            addQuadBezier(tongue, { rx * 0.62f, ry * 0.55f }, { 0.0f, ry * 1.25f }, { -rx * 0.62f, ry * 0.55f });
+            tongue.AddBezier(-rx * 0.72f, ry * 0.62f, -rx * 0.66f, ry * 0.14f, -rx * 0.26f, ry * 0.06f, 0.0f, ry * 0.22f);
+            tongue.AddBezier(0.0f, ry * 0.22f, rx * 0.26f, ry * 0.06f, rx * 0.66f, ry * 0.14f, rx * 0.72f, ry * 0.62f);
+            addQuadBezier(tongue, { rx * 0.72f, ry * 0.62f }, { 0.0f, ry * 1.24f }, { -rx * 0.72f, ry * 0.62f });
             tongue.CloseFigure();
             g.FillPath(&tongueBrush, &tongue);
+
+            SolidBrush tipHighlight(Color((BYTE)(122 * tAlpha), 255, 184, 199));
+            g.FillEllipse(&tipHighlight, -rx * 0.34f, ry * 0.16f, rx * 0.68f, ry * 0.24f);
+
+            Pen groovePen(Color((BYTE)(128 * tAlpha), 199, 64, 87), 0.85f);
+            setRound(groovePen);
+            g.DrawLine(&groovePen, 0.0f, ry * 0.22f, 0.0f, ry * 0.50f);
+
+            Pen curlPen(Color((BYTE)(115 * tAlpha), 184, 51, 74), 0.95f);
+            setRound(curlPen);
+            GraphicsPath curlArc;
+            addQuadBezier(curlArc, { -rx * 0.42f, ry * 0.56f }, { 0.0f, ry * 0.42f }, { rx * 0.42f, ry * 0.56f });
+            g.DrawPath(&curlPen, &curlArc);
         }
 
         if (y > 0.28f) {
             float fScale = std::min(1.0f, (y - 0.28f) / 0.32f);
             SolidBrush fangBrush(Color(250, 255, 252, 245));
-            float uBaseY = -ry * 0.80f;
-            float uLen = (2.6f + y * 2.2f) * fScale;
-            float uHW = (1.15f + y * 0.55f) * fScale;
+            float uBaseY = -ry * 0.68f;
+            float uLen = (2.1f + y * 1.9f) * fScale;
+            float uHW = (0.95f + y * 0.42f) * fScale;
             for (float sign : { -1.0f, 1.0f }) {
-                float fx = sign * rx * 0.46f;
-                PointF pts[3] = { { fx - uHW, uBaseY - 0.8f }, { fx + uHW, uBaseY - 0.8f }, { fx - sign * 0.25f, uBaseY + uLen } };
+                float fx = sign * rx * 0.26f;
+                PointF pts[3] = { { fx - uHW, uBaseY - 0.8f }, { fx + uHW, uBaseY - 0.8f }, { fx - sign * 0.18f, uBaseY + uLen } };
                 g.FillPolygon(&fangBrush, pts, 3);
             }
             float lBaseY = ry * 0.84f;
-            float lLen = (1.6f + y * 1.3f) * fScale;
-            float lHW = (0.85f + y * 0.35f) * fScale;
+            float lLen = (1.4f + y * 1.2f) * fScale;
+            float lHW = (0.78f + y * 0.30f) * fScale;
             for (float sign : { -1.0f, 1.0f }) {
-                float fx = sign * rx * 0.36f;
-                PointF pts[3] = { { fx - lHW, lBaseY + 0.8f }, { fx + lHW, lBaseY + 0.8f }, { fx - sign * 0.15f, lBaseY - lLen } };
+                float fx = sign * rx * 0.42f;
+                PointF pts[3] = { { fx - lHW, lBaseY + 0.8f }, { fx + lHW, lBaseY + 0.8f }, { fx - sign * 0.12f, lBaseY - lLen } };
                 g.FillPolygon(&fangBrush, pts, 3);
             }
         }
@@ -2982,7 +3002,7 @@ private:
 
     // MARK: - Floating Mechanical Keycaps
 
-    static void drawFloatingKeycaps(Gdiplus::Graphics& g, const CatPhysics& physics) {
+    static void drawFloatingKeycaps(Gdiplus::Graphics& g, const CatPhysics& physics, bool flipped = false) {
         using namespace Gdiplus;
         FontFamily ff(L"Segoe UI");
         StringFormat sf;
@@ -3010,7 +3030,7 @@ private:
             GraphicsState st = g.Save();
             g.TranslateTransform(b.position.x, b.position.y);
             g.RotateTransform(b.rotation * RadToDeg);
-            g.ScaleTransform(scale, scale);
+            g.ScaleTransform(flipped ? -scale : scale, scale);
 
             GraphicsPath basePath;
             addRoundedRect(basePath, -w * 0.5f, -h * 0.5f + 2.5f, w, h, 5.5f);
@@ -3034,7 +3054,7 @@ private:
 
     // MARK: - Petting Sparkles & Sleep Z
 
-    static void drawSparkles(Gdiplus::Graphics& g, const CatPhysics& physics, EyeColorTheme eyeTheme) {
+    static void drawSparkles(Gdiplus::Graphics& g, const CatPhysics& physics, EyeColorTheme eyeTheme, bool flipped = false) {
         using namespace Gdiplus;
         Color baseCol = eyePrimary(eyeTheme);
         FontFamily ff(L"Segoe UI");
@@ -3048,7 +3068,15 @@ private:
             if (sp.isSleepZ) {
                 Font f(&ff, 11.0f + p * 3.0f, FontStyleBold, UnitPixel);
                 SolidBrush sb(c);
-                g.DrawString(L"z", -1, &f, PointF(sp.position.x, sp.position.y), &sb);
+                if (flipped) {
+                    GraphicsState zs = g.Save();
+                    g.TranslateTransform(sp.position.x, sp.position.y);
+                    g.ScaleTransform(-1.0f, 1.0f);
+                    g.DrawString(L"z", -1, &f, PointF(0.0f, 0.0f), &sb);
+                    g.Restore(zs);
+                } else {
+                    g.DrawString(L"z", -1, &f, PointF(sp.position.x, sp.position.y), &sb);
+                }
             } else {
                 float r = 3.5f + p * 1.5f;
                 GraphicsState st = g.Save();
@@ -3297,7 +3325,8 @@ private:
         const SkinSpec& skin,
         const KeyboardSkinSpec& kbSkin,
         EyeColorTheme eyeTheme,
-        bool marquee
+        bool marquee,
+        bool flipped = false
     ) {
         using namespace Gdiplus;
         float scruff = std::clamp(physics.scruffDrag.value, 0.0f, 1.0f);
@@ -3319,7 +3348,7 @@ private:
                 drawWithLayerAlpha(g, deskFade * loafS, [&](Graphics& lg) {
                     GraphicsState s = lg.Save();
                     lg.TranslateTransform(0.0f, scruffS * 20.0f);
-                    drawDouniV1LoafInCanvas(lg, physics, skin, 1.0f);
+                    drawDouniV1LoafInCanvas(lg, physics, skin, 1.0f, flipped);
                     lg.Restore(s);
                 });
             }
@@ -3337,7 +3366,7 @@ private:
         }
 
         if (loafS > 0.01f) {
-            drawDouniV1LoafInCanvas(g, physics, skin, loafS);
+            drawDouniV1LoafInCanvas(g, physics, skin, loafS, flipped);
         }
     }
 
@@ -3346,7 +3375,8 @@ private:
         Gdiplus::Graphics& g,
         const CatPhysics& physics,
         const SkinSpec& skin,
-        float loafMorph = 1.0f
+        float loafMorph = 1.0f,
+        bool flipped = false
     ) {
         using namespace Gdiplus;
         float m = std::clamp(loafMorph, 0.0f, 1.0f);
@@ -3372,7 +3402,7 @@ private:
             lg.TranslateTransform(-pivotX, -pivotY);
             lg.TranslateTransform(tx, ty);
             lg.ScaleTransform(scale, scale);
-            drawDouniV1LoafInSpace(lg, physics, skin, true);
+            drawDouniV1LoafInSpace(lg, physics, skin, true, flipped);
             lg.Restore(st);
         });
     }
@@ -3438,7 +3468,8 @@ private:
         Gdiplus::Graphics& g,
         const CatPhysics& physics,
         const SkinSpec& skin,
-        bool showStatusAccents = true
+        bool showStatusAccents = true,
+        bool flipped = false
     ) {
         using namespace Gdiplus;
         Color ink = skin.palette.outline.set ? col(skin.palette.outline) : douniInkColor();
@@ -3582,7 +3613,7 @@ private:
                 float zy = 218.0f - p * 112.0f;
                 float alpha = std::sin(p * 3.14159265f) * std::min(1.0f, physics.sleepiness * 1.3f);
                 float sz = 24.0f + p * 18.0f;
-                drawComicZ(g, { zx, zy }, sz, alpha, ink);
+                drawComicZ(g, { zx, zy }, sz, alpha, ink, flipped);
             }
         }
     }
@@ -4339,19 +4370,33 @@ private:
         g.Restore(st);
     }
 
-    static void drawComicZ(Gdiplus::Graphics& g, Pt center, float size, float alpha, Gdiplus::Color ink) {
+    static void drawComicZ(Gdiplus::Graphics& g, Pt center, float size, float alpha, Gdiplus::Color ink, bool flipped = false) {
         using namespace Gdiplus;
         if (alpha <= 0.02f) return;
         float r = size * 0.55f;
-        PointF pts[4] = {
-            PointF(center.x - r, center.y - r),
-            PointF(center.x + r, center.y - r),
-            PointF(center.x - r, center.y + r),
-            PointF(center.x + r, center.y + r)
-        };
         Pen pen(scaleAlpha(ink, alpha), 7.5f);
         setRound(pen);
-        g.DrawLines(&pen, pts, 4);
+        if (flipped) {
+            GraphicsState zs = g.Save();
+            g.TranslateTransform(center.x, center.y);
+            g.ScaleTransform(-1.0f, 1.0f);
+            PointF pts[4] = {
+                PointF(-r, -r),
+                PointF(r, -r),
+                PointF(-r, r),
+                PointF(r, r)
+            };
+            g.DrawLines(&pen, pts, 4);
+            g.Restore(zs);
+        } else {
+            PointF pts[4] = {
+                PointF(center.x - r, center.y - r),
+                PointF(center.x + r, center.y - r),
+                PointF(center.x - r, center.y + r),
+                PointF(center.x + r, center.y + r)
+            };
+            g.DrawLines(&pen, pts, 4);
+        }
     }
 
     // MARK: - V2Space (832 x 720) Pixel-Exact Video 2 Typing / Idle / Mouse Scene
@@ -5677,7 +5722,8 @@ private:
         bool showKeyLegends,
         bool keyboardMarquee,
         bool overrideSkinIris,
-        float lift
+        float lift,
+        bool flipped = false
     ) {
         using namespace Gdiplus;
         float liftS = smoothstep(0.0f, 1.0f, lift);
@@ -6311,7 +6357,7 @@ private:
                 } else {
                     drawMouse(lg, physics, kbSkin);
                 }
-                drawKeyboard(lg, physics, kbSkin, eyeTheme, showKeyLegends, keyboardMarquee);
+                drawKeyboard(lg, physics, kbSkin, eyeTheme, showKeyLegends, keyboardMarquee, flipped);
                 lg.Restore(gs);
             }
 

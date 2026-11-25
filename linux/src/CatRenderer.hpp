@@ -208,9 +208,9 @@ public:
         float seatY = CatPhysics::SeatAnchor.y - scruff * 22.0f + lieS * 10.0f;
 
         if (skin.renderStyle == SkinRenderStyle::Douni) {
-            drawDouniScene(cr, physics, skin, kbSkin, settings.eyeTheme, settings.keyboardMarquee);
+            drawDouniScene(cr, physics, skin, kbSkin, settings.eyeTheme, settings.keyboardMarquee, settings.flipHorizontal);
             if (!physics.floatingKeycaps.empty()) {
-                drawFloatingKeycaps(cr, physics);
+                drawFloatingKeycaps(cr, physics, settings.flipHorizontal);
             }
             cairo_restore(cr);
             if (settings.isEditMode) {
@@ -223,9 +223,10 @@ public:
         // with scruff-lifted arched neck/back, 4 dangling swinging paws, and limp drooping tail!)
         if (scruff > 0.005f) {
             drawNativeScruffDragCat(cr, physics, skin, settings.eyeTheme, kbSkin, settings.keyboardTheme,
-                                    settings.showKeyLegends, settings.keyboardMarquee, settings.overrideSkinIris, (double)scruff);
+                                    settings.showKeyLegends, settings.keyboardMarquee, settings.overrideSkinIris, (double)scruff,
+                                    settings.flipHorizontal);
             if (!physics.floatingKeycaps.empty()) {
-                drawFloatingKeycaps(cr, physics);
+                drawFloatingKeycaps(cr, physics, settings.flipHorizontal);
             }
             cairo_restore(cr);
             if (settings.isEditMode) {
@@ -253,7 +254,7 @@ public:
         } else {
             drawMouse(cr, physics, kbSkin);
         }
-        drawKeyboard(cr, physics, kbSkin, settings.eyeTheme, settings.showKeyLegends, settings.keyboardMarquee);
+        drawKeyboard(cr, physics, kbSkin, settings.eyeTheme, settings.showKeyLegends, settings.keyboardMarquee, settings.flipHorizontal);
         cairo_save(cr);
         if (dizzy > 0.01f) {
             cairo_translate(cr, seatX + fallShiftX, seatY + fallShiftY);
@@ -343,9 +344,9 @@ public:
         }
 
         if (!physics.floatingKeycaps.empty()) {
-            drawFloatingKeycaps(cr, physics);
+            drawFloatingKeycaps(cr, physics, settings.flipHorizontal);
         }
-        drawSparkles(cr, physics, settings.eyeTheme);
+        drawSparkles(cr, physics, settings.eyeTheme, settings.flipHorizontal);
         cairo_restore(cr);
 
         if (settings.isEditMode) {
@@ -1009,7 +1010,7 @@ private:
         }
     }
 
-    static void drawKeyboard(cairo_t* cr, const CatPhysics& physics, const KeyboardSkinSpec& kbSkin, EyeColorTheme eyeTheme, bool showLegends, bool marquee) {
+    static void drawKeyboard(cairo_t* cr, const CatPhysics& physics, const KeyboardSkinSpec& kbSkin, EyeColorTheme eyeTheme, bool showLegends, bool marquee, bool flipped = false) {
         Pt tl = KeyboardLayout::screenQuadPoint(-0.012f, -0.04f);
         Pt tr = KeyboardLayout::screenQuadPoint(1.012f, -0.04f);
         Pt bl = KeyboardLayout::screenQuadPoint(-0.016f, 1.04f);
@@ -1172,6 +1173,7 @@ private:
                     cairo_translate(cr, cx, cy);
                     // Keyboard faces the cat (180°), so legends read upright from the cat's seat.
                     cairo_rotate(cr, KeyboardLayout::levelKeyboard() ? 3.14159265358979 : (3.14159265358979 + 0.052));
+                    if (flipped) cairo_scale(cr, -1.0, 1.0);
                     cairo_move_to(cr, -(ext.width * 0.5 + ext.x_bearing), -(ext.height * 0.5 + ext.y_bearing));
                     cairo_show_text(cr, legend.c_str());
                     cairo_restore(cr);
@@ -2255,16 +2257,19 @@ private:
     static void drawYawnMouth(cairo_t* cr, float yawRad, float pitchRad, float yawn, const SkinSpec& skin) {
         double y = std::clamp(yawn, 0.0f, 1.0f);
         Pt c = projectHead3D(0.0f, (float)(16.2 + y * 2.2), 30.2f, yawRad, pitchRad);
-        double rx = 3.2 + y * 5.8;
-        double ry = 1.6 + y * 7.4;
+        double rx = 3.0 + y * 6.2;
+        double ry = 1.6 + y * 8.2;
 
+        // Upper-narrow, lower-wide rounded inverted-triangle / pear-teardrop yawn contour
         auto mouthPath = [&]() {
             cairo_new_path(cr);
             cairo_move_to(cr, 0.0, -ry * 0.92);
-            cairo_curve_to(cr, rx * 0.68, -ry * 0.92, rx * 1.05, -ry * 0.42, rx, ry * 0.08);
-            cairo_curve_to(cr, rx * 0.95, ry * 0.72, rx * 0.50, ry, 0.0, ry);
-            cairo_curve_to(cr, -rx * 0.50, ry, -rx * 0.95, ry * 0.72, -rx, ry * 0.08);
-            cairo_curve_to(cr, -rx * 1.05, -ry * 0.42, -rx * 0.68, -ry * 0.92, 0.0, -ry * 0.92);
+            cairo_curve_to(cr, rx * 0.34, -ry * 0.92, rx * 0.52, -ry * 0.50, rx * 0.68, -ry * 0.12);
+            cairo_curve_to(cr, rx * 0.86, ry * 0.16, rx * 1.06, ry * 0.20, rx * 1.02, ry * 0.46);
+            cairo_curve_to(cr, rx * 0.98, ry * 0.78, rx * 0.48, ry, 0.0, ry);
+            cairo_curve_to(cr, -rx * 0.48, ry, -rx * 0.98, ry * 0.78, -rx * 1.02, ry * 0.46);
+            cairo_curve_to(cr, -rx * 1.06, ry * 0.20, -rx * 0.86, ry * 0.16, -rx * 0.68, -ry * 0.12);
+            cairo_curve_to(cr, -rx * 0.52, -ry * 0.50, -rx * 0.34, -ry * 0.92, 0.0, -ry * 0.92);
             cairo_close_path(cr);
         };
 
@@ -2272,53 +2277,86 @@ private:
         cairo_translate(cr, c.x, c.y);
 
         mouthPath();
-        cairo_set_source_rgba(cr, 0.78, 0.19, 0.25, 0.98);
+        cairo_set_source_rgba(cr, 0.76, 0.18, 0.24, 0.98);
         cairo_fill(cr);
 
         cairo_save(cr);
         mouthPath();
         cairo_clip(cr);
 
+        // Inner upper-palate cavity shadow
         cairo_save(cr);
-        cairo_translate(cr, 0.0, -ry * 0.26);
-        cairo_scale(cr, rx * 0.65, ry * 0.46);
-        cairo_set_source_rgba(cr, 0.55, 0.10, 0.16, 0.55);
+        cairo_translate(cr, 0.0, -ry * 0.33);
+        cairo_scale(cr, rx * 0.54, ry * 0.47);
+        cairo_set_source_rgba(cr, 0.48, 0.08, 0.14, 0.60);
         cairo_arc(cr, 0.0, 0.0, 1.0, 0.0, PI * 2.0);
         cairo_fill(cr);
         cairo_restore(cr);
 
-        if (y > 0.22) {
-            double tAlpha = std::min(1.0, (y - 0.22) / 0.35);
-            cairo_set_source_rgba(cr, 0.95, 0.48, 0.55, 0.92 * tAlpha);
+        cairo_save(cr);
+        cairo_translate(cr, 0.0, -ry * 0.24);
+        cairo_scale(cr, rx * 0.34, ry * 0.28);
+        cairo_set_source_rgba(cr, 0.36, 0.05, 0.10, 0.40);
+        cairo_arc(cr, 0.0, 0.0, 1.0, 0.0, PI * 2.0);
+        cairo_fill(cr);
+        cairo_restore(cr);
+
+        // Cute pink tongue curling gently upward/forward from the wider lower jaw
+        if (y > 0.18) {
+            double tAlpha = std::min(1.0, (y - 0.18) / 0.32);
+            cairo_set_source_rgba(cr, 0.96, 0.48, 0.56, 0.95 * tAlpha);
             cairo_new_path(cr);
-            cairo_move_to(cr, -rx * 0.62, ry * 0.55);
-            quadCurveTo(cr, -rx * 0.62, ry * 0.55, -rx * 0.32, ry * 0.16, 0.0, ry * 0.36);
-            quadCurveTo(cr, 0.0, ry * 0.36, rx * 0.32, ry * 0.16, rx * 0.62, ry * 0.55);
-            quadCurveTo(cr, rx * 0.62, ry * 0.55, 0.0, ry * 1.25, -rx * 0.62, ry * 0.55);
+            cairo_move_to(cr, -rx * 0.72, ry * 0.62);
+            cairo_curve_to(cr, -rx * 0.66, ry * 0.14, -rx * 0.26, ry * 0.06, 0.0, ry * 0.22);
+            cairo_curve_to(cr, rx * 0.26, ry * 0.06, rx * 0.66, ry * 0.14, rx * 0.72, ry * 0.62);
+            quadCurveTo(cr, rx * 0.72, ry * 0.62, 0.0, ry * 1.24, -rx * 0.72, ry * 0.62);
             cairo_close_path(cr);
             cairo_fill(cr);
+
+            cairo_save(cr);
+            cairo_translate(cr, 0.0, ry * 0.28);
+            cairo_scale(cr, rx * 0.34, ry * 0.12);
+            cairo_set_source_rgba(cr, 1.0, 0.72, 0.78, 0.48 * tAlpha);
+            cairo_arc(cr, 0.0, 0.0, 1.0, 0.0, PI * 2.0);
+            cairo_fill(cr);
+            cairo_restore(cr);
+
+            cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+            cairo_set_source_rgba(cr, 0.78, 0.25, 0.34, 0.50 * tAlpha);
+            cairo_set_line_width(cr, 0.85);
+            cairo_new_path(cr);
+            cairo_move_to(cr, 0.0, ry * 0.22);
+            cairo_line_to(cr, 0.0, ry * 0.50);
+            cairo_stroke(cr);
+
+            cairo_set_source_rgba(cr, 0.72, 0.20, 0.29, 0.45 * tAlpha);
+            cairo_set_line_width(cr, 0.95);
+            cairo_new_path(cr);
+            cairo_move_to(cr, -rx * 0.42, ry * 0.56);
+            quadCurveTo(cr, -rx * 0.42, ry * 0.56, 0.0, ry * 0.42, rx * 0.42, ry * 0.56);
+            cairo_stroke(cr);
         }
 
         if (y > 0.28) {
             double fScale = std::min(1.0, (y - 0.28) / 0.32);
             cairo_set_source_rgba(cr, 1.0, 0.99, 0.96, 0.98);
-            double uBaseY = -ry * 0.80, uLen = (2.6 + y * 2.2) * fScale, uHW = (1.15 + y * 0.55) * fScale;
+            double uBaseY = -ry * 0.68, uLen = (2.1 + y * 1.9) * fScale, uHW = (0.95 + y * 0.42) * fScale;
             for (double sign : { -1.0, 1.0 }) {
-                double fx = sign * rx * 0.46;
+                double fx = sign * rx * 0.26;
                 cairo_new_path(cr);
                 cairo_move_to(cr, fx - uHW, uBaseY - 0.8);
                 cairo_line_to(cr, fx + uHW, uBaseY - 0.8);
-                cairo_line_to(cr, fx - sign * 0.25, uBaseY + uLen);
+                cairo_line_to(cr, fx - sign * 0.18, uBaseY + uLen);
                 cairo_close_path(cr);
                 cairo_fill(cr);
             }
-            double lBaseY = ry * 0.84, lLen = (1.6 + y * 1.3) * fScale, lHW = (0.85 + y * 0.35) * fScale;
+            double lBaseY = ry * 0.84, lLen = (1.4 + y * 1.2) * fScale, lHW = (0.78 + y * 0.30) * fScale;
             for (double sign : { -1.0, 1.0 }) {
-                double fx = sign * rx * 0.36;
+                double fx = sign * rx * 0.42;
                 cairo_new_path(cr);
                 cairo_move_to(cr, fx - lHW, lBaseY + 0.8);
                 cairo_line_to(cr, fx + lHW, lBaseY + 0.8);
-                cairo_line_to(cr, fx - sign * 0.15, lBaseY - lLen);
+                cairo_line_to(cr, fx - sign * 0.12, lBaseY - lLen);
                 cairo_close_path(cr);
                 cairo_fill(cr);
             }
@@ -3018,7 +3056,7 @@ private:
 
     // MARK: - Floating Keycaps
 
-    static void drawFloatingKeycaps(cairo_t* cr, const CatPhysics& physics) {
+    static void drawFloatingKeycaps(cairo_t* cr, const CatPhysics& physics, bool flipped = false) {
         cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
 
         for (const auto& b : physics.floatingKeycaps) {
@@ -3043,7 +3081,7 @@ private:
             cairo_save(cr);
             cairo_translate(cr, b.position.x, b.position.y);
             cairo_rotate(cr, b.rotation);
-            cairo_scale(cr, scale, scale);
+            cairo_scale(cr, flipped ? -scale : scale, scale);
 
             roundedRect(cr, -w * 0.5, -h * 0.5 + 2.5, w, h, 5.5);
             cairo_set_source_rgba(cr, 0.15, 0.15, 0.17, 0.95 * alpha);
@@ -3069,7 +3107,7 @@ private:
 
     // MARK: - Sparkles & Sleep Z
 
-    static void drawSparkles(cairo_t* cr, const CatPhysics& physics, EyeColorTheme eyeTheme) {
+    static void drawSparkles(cairo_t* cr, const CatPhysics& physics, EyeColorTheme eyeTheme, bool flipped = false) {
         RGBA c = eyePrimary(eyeTheme);
         for (const auto& sp : physics.sparkles) {
             double p = std::min(1.0, (double)(sp.age / sp.lifetime));
@@ -3081,7 +3119,13 @@ private:
             if (sp.isSleepZ) {
                 cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
                 cairo_set_font_size(cr, 11.0 + p * 3.0);
-                cairo_move_to(cr, sp.position.x, sp.position.y);
+                if (flipped) {
+                    cairo_translate(cr, sp.position.x, sp.position.y);
+                    cairo_scale(cr, -1.0, 1.0);
+                    cairo_move_to(cr, 0.0, 0.0);
+                } else {
+                    cairo_move_to(cr, sp.position.x, sp.position.y);
+                }
                 cairo_show_text(cr, "z");
             } else {
                 double r = 3.5 + p * 1.5;
@@ -3203,7 +3247,7 @@ private:
 
     /// Top-level Xiao Douni scene router inside KuroCat's 360x320 canvas.
     static void drawDouniScene(cairo_t* cr, const CatPhysics& physics, const SkinSpec& skin,
-                               const KeyboardSkinSpec& kbSkin, EyeColorTheme eyeTheme, bool marquee) {
+                               const KeyboardSkinSpec& kbSkin, EyeColorTheme eyeTheme, bool marquee, bool flipped = false) {
         double scruff = std::clamp((double)physics.scruffDrag.value, 0.0, 1.0);
         double scruffS = smoothstepD(0.0, 1.0, scruff);
         double loafRaw = std::clamp((double)physics.douniLoafBlend.value, 0.0, 1.0);
@@ -3228,7 +3272,7 @@ private:
                 cairo_save(cr);
                 if (loafAlpha < 0.995) cairo_push_group(cr);
                 cairo_translate(cr, 0.0, scruffS * 20.0);
-                drawDouniV1LoafInCanvas(cr, physics, skin, 1.0);
+                drawDouniV1LoafInCanvas(cr, physics, skin, 1.0, flipped);
                 if (loafAlpha < 0.995) {
                     cairo_pop_group_to_source(cr);
                     cairo_paint_with_alpha(cr, loafAlpha);
@@ -3249,12 +3293,12 @@ private:
         }
 
         if (loafS > 0.01) {
-            drawDouniV1LoafInCanvas(cr, physics, skin, loafS);
+            drawDouniV1LoafInCanvas(cr, physics, skin, loafS, flipped);
         }
     }
 
     static void drawDouniV1LoafInCanvas(cairo_t* cr, const CatPhysics& physics, const SkinSpec& skin,
-                                        double loafMorph = 1.0) {
+                                        double loafMorph = 1.0, bool flipped = false) {
         double m = std::clamp(loafMorph, 0.0, 1.0);
         // Tight swap window [0.36..0.56] right when V2 cat has already glided & squished into Loaf's exact spot!
         double alpha = smoothstepD(0.36, 0.56, m);
@@ -3278,7 +3322,7 @@ private:
         cairo_translate(cr, -pivotX, -pivotY);
         cairo_translate(cr, tx, ty);
         cairo_scale(cr, scale, scale);
-        drawDouniV1LoafInSpace(cr, physics, skin, true);
+        drawDouniV1LoafInSpace(cr, physics, skin, true, flipped);
         if (alpha < 0.995) {
             cairo_pop_group_to_source(cr);
             cairo_paint_with_alpha(cr, alpha);
@@ -3340,7 +3384,7 @@ public:
     // MARK: - V1Space (1000 x 750) Pixel-Exact Video 1 Rest / Pet / Sleep Loaf
 
     static void drawDouniV1LoafInSpace(cairo_t* cr, const CatPhysics& physics, const SkinSpec& skin,
-                                       bool showStatusAccents = true) {
+                                       bool showStatusAccents = true, bool flipped = false) {
         RGBA ink = skin.palette.outline.set ? toRGBA(skin.palette.outline) : douniInkColor;
         RGBA cream = toRGBA(skin.palette.body);
         RGBA taupe = toRGBA(skin.palette.points.set ? skin.palette.points : skin.palette.paws);
@@ -3503,7 +3547,7 @@ public:
                 double zy = 218.0 - p * 112.0;
                 double alpha = std::sin(p * PI) * std::min(1.0, (double)physics.sleepiness * 1.3);
                 double sz = 24.0 + p * 18.0;
-                drawComicZ(cr, { zx, zy }, sz, alpha, ink);
+                drawComicZ(cr, { zx, zy }, sz, alpha, ink, flipped);
             }
         }
     }
@@ -4046,7 +4090,7 @@ public:
     static void drawNativeScruffDragCat(cairo_t* cr, const CatPhysics& physics, const SkinSpec& skin,
                                         EyeColorTheme eyeTheme, const KeyboardSkinSpec& kbSkin,
                                         KeyboardTheme kbTheme, bool showKeyLegends, bool keyboardMarquee,
-                                        bool overrideSkinIris, double lift) {
+                                        bool overrideSkinIris, double lift, bool flipped = false) {
         double liftS = smoothstepD(0.0, 1.0, lift);
         double startle = 0.0;
         if (physics.isScruffDragging()) {
@@ -4754,7 +4798,7 @@ public:
         } else {
             drawMouse(cr, physics, kbSkin);
         }
-        drawKeyboard(cr, physics, kbSkin, eyeTheme, showKeyLegends, keyboardMarquee);
+        drawKeyboard(cr, physics, kbSkin, eyeTheme, showKeyLegends, keyboardMarquee, flipped);
         cairo_restore(cr);
 
         // 7. Dangling / Carrying Front Arms
@@ -5316,7 +5360,7 @@ private:
         cairo_restore(cr);
     }
 
-    static void drawComicZ(cairo_t* cr, PtD center, double size, double alpha, RGBA ink) {
+    static void drawComicZ(cairo_t* cr, PtD center, double size, double alpha, RGBA ink, bool flipped = false) {
         if (alpha <= 0.02) return;
         cairo_save(cr);
         setCol(cr, ink, alpha);
@@ -5325,10 +5369,19 @@ private:
         cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
         double r = size * 0.55;
         cairo_new_path(cr);
-        cairo_move_to(cr, center.x - r, center.y - r);
-        cairo_line_to(cr, center.x + r, center.y - r);
-        cairo_line_to(cr, center.x - r, center.y + r);
-        cairo_line_to(cr, center.x + r, center.y + r);
+        if (flipped) {
+            cairo_translate(cr, center.x, center.y);
+            cairo_scale(cr, -1.0, 1.0);
+            cairo_move_to(cr, -r, -r);
+            cairo_line_to(cr, r, -r);
+            cairo_line_to(cr, -r, r);
+            cairo_line_to(cr, r, r);
+        } else {
+            cairo_move_to(cr, center.x - r, center.y - r);
+            cairo_line_to(cr, center.x + r, center.y - r);
+            cairo_line_to(cr, center.x - r, center.y + r);
+            cairo_line_to(cr, center.x + r, center.y + r);
+        }
         cairo_stroke(cr);
         cairo_restore(cr);
     }
