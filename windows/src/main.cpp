@@ -1449,7 +1449,7 @@ bool promptRenameSkin(AppState& app, const std::string& id) {
         en ? L"Rename Skin" : L"重命名皮肤",
         WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
         sx, sy, w, h,
-        app.settingsHwnd ? app.settingsHwnd : app.menuOwnerHwnd,
+        app.settingsWnd ? app.settingsWnd : app.menuOwnerHwnd,
         nullptr, inst, &st
     );
     if (!dlg) return false;
