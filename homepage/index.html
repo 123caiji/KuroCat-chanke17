@@ -7,7 +7,7 @@
   <meta name="description" content="KuroCat 是一款开源免费的原生桌面萌猫，支持 macOS、Windows、Linux 与统信 UOS。全状态键鼠与数位板同步、2.5D 转头捕猎、OBS 直播透明捕获、自定义皮肤工坊，不上传任何按键记录。" />
   <meta name="keywords" content="KuroCat,桌面宠物,Bongo Cat替代,敲键盘小猫,OBS直播桌宠,Mac桌面宠物,Windows桌宠,Linux桌宠,统信UOS,数位板桌宠,开源桌宠" />
   <meta name="robots" content="index, follow" />
-  <meta name="theme-color" content="#000000" />
+  <meta name="theme-color" content="#F7F5F0" />
   <link rel="canonical" href="https://chanke17.github.io/KuroCat/" />
 
   <!-- Open Graph / Social Sharing -->
@@ -25,13 +25,13 @@
   <meta name="twitter:image" content="https://chanke17.github.io/KuroCat/assets/og-cover.png" />
 
   <!-- Branded Favicon -->
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23000000'/%3E%3Cpath d='M16 24 14 10l12 8h12l12-8-2 14c4 6 4 18 0 24-4 7-10 10-18 10S18 55 14 48c-4-6-4-18 2-24Z' fill='%23181818' stroke='%23C9F240' stroke-width='2.5'/%3E%3Cellipse cx='24' cy='36' rx='4.2' ry='7.5' fill='%23C9F240'/%3E%3Cellipse cx='40' cy='36' rx='4.2' ry='7.5' fill='%23C9F240'/%3E%3C/svg%3E" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%231E2B25'/%3E%3Cpath d='M16 24 14 10l12 8h12l12-8-2 14c4 6 4 18 0 24-4 7-10 10-18 10S18 55 14 48c-4-6-4-18 2-24Z' fill='%231E2B25' stroke='%23C5A059' stroke-width='2.5'/%3E%3Cellipse cx='24' cy='36' rx='4.2' ry='7.5' fill='%23C5A059'/%3E%3Cellipse cx='40' cy='36' rx='4.2' ry='7.5' fill='%23C5A059'/%3E%3C/svg%3E" />
 
   <!-- Approved Fonts: Manrope + Geist Mono (code/metrics only) -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@500;600&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20261125a" />
+  <link rel="stylesheet" href="styles.css?v=20261125b" />
 
   <!-- GEO & SEO Structured Data -->
   <script type="application/ld+json">
@@ -246,21 +246,66 @@
             </ul>
           </div>
 
-          <div class="showcase-frame">
-            <div class="showcase-bar">
-              <div class="showcase-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-              <div class="showcase-live caption-4">
+          <div class="pet-stage-card" id="petPlayground">
+            <div class="pet-stage-head">
+              <div class="pet-live-pill caption-4">
                 <span class="live-dot" aria-hidden="true"></span>
-                <span id="showcaseCaption" data-i18n="demo_cap_typing">敲键盘打字 · 2.5D 球面转头</span>
+                <span id="petStatusLabel" data-i18n="pet_live_hint">网页实时桌宠 · 敲键盘或晃鼠标试试</span>
+              </div>
+              <button class="pet-float-toggle caption-3" id="petFloatToggle" type="button" aria-pressed="false">
+                <svg class="icon icon-sm" aria-hidden="true"><use href="#ph-compass" /></svg>
+                <span id="petFloatLabel" data-i18n="pet_float_on">放到网页角落</span>
+              </button>
+            </div>
+
+            <div class="pet-skin-bar" id="petSkinBar" role="tablist" aria-label="实时切换体验皮肤">
+              <button class="pet-skin-chip caption-3 active" type="button" role="tab" aria-selected="true" data-skin-id="siamese">
+                <span class="skin-swatch" style="background-color:#E7DAC4;"></span>
+                <span data-i18n="ps_siamese">暹罗猫</span>
+              </button>
+              <button class="pet-skin-chip caption-3" type="button" role="tab" aria-selected="false" data-skin-id="xiao-douni">
+                <span class="skin-swatch" style="background-color:#F6EFE6;"></span>
+                <span data-i18n="ps_douni">小豆泥</span>
+              </button>
+              <button class="pet-skin-chip caption-3" type="button" role="tab" aria-selected="false" data-skin-id="dazed-cat">
+                <span class="skin-swatch" style="background-color:#555F9B;"></span>
+                <span data-i18n="ps_dazed">怪猎呆猫</span>
+              </button>
+              <button class="pet-skin-chip caption-3" type="button" role="tab" aria-selected="false" data-skin-id="orangeWhite">
+                <span class="skin-swatch" style="background-color:#DE9A58;"></span>
+                <span data-i18n="ps_orange">橘白猫</span>
+              </button>
+              <button class="pet-skin-chip caption-3" type="button" role="tab" aria-selected="false" data-skin-id="mackerel-tabby">
+                <span class="skin-swatch" style="background-color:#B8A081;"></span>
+                <span data-i18n="ps_tabby">棕虎斑</span>
+              </button>
+              <button class="pet-skin-chip caption-3" type="button" role="tab" aria-selected="false" data-skin-id="black">
+                <span class="skin-swatch" style="background-color:#1E2B25;"></span>
+                <span data-i18n="ps_black">小黑猫</span>
+              </button>
+            </div>
+
+            <div class="pet-canvas-box" id="petCanvasBox">
+              <div class="pet-canvas-mount" id="petHomeMount">
+                <canvas id="livePetCanvas" width="720" height="640" aria-label="KuroCat 网页内可交互桌宠画布：支持真实键盘打字、鼠标 2.5D 追踪、摸头与拎后颈体验"></canvas>
+              </div>
+              <div class="pet-docked-placeholder" id="petDockedNotice">
+                <p class="title-4" data-i18n="pet_undocked_t">小猫正在页面右下角陪你逛官网</p>
+                <p class="caption-2" data-i18n="pet_undocked_d">继续滚动页面、敲键盘或拖拽它到屏幕任意角落</p>
+                <button class="btn btn-secondary button-sm" type="button" id="petDockBackBtn" data-i18n="pet_dock_back">收回画框里</button>
               </div>
             </div>
-            <div class="showcase-stage">
-              <img id="heroGif" src="assets/demo_typing.gif" alt="KuroCat 实机演示动画：小猫趴在迷你机械键盘上随按键实时拍键并转动头部" />
+
+            <div class="pet-action-bar" role="group" aria-label="快捷动作体验">
+              <button class="pet-action-btn caption-3" type="button" data-pet-pose="typing" data-i18n="act_typing">自动打字</button>
+              <button class="pet-action-btn caption-3" type="button" data-pet-pose="petHead" data-i18n="act_pet">摸摸猫头</button>
+              <button class="pet-action-btn caption-3" type="button" data-pet-pose="drag" data-i18n="act_drag">拎起后颈</button>
+              <button class="pet-action-btn caption-3" type="button" data-pet-pose="sleep" data-i18n="act_sleep">团球睡觉</button>
             </div>
-            <div class="showcase-tabs" role="tablist" aria-label="演示动画切换">
-              <button class="showcase-tab caption-3 active" type="button" role="tab" aria-selected="true" data-gif="assets/demo_typing.gif" data-cap-zh="敲键盘打字 · 2.5D 球面转头" data-cap-en="Typing sync · 2.5D head tracking" data-i18n="tab_typing">敲键盘打字</button>
-              <button class="showcase-tab caption-3" type="button" role="tab" aria-selected="false" data-gif="assets/demo_hunting.gif" data-cap-zh="快速晃鼠标 · 触发捕猎大圆眼" data-cap-en="Fast cursor shake · Hunting boba eyes" data-i18n="tab_hunting">捕猎大圆眼</button>
-              <button class="showcase-tab caption-3" type="button" role="tab" aria-selected="false" data-gif="assets/demo_combo.gif" data-cap-zh="全键无冲 · 边打字边拖鼠标" data-cap-en="Full state capture · Typing and mouse" data-i18n="tab_combo">键鼠齐动</button>
+
+            <div class="pet-hint-line caption-5">
+              <span data-i18n="pet_controls_tip">直接按键盘任意键拍键 · 晃鼠标触发捕猎眼 · 按住小猫可拎起</span>
+              <span class="mono-tag" id="petKeyCounter">KEYS 0</span>
             </div>
           </div>
         </div>
@@ -287,7 +332,7 @@
     </section>
 
     <!-- 2. ECOSYSTEM NAVIGATION HUB (#hub) -->
-    <section class="section section-divider" id="hub">
+    <section class="section section-oatmeal section-divider" id="hub">
       <div class="wrap">
         <div class="section-head reveal">
           <div class="eyebrow caption-3"><span class="eyebrow-dot" aria-hidden="true"></span><span data-i18n="hub_eyebrow">生态导航中心</span></div>
@@ -411,7 +456,7 @@
     </section>
 
     <!-- 4. CORE BENEFITS (#features) -->
-    <section class="section section-divider" id="features">
+    <section class="section section-oatmeal section-divider" id="features">
       <div class="wrap">
         <div class="section-head reveal">
           <div class="eyebrow caption-3"><span class="eyebrow-dot" aria-hidden="true"></span><span data-i18n="feat_eyebrow">核心体验</span></div>
@@ -504,7 +549,7 @@
               <h3 class="heading-5" data-i18n="sk_6">小豆泥、怪猎呆猫与更多社区作品</h3>
               <p class="body-6" data-i18n="sk_6_d">前往皮肤广场免费下载小豆泥漫画风、怪物猎人艾露猫、阿比西尼亚、海盐蓝白键盘等作品，或亲手捏一只独一无二的桌宠。</p>
             </div>
-            <a class="btn btn-primary button-sm" href="https://chanke17.github.io/KuroCat-Workshop/#plaza" target="_blank" rel="noopener">
+            <a class="btn btn-on-dark button-sm" href="https://chanke17.github.io/KuroCat-Workshop/#plaza" target="_blank" rel="noopener">
               <span data-i18n="sk_6_cta">逛社区皮肤广场</span>
               <svg class="icon icon-sm" aria-hidden="true"><use href="#ph-arrow-up-right" /></svg>
             </a>
@@ -514,7 +559,7 @@
     </section>
 
     <!-- 6. GEO & SEO COMPARISON MATRIX (#compare) -->
-    <section class="section section-divider" id="compare">
+    <section class="section section-oatmeal section-divider" id="compare">
       <div class="wrap">
         <div class="section-head reveal">
           <div class="eyebrow caption-3"><span class="eyebrow-dot" aria-hidden="true"></span><span data-i18n="cmp_eyebrow">清晰对比</span></div>
@@ -745,7 +790,7 @@
     </section>
 
     <!-- 8. FAQ SECTION (#faq — synced 1:1 with FAQPage JSON-LD) -->
-    <section class="section section-divider" id="faq">
+    <section class="section section-oatmeal section-divider" id="faq">
       <div class="wrap">
         <div class="faq-layout">
           <div class="section-head reveal">
@@ -810,11 +855,11 @@
             <p class="body-3" data-i18n="cta_sub">开源免费、原生轻量、零按键上传，几秒钟即可开始陪伴。</p>
           </div>
           <div class="panel-actions">
-            <a class="btn btn-primary btn-hero button-md" href="https://kurocat-download.app.workbuddy.host/?sharecode=JVAABIVZ7L" target="_blank" rel="noopener">
+            <a class="btn btn-on-dark btn-hero button-md" href="https://kurocat-download.app.workbuddy.host/?sharecode=JVAABIVZ7L" target="_blank" rel="noopener">
               <svg class="icon" aria-hidden="true"><use href="#ph-download" /></svg>
               <span data-i18n="cta_btn">前往国内高速下载页</span>
             </a>
-            <a class="btn btn-secondary btn-hero button-md" href="https://chanke17.github.io/KuroCat-Workshop/" target="_blank" rel="noopener">
+            <a class="btn btn-on-dark-ghost btn-hero button-md" href="https://chanke17.github.io/KuroCat-Workshop/" target="_blank" rel="noopener">
               <span data-i18n="cta_ws">打开皮肤工坊</span>
             </a>
           </div>
@@ -891,8 +936,20 @@
     <p class="caption-5" data-i18n="rw_f">KuroCat 永久免费且 MIT 开源，感谢每一份善意支持。</p>
   </dialog>
 
+  <!-- Floating Transparent Web Desktop Pet Dock -->
+  <div class="floating-pet-dock" id="floatingPetDock" aria-label="网页常驻悬浮桌宠">
+    <div class="floating-pet-toolbar">
+      <button class="floating-pet-btn caption-3" type="button" id="floatNextSkinBtn" data-i18n="float_next_skin">换皮肤</button>
+      <button class="floating-pet-btn caption-3" type="button" id="floatDockBtn" data-i18n="pet_dock_back">收回画框</button>
+    </div>
+    <div class="floating-pet-stage" id="petFloatMount"></div>
+  </div>
+
   <div class="toast caption-3" id="toast" role="status" aria-live="polite">已复制到剪贴板</div>
 
-  <script src="app.js?v=20261125a"></script>
+  <script src="pet/spec.js?v=20261125b"></script>
+  <script src="pet/renderer.js?v=20261125b"></script>
+  <script src="pet/web-pet.js?v=20261125b"></script>
+  <script src="app.js?v=20261125b"></script>
 </body>
 </html>
