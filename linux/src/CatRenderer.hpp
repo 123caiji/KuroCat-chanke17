@@ -58,8 +58,8 @@ inline const SkinSpec& builtInSkin(CatCoatTheme coat) {
 
         SkinSpec& h = v[2];
         h.id = "builtin:2"; h.name = "美短（银虎斑加白）"; h.builtIn = true;
-        h.palette.body = h.palette.legs = h.palette.earOuter = h.palette.tail = SkinColor::hex(0xC2C5C1);
-        h.palette.belly = h.palette.paws = milk;
+        h.palette.body = h.palette.earOuter = h.palette.tail = SkinColor::hex(0xC2C5C1);
+        h.palette.belly = h.palette.paws = h.palette.legs = milk;
         h.palette.stripes = SkinColor::hex(0x55595A);
         h.palette.whiskers = SkinColor::hex(0x8D8170, 0.68); h.palette.crease = SkinColor::hex(0x8B8171, 0.60);
         h.headSurface = SkinHeadSurface::Plane; h.shape.pawStagger = 0;
@@ -69,8 +69,8 @@ inline const SkinSpec& builtInSkin(CatCoatTheme coat) {
         SkinSpec& o = v[3];
         o.id = "builtin:3"; o.name = "橘白猫"; o.builtIn = true;
         o.palette.body = milk;
-        o.palette.legs = o.palette.earOuter = o.palette.tail = SkinColor::hex(0xD8AA73);
-        o.palette.belly = o.palette.paws = milk;
+        o.palette.earOuter = o.palette.tail = SkinColor::hex(0xD8AA73);
+        o.palette.belly = o.palette.paws = o.palette.legs = milk;
         o.palette.stripes = SkinColor::hex(0xA57543);
         o.palette.whiskers = SkinColor::hex(0x8D8170, 0.68); o.palette.crease = SkinColor::hex(0x8B8171, 0.60);
         o.headSurface = SkinHeadSurface::Dome; o.shape.pawStagger = 0;
@@ -276,7 +276,8 @@ public:
         bool tailInFront = (physics.tailTyping.value >= 0.5f) || (lieS >= 0.45f);
         // Pass 1: unified sticker-style outer white outline for ALL cat skins (optional)
         if (whiteOutlineEnabled()) {
-            if (!tailInFront) drawTail(cr, seatX, seatY, physics, skin, true);
+            // Outline connected parts first; fills cover the internal tail-root seam.
+            drawTail(cr, seatX, seatY, physics, skin, true);
             drawEarsLayer(cr, headCenter, physics, skin, true);
             drawUnifiedSilhouette(cr, seatX, seatY, headCenter, breath, physics, skin, true);
         }
@@ -297,7 +298,7 @@ public:
         }
 
         if (tailInFront) {
-            if (whiteOutlineEnabled()) drawTail(cr, seatX, seatY, physics, skin, true);
+
             drawTail(cr, seatX, seatY, physics, skin);
         }
         cairo_restore(cr);
@@ -2101,11 +2102,13 @@ private:
         float limbStartW = b.limbStartW;
         float limbEndW = b.limbEndW;
 
+        const bool approved = !skin.palette.points.set && skin.palette.belly.set && skin.palette.belly.sameAs(skin.palette.legs) && !skin.idleLegsTinted && !skin.marks.empty();
+        const float shoulderDepth = approved ? 43.0f : 58.0f, faceClearance = approved ? 52.0f : 42.0f;
         auto shoulder = [&](float x) -> Pt {
             float sy=physics.bodySquash.value*(1.0f-lieS*0.42f), sx=(1+(1-physics.bodySquash.value)*0.55f)*(1.0f+lieS*0.03f);
             float c=std::cos(physics.bodyTilt.value), s=std::sin(physics.bodyTilt.value);
-            float floor=126+headLift+physics.headOffsetY.value+physics.headPitch.value*4.8f+breath*1.1f+42;
-            return {seatX+x*sx*c+58*sy*s, std::max(seatY+x*sx*s-58*sy*c,floor)};
+            float floor=126+headLift+physics.headOffsetY.value+physics.headPitch.value*4.8f+breath*1.1f+faceClearance;
+            return {seatX+x*sx*c+shoulderDepth*sy*s, std::max(seatY+x*sx*s-shoulderDepth*sy*c,floor)};
         };
         Pt lSh=shoulder(-shX), rSh=shoulder(shX);
 

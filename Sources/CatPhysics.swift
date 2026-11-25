@@ -1430,7 +1430,7 @@ struct SkinSpec {
 
         var h = SkinSpec(id: "builtin:2", name: "美短（银虎斑加白）", builtIn: true)
         let silver = SkinColor.hex(0xC2C5C1)
-        h.palette.body = silver; h.palette.legs = silver; h.palette.earOuter = silver; h.palette.tail = silver
+        h.palette.body = silver; h.palette.legs = milk; h.palette.earOuter = silver; h.palette.tail = silver
         h.palette.belly = milk; h.palette.paws = milk; h.palette.stripes = .hex(0x55595A)
         h.palette.whiskers = .hex(0x8D8170, 0.68); h.palette.crease = .hex(0x8B8171, 0.60)
         h.headSurface = .plane; h.shape.pawStagger = 0
@@ -1438,7 +1438,7 @@ struct SkinSpec {
 
         var o = SkinSpec(id: "builtin:3", name: "橘白猫", builtIn: true)
         let ginger = SkinColor.hex(0xD8AA73)
-        o.palette.body = milk; o.palette.legs = ginger; o.palette.earOuter = ginger; o.palette.tail = ginger
+        o.palette.body = milk; o.palette.legs = milk; o.palette.earOuter = ginger; o.palette.tail = ginger
         o.palette.belly = milk; o.palette.paws = milk; o.palette.stripes = .hex(0xA57543)
         o.palette.whiskers = .hex(0x8D8170, 0.68); o.palette.crease = .hex(0x8B8171, 0.60)
         o.headSurface = .dome; o.shape.pawStagger = 0

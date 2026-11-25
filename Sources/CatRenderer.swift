@@ -303,9 +303,8 @@ enum CatRenderer {
         let showWhiteOutline = settings.whiteOutline
         // Pass 1: optional unified sticker-style outer white outline for ALL cat skins
         if showWhiteOutline {
-            if !tailInFront {
-                drawTail(in: ctx, seatX: seatX, seatY: seatY, physics: physics, skin: skin, outlineOnly: true)
-            }
+            // Outline connected parts before any fills so the tail root has no white seam.
+            drawTail(in: ctx, seatX: seatX, seatY: seatY, physics: physics, skin: skin, outlineOnly: true)
             drawEarsLayer(in: ctx, center: localHeadCenter, physics: physics, skin: skin, outlineOnly: true)
             drawUnifiedSilhouette(
                 in: ctx,
@@ -359,9 +358,6 @@ enum CatRenderer {
         }
 
         if tailInFront {
-            if showWhiteOutline {
-                drawTail(in: ctx, seatX: seatX, seatY: seatY, physics: physics, skin: skin, outlineOnly: true)
-            }
             drawTail(in: ctx, seatX: seatX, seatY: seatY, physics: physics, skin: skin)
         }
 
@@ -2365,13 +2361,16 @@ enum CatRenderer {
         let idleBotX: CGFloat = bd.idleBotX * bw - lieS * 4.5
         let idleBotY: CGFloat = seatY + 12.0 - lieS * 4.0
         let shX: CGFloat = bd.shoulderX * bw
+        let approved = !skin.colorpoint && skin.palette.belly != nil && skin.palette.belly == skin.palette.legs && !skin.idleLegsTinted && !skin.marks.isEmpty
+        let shoulderDepth: CGFloat = approved ? 43 : 58
+        let faceClearance: CGFloat = approved ? 52 : 42
         func shoulder(_ x: CGFloat) -> CGPoint {
             let sy = physics.bodySquash.value * (1.0 - lieS * 0.42)
             let sx = (1.0 + (1.0 - physics.bodySquash.value) * 0.55) * (1.0 + lieS * 0.03)
             let c = cos(physics.bodyTilt.value), s = sin(physics.bodyTilt.value)
-            let faceBottom = 126 + headLift + physics.headOffsetY.value + physics.headPitch.value * 4.8 + breath * 1.1 + 42
-            return CGPoint(x: seatX + x*sx*c + 58*sy*s,
-                           y: max(seatY + x*sx*s - 58*sy*c, faceBottom))
+            let faceBottom = 126 + headLift + physics.headOffsetY.value + physics.headPitch.value * 4.8 + breath * 1.1 + faceClearance
+            return CGPoint(x: seatX + x*sx*c + shoulderDepth*sy*s,
+                           y: max(seatY + x*sx*s - shoulderDepth*sy*c, faceBottom))
         }
         let leftShoulder = shoulder(-shX)
         let rightShoulder = shoulder(shX)
