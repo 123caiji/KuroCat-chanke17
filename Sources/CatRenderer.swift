@@ -3100,42 +3100,42 @@ enum CatRenderer {
                 ctx.strokePath()
             }
         } else {
-            ctx.setFillColor(pal.legs.ns.cgColor)
+            let limbBaseCol = frontPaw ? pal.legs : (pal.hindLeg ?? pal.legs)
+            let limbPawCol = frontPaw ? pal.paws : (pal.hindPaw ?? pal.paws)
+            ctx.setFillColor(limbBaseCol.ns.cgColor)
             ctx.addPath(limbPath)
-            if let chest = pal.belly, chest != pal.legs {
+            if frontPaw, let chest = pal.belly, chest != limbBaseCol {
                 // White chest fading into the leg colour along the first 30% of the arm.
                 ctx.saveGState(); ctx.clip()
-                let colors = [chest.ns.cgColor, pal.legs.ns.cgColor] as CFArray
+                let colors = [chest.ns.cgColor, limbBaseCol.ns.cgColor] as CFArray
                 if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 0.30]) {
                     ctx.drawLinearGradient(gradient, start: start, end: end,
                                            options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
                 }
                 ctx.restoreGState()
             } else { ctx.fillPath() }
-            if frontPaw {
-                let isLeftArm = !outlineOnLeftSide
-                let armSpace: SkinSpace = isLeftArm ? .leftArm : .rightArm
-                if skin.hasPartArt(armSpace) {
-                    let sideSign: CGFloat = isLeftArm ? 1.0 : -1.0
-                    let map: (CGPoint) -> CGPoint = { pt in
-                        let t = max(0, min(1, pt.x / 100.0))
-                        let p = quadPoint(start, control, end, t: t)
-                        let tan = quadTangent(start, control, end, t: t)
-                        let len = max(0.001, hypot(tan.x, tan.y))
-                        let nx = -tan.y / len, ny = tan.x / len
-                        let halfW = (startWidth + (endWidth - startWidth) * t) * 0.5
-                        let off = sideSign * (pt.y / 10.0) * halfW
-                        return CGPoint(x: p.x + nx * off, y: p.y + ny * off)
-                    }
-                    ctx.saveGState()
-                    ctx.addPath(limbPath)
-                    ctx.clip()
-                    for region in skin.regions where region.space == armSpace { drawRegion(in: ctx, region, map: map) }
-                    for mark in skin.marks where mark.space == armSpace { drawMark(in: ctx, mark, map: map) }
-                    ctx.restoreGState()
+            let isLeftArm = frontPaw && !outlineOnLeftSide
+            let limbSpace: SkinSpace = frontPaw ? (isLeftArm ? .leftArm : .rightArm) : .hindLeg
+            if skin.hasPartArt(limbSpace) {
+                let sideSign: CGFloat = isLeftArm ? 1.0 : -1.0
+                let map: (CGPoint) -> CGPoint = { pt in
+                    let t = max(0, min(1, pt.x / 100.0))
+                    let p = quadPoint(start, control, end, t: t)
+                    let tan = quadTangent(start, control, end, t: t)
+                    let len = max(0.001, hypot(tan.x, tan.y))
+                    let nx = -tan.y / len, ny = tan.x / len
+                    let halfW = (startWidth + (endWidth - startWidth) * t) * 0.5
+                    let off = sideSign * (pt.y / 10.0) * halfW
+                    return CGPoint(x: p.x + nx * off, y: p.y + ny * off)
                 }
+                ctx.saveGState()
+                ctx.addPath(limbPath)
+                ctx.clip()
+                for region in skin.regions where region.space == limbSpace { drawRegion(in: ctx, region, map: map) }
+                for mark in skin.marks where mark.space == limbSpace { drawMark(in: ctx, mark, map: map) }
+                ctx.restoreGState()
             }
-            if pal.paws == pal.legs { ctx.setFillColor(pal.paws.ns.cgColor); ctx.fillEllipse(in: pawRect) }
+            if limbPawCol == limbBaseCol { ctx.setFillColor(limbPawCol.ns.cgColor); ctx.fillEllipse(in: pawRect) }
             else {
                 let cuff = CGMutablePath()
                 let first = Int(CGFloat(steps) * 0.72)
@@ -3143,7 +3143,7 @@ enum CatRenderer {
                 for pt in leftEdge.dropFirst(first + 1) { cuff.addLine(to: pt) }
                 for pt in rightEdge.dropFirst(first).reversed() { cuff.addLine(to: pt) }
                 cuff.closeSubpath()
-                ctx.setFillColor(pal.paws.ns.cgColor); ctx.addPath(cuff); ctx.fillPath()
+                ctx.setFillColor(limbPawCol.ns.cgColor); ctx.addPath(cuff); ctx.fillPath()
                 ctx.fillEllipse(in: pawRect)
             }
         }
@@ -6504,14 +6504,14 @@ enum CatRenderer {
             tipA: CGPoint(x: rumpCenterX - hindRootX - 2.5, y: hindRootY + hindLen),
             rootB: CGPoint(x: rumpCenterX - hindRootX - 1.0, y: hindRootY - 3.0),
             tipB: CGPoint(x: rumpCenterX - hindRootX - 7.5, y: hindRootY + hindLen * 0.80),
-            w0: 15.2, w1: 12.8, bendX: -1.5, swingScale: 0.68, splayDir: -0.65, isBehindBody: true
+            w0: 15.2, w1: 12.8, bendX: -1.5, swingScale: 0.68, splayDir: -0.65, armSpace: .hindLeg, isBehindBody: true
         )
         let backRightLimb = makeLimb(
             rootA: CGPoint(x: rumpCenterX + hindRootX, y: hindRootY),
             tipA: CGPoint(x: rumpCenterX + hindRootX + 2.5, y: hindRootY + hindLen),
             rootB: CGPoint(x: rumpCenterX + hindRootX + 1.0, y: hindRootY - 3.0),
             tipB: CGPoint(x: rumpCenterX + hindRootX + 7.5, y: hindRootY + hindLen * 0.80),
-            w0: 15.2, w1: 12.8, bendX: 1.5, swingScale: 0.68, splayDir: 0.65, isBehindBody: true
+            w0: 15.2, w1: 12.8, bendX: 1.5, swingScale: 0.68, splayDir: 0.65, armSpace: .hindLeg, isBehindBody: true
         )
 
         struct LimbGeo {
@@ -6614,15 +6614,17 @@ enum CatRenderer {
                     ctx.drawLinearGradient(grad, start: limb.root, end: limb.tip, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
                 }
             } else {
-                let cols = [pal.legs.ns.cgColor, pal.paws.ns.cgColor] as CFArray
+                let legCol = limb.isBehindBody ? (pal.hindLeg ?? pal.legs) : pal.legs
+                let pawCol = limb.isBehindBody ? (pal.hindPaw ?? pal.paws) : pal.paws
+                let cols = [legCol.ns.cgColor, pawCol.ns.cgColor] as CFArray
                 if let grad = CGGradient(colorsSpace: cs, colors: cols, locations: [0.22, 0.75]) {
                     ctx.drawLinearGradient(grad, start: limb.root, end: limb.tip, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
                 }
             }
 
-            // Map custom leftArm / rightArm regions & marks directly onto the dangling front arms!
+            // Map custom leftArm / rightArm / hindLeg regions & marks directly onto the dangling limbs!
             if let armSpace = limb.armSpace, skin.hasPartArt(armSpace) {
-                let sign: CGFloat = (armSpace == .leftArm) ? -1.0 : 1.0
+                let sign: CGFloat = (armSpace == .leftArm) ? -1.0 : ((armSpace == .hindLeg && limb.bendX < 0) ? -1.0 : 1.0)
                 let armMap: (CGPoint) -> CGPoint = { p in
                     let t = max(0.0, min(1.0, p.x / 100.0))
                     let omt = 1.0 - t

@@ -55,7 +55,7 @@ int main() {
     rejects(R"({"formatVersion":1,"name":"x","palette":{"body":"#000000","nose":12}})", "palette.nose");
     rejects(R"({"formatVersion":1,"name":"x","palette":{"body":"#000000"},"shape":{"bodyWidth":"fat"}})", "shape.bodyWidth");
     rejects(R"({"formatVersion":1,"name":"x","palette":{"body":"#000000"},"shape":{"build":"round"}})", "shape.build");
-    rejects(R"({"formatVersion":1,"name":"x","palette":{"body":"#000000"},"regions":[{"space":"wing","fill":"#FFFFFF","anchors":[]}]})", "regions[0].space");
+    rejects(R"({"formatVersion":1,"name":"x","palette":{"body":"#000000"},"regions":[{"space":123,"fill":"#FFFFFF","anchors":[]}]})", "regions[0].space");
     rejects(R"({"formatVersion":1,"name":"x","palette":{"body":"#000000"},"regions":[{"space":"body","anchors":[{"x":0,"y":0},{"x":1,"y":1}]}]})", "regions[0].fill");
     rejects(R"({"formatVersion":1,"name":"x","palette":{"body":"#000000"},"regions":[{"space":"body","fill":"#FFFFFF","anchors":[{"x":0,"y":0}]}]})", "2–128");
     rejects(R"({"formatVersion":1,"name":"x","palette":{"body":"#000000"},"regions":[{"space":"body","fill":"#FFFFFF","anchors":[{"x":0},{"x":1,"y":1}]}]})", "anchors[0]");
@@ -77,9 +77,11 @@ int main() {
     CHECK(c.palette.body.sameAs(SkinColor::rgba(0x11 / 255.0, 0x22 / 255.0, 0x33 / 255.0)), "duplicate key: last wins");
     CHECK(c.palette.legs.sameAs(c.palette.body) && c.palette.tail.sameAs(c.palette.body), "legs/tail default to body");
     CHECK(c.palette.whiskers.a > 0.6 && c.palette.whiskers.r > 0.8, "dark body gets light whiskers");
-    SkinSpec light = accepts(R"({"formatVersion":1,"name":"x","palette":{"body":"#F2EEE4","points":"#35261F","stripes":"#A57543"},
-        "marks":[{"space":"tail","kind":"stroke","alpha":0.5,"points":[[50,8],[50,-8]]}]})");
+    SkinSpec light = accepts(R"({"formatVersion":1,"name":"x","palette":{"body":"#F2EEE4","points":"#35261F","stripes":"#A57543","hindLeg":"#443322","hindPaw":"#554433"},
+        "marks":[{"space":"tail","kind":"stroke","alpha":0.5,"points":[[50,8],[50,-8]]},{"space":"hindLeg","kind":"polygon","color":"#FFFFFF","points":[[10,0],[50,5],[80,-5]]},{"space":"wing","kind":"polygon","color":"#FFFFFF","points":[[10,0],[50,5],[80,-5]]}]})");
     CHECK(light.colorpoint() && light.palette.paws.sameAs(light.palette.points) && light.palette.pointsMid.set, "colour-point defaults");
+    CHECK(light.palette.hindLeg.set && light.palette.hindPaw.set, "hindLeg / hindPaw palette colours");
+    CHECK(light.marks.size() == 2 && light.marks[1].space == SkinSpace::HindLeg, "hindLeg mark parsed and unknown future space skipped");
     CHECK(light.marks[0].color.r == 0xA5 / 255.0 && light.marks[0].color.a == 0.5, "mark colour defaults to stripes, alpha multiplied");
     SkinSpec alpha = accepts(R"({"formatVersion":1,"name":"x","palette":{"body":"#000000"},
         "regions":[{"space":"leftEar","fill":"#FFFFFF80","alpha":0.5,"anchors":[{"x":-60,"y":0},{"x":60,"y":0},{"x":0,"y":-120,"inX":40,"inY":-120}]}]})");

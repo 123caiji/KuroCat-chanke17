@@ -2707,48 +2707,48 @@ private:
         }
         const SkinColor& lineCol = pal.outline.set ? pal.outline : pal.crease;
         if (!skin.colorpoint()) {
+            const SkinColor& limbBase = frontPaw ? pal.legs : (pal.hindLeg.set ? pal.hindLeg : pal.legs);
+            const SkinColor& limbPaw = frontPaw ? pal.paws : (pal.hindPaw.set ? pal.hindPaw : pal.paws);
             traceLimb();
-            setCol(cr, pal.legs);
-            if (pal.belly.set && !pal.belly.sameAs(pal.legs)) {
+            setCol(cr, limbBase);
+            if (frontPaw && pal.belly.set && !pal.belly.sameAs(limbBase)) {
                 // White chest fading into the leg colour along the first 30% of the arm.
-                const SkinColor& chest=pal.belly; const SkinColor& base=pal.legs;
+                const SkinColor& chest=pal.belly; const SkinColor& base=limbBase;
                 cairo_pattern_t* gradient=cairo_pattern_create_linear(start.x,start.y,end.x,end.y);
                 cairo_pattern_add_color_stop_rgb(gradient,0,chest.r,chest.g,chest.b);
                 cairo_pattern_add_color_stop_rgb(gradient,0.30,base.r,base.g,base.b);
                 cairo_pattern_set_extend(gradient,CAIRO_EXTEND_PAD);
                 cairo_set_source(cr,gradient);cairo_fill(cr);cairo_pattern_destroy(gradient);
             } else cairo_fill(cr);
-            if (frontPaw) {
-                bool isLeftArm = !outlineOnLeft;
-                SkinSpace armSpace = isLeftArm ? SkinSpace::LeftArm : SkinSpace::RightArm;
-                if (skin.hasPartArt(armSpace)) {
-                    float sideSign = isLeftArm ? 1.0f : -1.0f;
-                    auto map = [&](SkinPoint pt) -> Pt {
-                        float t = std::clamp(pt.x / 100.0f, 0.0f, 1.0f);
-                        Pt p = quadPoint(start, ctrl, end, t);
-                        Pt tan = quadTangent(start, ctrl, end, t);
-                        float len = std::max(0.001f, std::hypot(tan.x, tan.y));
-                        float nx = -tan.y / len, ny = tan.x / len;
-                        float hw = (startW + (endW - startW) * t) * 0.5f;
-                        float off = sideSign * (pt.y / 10.0f) * hw;
-                        return { p.x + nx * off, p.y + ny * off };
-                    };
-                    cairo_save(cr);
-                    traceLimb();
-                    cairo_clip(cr);
-                    for (const SkinRegion& r : skin.regions) if (r.space == armSpace) drawRegion(cr, r, map);
-                    for (const SkinMark& mk : skin.marks) if (mk.space == armSpace) drawMark(cr, mk, map);
-                    cairo_restore(cr);
-                }
+            bool isLeftArm = frontPaw && !outlineOnLeft;
+            SkinSpace limbSpace = frontPaw ? (isLeftArm ? SkinSpace::LeftArm : SkinSpace::RightArm) : SkinSpace::HindLeg;
+            if (skin.hasPartArt(limbSpace)) {
+                float sideSign = isLeftArm ? 1.0f : -1.0f;
+                auto map = [&](SkinPoint pt) -> Pt {
+                    float t = std::clamp(pt.x / 100.0f, 0.0f, 1.0f);
+                    Pt p = quadPoint(start, ctrl, end, t);
+                    Pt tan = quadTangent(start, ctrl, end, t);
+                    float len = std::max(0.001f, std::hypot(tan.x, tan.y));
+                    float nx = -tan.y / len, ny = tan.x / len;
+                    float hw = (startW + (endW - startW) * t) * 0.5f;
+                    float off = sideSign * (pt.y / 10.0f) * hw;
+                    return { p.x + nx * off, p.y + ny * off };
+                };
+                cairo_save(cr);
+                traceLimb();
+                cairo_clip(cr);
+                for (const SkinRegion& r : skin.regions) if (r.space == limbSpace) drawRegion(cr, r, map);
+                for (const SkinMark& mk : skin.marks) if (mk.space == limbSpace) drawMark(cr, mk, map);
+                cairo_restore(cr);
             }
-            if (!pal.paws.sameAs(pal.legs)) {
+            if (!limbPaw.sameAs(limbBase)) {
                 int first=(int)(steps*0.72f);
                 cairo_new_path(cr);cairo_move_to(cr,leftEdge[first].x,leftEdge[first].y);
                 for (int i=first+1;i<=steps;++i)cairo_line_to(cr,leftEdge[i].x,leftEdge[i].y);
                 for (int i=steps;i>=first;--i)cairo_line_to(cr,rightEdge[i].x,rightEdge[i].y);
-                cairo_close_path(cr);setCol(cr,pal.paws);cairo_fill(cr);
+                cairo_close_path(cr);setCol(cr,limbPaw);cairo_fill(cr);
             }
-            setCol(cr, pal.paws);
+            setCol(cr, limbPaw);
             cairo_new_path(cr);
             fillEllipse(cr, end.x, end.y, pawR, pawR * 0.85);
             cairo_fill(cr);
@@ -4090,33 +4090,33 @@ public:
                 cairo_pattern_add_color_stop_rgba(grad, 0.42, pal.legs.r, pal.legs.g, pal.legs.b, pal.legs.a);
                 cairo_pattern_add_color_stop_rgba(grad, 0.82, pal.paws.r, pal.paws.g, pal.paws.b, pal.paws.a);
             } else {
-                cairo_pattern_add_color_stop_rgba(grad, 0.22, pal.legs.r, pal.legs.g, pal.legs.b, pal.legs.a);
-                cairo_pattern_add_color_stop_rgba(grad, 0.75, pal.paws.r, pal.paws.g, pal.paws.b, pal.paws.a);
+                const SkinColor& legC = limb.isBehindBody && pal.hindLeg.set ? pal.hindLeg : pal.legs;
+                const SkinColor& pawC = limb.isBehindBody && pal.hindPaw.set ? pal.hindPaw : pal.paws;
+                cairo_pattern_add_color_stop_rgba(grad, 0.22, legC.r, legC.g, legC.b, legC.a);
+                cairo_pattern_add_color_stop_rgba(grad, 0.75, pawC.r, pawC.g, pawC.b, pawC.a);
             }
             cairo_pattern_set_extend(grad, CAIRO_EXTEND_PAD);
             cairo_set_source(cr, grad);
             cairo_paint(cr);
             cairo_pattern_destroy(grad);
 
-            if (limb.armDir != 0) {
-                SkinSpace armSpace = (limb.armDir < 0) ? SkinSpace::LeftArm : SkinSpace::RightArm;
-                if (skin.hasPartArt(armSpace)) {
-                    double sign = (double)limb.armDir;
-                    auto armMap = [&](SkinPoint p) -> Pt {
-                        double t = std::clamp((double)p.x / 100.0, 0.0, 1.0);
-                        double omt = 1.0 - t;
-                        double lx = omt * omt * geo.p0L.x + 2.0 * omt * t * geo.midL.x + t * t * geo.p1L.x;
-                        double ly = omt * omt * geo.p0L.y + 2.0 * omt * t * geo.midL.y + t * t * geo.p1L.y;
-                        double rx = omt * omt * geo.p0R.x + 2.0 * omt * t * geo.midR.x + t * t * geo.p1R.x;
-                        double ry = omt * omt * geo.p0R.y + 2.0 * omt * t * geo.midR.y + t * t * geo.p1R.y;
-                        double cx = (lx + rx) * 0.5, cy = (ly + ry) * 0.5;
-                        double hx = (rx - lx) * 0.5, hy = (ry - ly) * 0.5;
-                        double u = sign * ((double)p.y / 10.0);
-                        return { (float)(cx + hx * u), (float)(cy + hy * u) };
-                    };
-                    for (const SkinRegion& region : skin.regions) if (region.space == armSpace) drawRegion(cr, region, armMap);
-                    for (const SkinMark& mark : skin.marks) if (mark.space == armSpace) drawMark(cr, mark, armMap);
-                }
+            SkinSpace limbSpace = (limb.armDir < 0) ? SkinSpace::LeftArm : ((limb.armDir > 0) ? SkinSpace::RightArm : SkinSpace::HindLeg);
+            if (skin.hasPartArt(limbSpace)) {
+                double sign = (limb.armDir != 0) ? (double)limb.armDir : ((limb.bendX < 0.0) ? -1.0 : 1.0);
+                auto armMap = [&](SkinPoint p) -> Pt {
+                    double t = std::clamp((double)p.x / 100.0, 0.0, 1.0);
+                    double omt = 1.0 - t;
+                    double lx = omt * omt * geo.p0L.x + 2.0 * omt * t * geo.midL.x + t * t * geo.p1L.x;
+                    double ly = omt * omt * geo.p0L.y + 2.0 * omt * t * geo.midL.y + t * t * geo.p1L.y;
+                    double rx = omt * omt * geo.p0R.x + 2.0 * omt * t * geo.midR.x + t * t * geo.p1R.x;
+                    double ry = omt * omt * geo.p0R.y + 2.0 * omt * t * geo.midR.y + t * t * geo.p1R.y;
+                    double cx = (lx + rx) * 0.5, cy = (ly + ry) * 0.5;
+                    double hx = (rx - lx) * 0.5, hy = (ry - ly) * 0.5;
+                    double u = sign * ((double)p.y / 10.0);
+                    return { (float)(cx + hx * u), (float)(cy + hy * u) };
+                };
+                for (const SkinRegion& region : skin.regions) if (region.space == limbSpace) drawRegion(cr, region, armMap);
+                for (const SkinMark& mark : skin.marks) if (mark.space == limbSpace) drawMark(cr, mark, armMap);
             }
             cairo_restore(cr);
 

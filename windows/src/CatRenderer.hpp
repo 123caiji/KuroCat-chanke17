@@ -2697,9 +2697,11 @@ private:
         if (isTabby(skin)) {
             tabby::drawLimb(g, limbPath, pawRect, start, ctrl, end, startW, endW);
         } else if (!skin.colorpoint()) {
-            Color legs = col(pal.legs);
+            const SkinColor& limbBase = frontPaw ? pal.legs : (pal.hindLeg.set ? pal.hindLeg : pal.legs);
+            const SkinColor& limbPaw = frontPaw ? pal.paws : (pal.hindPaw.set ? pal.hindPaw : pal.paws);
+            Color legs = col(limbBase);
             SolidBrush b(legs);
-            if (pal.belly.set && !pal.belly.sameAs(pal.legs)) {
+            if (frontPaw && pal.belly.set && !pal.belly.sameAs(limbBase)) {
                 // White chest fading into the leg colour along the first 30% of the arm.
                 Color chest = col(pal.belly);
                 LinearGradientBrush gradient(PointF(start.x,start.y),PointF(end.x,end.y),chest,legs);
@@ -2708,34 +2710,32 @@ private:
                 REAL positions[3]={0,0.30f,1};gradient.SetInterpolationColors(colors,positions,3);
                 g.FillPath(&gradient,&limbPath);
             } else g.FillPath(&b, &limbPath);
-            if (frontPaw) {
-                bool isLeftArm = !outlineOnLeft;
-                SkinSpace armSpace = isLeftArm ? SkinSpace::LeftArm : SkinSpace::RightArm;
-                if (skin.hasPartArt(armSpace)) {
-                    float sideSign = isLeftArm ? 1.0f : -1.0f;
-                    auto map = [&](SkinPoint pt) {
-                        float t = std::clamp(pt.x / 100.0f, 0.0f, 1.0f);
-                        Pt p = quadPoint(start, ctrl, end, t);
-                        Pt tan = quadTangent(start, ctrl, end, t);
-                        float len = std::max(0.001f, std::hypot(tan.x, tan.y));
-                        float nx = -tan.y / len, ny = tan.x / len;
-                        float hw = (startW + (endW - startW) * t) * 0.5f;
-                        float off = sideSign * (pt.y / 10.0f) * hw;
-                        return PointF(p.x + nx * off, p.y + ny * off);
-                    };
-                    GraphicsState cs = g.Save();
-                    g.SetClip(&limbPath, CombineModeIntersect);
-                    for (const SkinRegion& r : skin.regions) if (r.space == armSpace) drawRegion(g, r, map);
-                    for (const SkinMark& mk : skin.marks) if (mk.space == armSpace) drawMark(g, mk, map);
-                    g.Restore(cs);
-                }
+            bool isLeftArm = frontPaw && !outlineOnLeft;
+            SkinSpace limbSpace = frontPaw ? (isLeftArm ? SkinSpace::LeftArm : SkinSpace::RightArm) : SkinSpace::HindLeg;
+            if (skin.hasPartArt(limbSpace)) {
+                float sideSign = isLeftArm ? 1.0f : -1.0f;
+                auto map = [&](SkinPoint pt) {
+                    float t = std::clamp(pt.x / 100.0f, 0.0f, 1.0f);
+                    Pt p = quadPoint(start, ctrl, end, t);
+                    Pt tan = quadTangent(start, ctrl, end, t);
+                    float len = std::max(0.001f, std::hypot(tan.x, tan.y));
+                    float nx = -tan.y / len, ny = tan.x / len;
+                    float hw = (startW + (endW - startW) * t) * 0.5f;
+                    float off = sideSign * (pt.y / 10.0f) * hw;
+                    return PointF(p.x + nx * off, p.y + ny * off);
+                };
+                GraphicsState cs = g.Save();
+                g.SetClip(&limbPath, CombineModeIntersect);
+                for (const SkinRegion& r : skin.regions) if (r.space == limbSpace) drawRegion(g, r, map);
+                for (const SkinMark& mk : skin.marks) if (mk.space == limbSpace) drawMark(g, mk, map);
+                g.Restore(cs);
             }
-            if (pal.paws.sameAs(pal.legs)) g.FillEllipse(&b, pawRect);
+            if (limbPaw.sameAs(limbBase)) g.FillEllipse(&b, pawRect);
             else {
                 std::vector<PointF> points; int first = (int)(steps*0.72f);
                 for (int i=first; i<=steps; ++i) points.push_back(leftEdge[i]);
                 for (int i=steps; i>=first; --i) points.push_back(rightEdge[i]);
-                SolidBrush cuff(col(pal.paws));
+                SolidBrush cuff(col(limbPaw));
                 g.FillPolygon(&cuff, points.data(), (INT)points.size()); g.FillEllipse(&cuff, pawRect);
             }
         } else {
@@ -5724,33 +5724,33 @@ private:
                     REAL locs[4] = { 0.0f, 0.14f, 0.42f, 0.82f };
                     fillClampedLinearGradient(lg, &fillP, nullptr, PointF(limb.root.x, limb.root.y), PointF(limb.tip.x, limb.tip.y), cols, locs, 4);
                 } else {
-                    Color cols[2] = { col(pal.legs), col(pal.paws) };
+                    const SkinColor& legC = limb.isBehindBody && pal.hindLeg.set ? pal.hindLeg : pal.legs;
+                    const SkinColor& pawC = limb.isBehindBody && pal.hindPaw.set ? pal.hindPaw : pal.paws;
+                    Color cols[2] = { col(legC), col(pawC) };
                     REAL locs[2] = { 0.22f, 0.75f };
                     fillClampedLinearGradient(lg, &fillP, nullptr, PointF(limb.root.x, limb.root.y), PointF(limb.tip.x, limb.tip.y), cols, locs, 2);
                 }
 
-                if (limb.armDir != 0) {
-                    SkinSpace armSpace = (limb.armDir < 0) ? SkinSpace::LeftArm : SkinSpace::RightArm;
-                    if (skin.hasPartArt(armSpace)) {
-                        float sign = (float)limb.armDir;
-                        auto armMap = [&](SkinPoint p) -> PointF {
-                            float t = std::clamp(p.x / 100.0f, 0.0f, 1.0f);
-                            float omt = 1.0f - t;
-                            float lx = omt * omt * geo.p0L.x + 2.0f * omt * t * geo.midL.x + t * t * geo.p1L.x;
-                            float ly = omt * omt * geo.p0L.y + 2.0f * omt * t * geo.midL.y + t * t * geo.p1L.y;
-                            float rx = omt * omt * geo.p0R.x + 2.0f * omt * t * geo.midR.x + t * t * geo.p1R.x;
-                            float ry = omt * omt * geo.p0R.y + 2.0f * omt * t * geo.midR.y + t * t * geo.p1R.y;
-                            float cx = (lx + rx) * 0.5f, cy = (ly + ry) * 0.5f;
-                            float hx = (rx - lx) * 0.5f, hy = (ry - ly) * 0.5f;
-                            float u = sign * (p.y / 10.0f);
-                            return PointF(cx + hx * u, cy + hy * u);
-                        };
-                        GraphicsState as = lg.Save();
-                        lg.SetClip(&fillP, CombineModeIntersect);
-                        for (const SkinRegion& region : skin.regions) if (region.space == armSpace) drawRegion(lg, region, armMap);
-                        for (const SkinMark& mark : skin.marks) if (mark.space == armSpace) drawMark(lg, mark, armMap);
-                        lg.Restore(as);
-                    }
+                SkinSpace limbSpace = (limb.armDir < 0) ? SkinSpace::LeftArm : ((limb.armDir > 0) ? SkinSpace::RightArm : SkinSpace::HindLeg);
+                if (skin.hasPartArt(limbSpace)) {
+                    float sign = (limb.armDir != 0) ? (float)limb.armDir : ((limb.bendX < 0.0f) ? -1.0f : 1.0f);
+                    auto armMap = [&](SkinPoint p) -> PointF {
+                        float t = std::clamp(p.x / 100.0f, 0.0f, 1.0f);
+                        float omt = 1.0f - t;
+                        float lx = omt * omt * geo.p0L.x + 2.0f * omt * t * geo.midL.x + t * t * geo.p1L.x;
+                        float ly = omt * omt * geo.p0L.y + 2.0f * omt * t * geo.midL.y + t * t * geo.p1L.y;
+                        float rx = omt * omt * geo.p0R.x + 2.0f * omt * t * geo.midR.x + t * t * geo.p1R.x;
+                        float ry = omt * omt * geo.p0R.y + 2.0f * omt * t * geo.midR.y + t * t * geo.p1R.y;
+                        float cx = (lx + rx) * 0.5f, cy = (ly + ry) * 0.5f;
+                        float hx = (rx - lx) * 0.5f, hy = (ry - ly) * 0.5f;
+                        float u = sign * (p.y / 10.0f);
+                        return PointF(cx + hx * u, cy + hy * u);
+                    };
+                    GraphicsState as = lg.Save();
+                    lg.SetClip(&fillP, CombineModeIntersect);
+                    for (const SkinRegion& region : skin.regions) if (region.space == limbSpace) drawRegion(lg, region, armMap);
+                    for (const SkinMark& mark : skin.marks) if (mark.space == limbSpace) drawMark(lg, mark, armMap);
+                    lg.Restore(as);
                 }
 
                 Pen limbPen(limbInk, isBlackRim ? 1.15f : 1.2f);

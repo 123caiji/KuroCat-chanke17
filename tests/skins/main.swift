@@ -303,10 +303,11 @@ rejects(##"{"name":"x","palette":{"body":"#000000"}}"##, "formatVersion")
 rejects(##"{"formatVersion":2,"name":"x","palette":{"body":"#000000"}}"##, "升级")
 rejects(##"{"formatVersion":1,"name":"x","palette":{"body":"pink"}}"##, "palette.body")
 rejects(##"{"formatVersion":1,"name":"x","palette":{}}"##, "palette.body")
-rejects(##"{"formatVersion":1,"name":"x","palette":{"body":"#000000"},"regions":[{"space":"wing","fill":"#FFFFFF","anchors":[]}]}"##, "regions[0].space")
+rejects(##"{"formatVersion":1,"name":"x","palette":{"body":"#000000"},"regions":[{"space":123,"fill":"#FFFFFF","anchors":[]}]}"##, "regions[0].space")
 rejects(##"{"formatVersion":1,"name":"x","palette":{"body":"#000000"},"shape":{"bodyWidth":"fat"}}"##, "shape.bodyWidth")
-let clamped = try! SkinSpec.parse(Data(##"{"formatVersion":1,"name":"  胖  ","palette":{"body":"#112233"},"shape":{"bodyWidth":9},"unknownField":true}"##.utf8))
+let clamped = try! SkinSpec.parse(Data(##"{"formatVersion":1,"name":"  胖  ","palette":{"body":"#112233","hindLeg":"#223344","hindPaw":"#334455"},"shape":{"bodyWidth":9},"unknownField":true,"marks":[{"space":"hindLeg","kind":"polygon","color":"#FFFFFF","points":[[10,0],[50,5],[80,-5]]},{"space":"wing","kind":"polygon","color":"#FFFFFF","points":[[10,0],[50,5],[80,-5]]}]}"##.utf8))
 precondition(clamped.shape.bodyWidth == 1.35 && clamped.name == "胖", "Clamping / trimming / unknown-field rules broken")
+precondition(clamped.marks.count == 1 && clamped.marks[0].space == .hindLeg && clamped.palette.hindLeg != nil && clamped.palette.hindPaw != nil, "hindLeg support / forward-compat unknown-space skip broken")
 print("PASS: 4 .kurocat templates match their built-in coats, curve-regions sample renders, invalid files are rejected in Chinese")
 
 // MARK: - A sleeping cat lying still is not animating

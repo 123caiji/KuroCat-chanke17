@@ -1363,7 +1363,7 @@ struct SkinColor: Equatable {
 }
 
 /// Part coordinate spaces (see docs/skin-format.md for the diagram).
-enum SkinSpace: String { case head, skull, body, tail, leftEar, rightEar, leftArm, rightArm }
+enum SkinSpace: String { case head, skull, body, tail, leftEar, rightEar, leftArm, rightArm, hindLeg }
 enum SkinBuild: String { case standard, sleek }
 enum SkinHeadSurface: String { case dome, plane }
 enum SkinAnchorPoint: String { case headTop, face, neck, tailTip }
@@ -1405,6 +1405,7 @@ struct SkinPalette {
     var body = SkinColor.rgba(0, 0, 0)
     var bodyShade: SkinColor?, belly: SkinColor?
     var legs = SkinColor.rgba(0, 0, 0), paws = SkinColor.rgba(0, 0, 0)
+    var hindLeg: SkinColor?, hindPaw: SkinColor?
     var pawPads: SkinColor?
     var earOuter = SkinColor.rgba(0, 0, 0)
     var earInner: SkinColor?, nose: SkinColor?, mouth: SkinColor?, iris: SkinColor?
@@ -1573,12 +1574,12 @@ struct SkinSpec {
             }
             return .rgba(CGFloat(vals[0]) / 255, CGFloat(vals[1]) / 255, CGFloat(vals[2]) / 255, CGFloat(vals[3]) / 255)
         }
-        func space(_ v: Any?, _ field: String) throws -> SkinSpace {
-            guard let s = v as? String else { throw fail("\(field) 缺失：必须是 head / skull / body / tail / leftEar / rightEar / leftArm / rightArm 之一") }
-            guard let sp = SkinSpace(rawValue: s) else {
-                throw fail("\(field) 必须是 head / skull / body / tail / leftEar / rightEar / leftArm / rightArm 之一，现在是 \"\(String(s.prefix(24)))\"")
+        /// Returns nil for unrecognized future space names so newer Workshop skins remain forward-compatible.
+        func space(_ v: Any?, _ field: String) throws -> SkinSpace? {
+            guard let s = v as? String, !s.isEmpty else {
+                throw fail("\(field) 缺失：必须是 head / skull / body / tail / leftEar / rightEar / leftArm / rightArm / hindLeg 之一")
             }
-            return sp
+            return SkinSpace(rawValue: s)
         }
         func trimmed(_ s: String, _ maxChars: Int) -> String {
             let t = s.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.filter { $0.value >= 0x20 }
@@ -1604,6 +1605,7 @@ struct SkinSpec {
         func pc(_ key: String) throws -> SkinColor? { try color(pal[key], "palette.\(key)") }
         let body = try pc("body"), bodyShade = try pc("bodyShade"), belly = try pc("belly"), legs = try pc("legs")
         let paws = try pc("paws"), pawPads = try pc("pawPads"), earOuter = try pc("earOuter"), earInner = try pc("earInner")
+        let hindLeg = try pc("hindLeg"), hindPaw = try pc("hindPaw")
         let nose = try pc("nose"), mouth = try pc("mouth"), iris = try pc("iris"), tail = try pc("tail")
         let tailTip = try pc("tailTip"), stripes = try pc("stripes"), whiskers = try pc("whiskers"), crease = try pc("crease")
         let outline = try pc("outline"), points = try pc("points"), pointsMid = try pc("pointsMid")
@@ -1612,6 +1614,8 @@ struct SkinSpec {
         p.body = bodyColor; p.bodyShade = bodyShade; p.belly = belly
         p.legs = legs ?? bodyColor
         p.paws = paws ?? points ?? p.legs
+        p.hindLeg = hindLeg
+        p.hindPaw = hindPaw
         p.pawPads = pawPads
         p.earOuter = earOuter ?? points ?? p.legs
         p.earInner = earInner; p.nose = nose; p.mouth = mouth; p.iris = iris
@@ -1664,7 +1668,7 @@ struct SkinSpec {
             for (i, rAny) in regs.enumerated() {
                 let f = "regions[\(i)]"
                 guard let r = rAny as? [String: Any] else { throw fail("\(f) 必须是对象") }
-                let sp = try space(r["space"], "\(f).space")
+                guard let sp = try space(r["space"], "\(f).space") else { continue }
                 guard let parsedFill = try color(r["fill"], "\(f).fill") else { throw fail("\(f).fill 缺失") }
                 var fill = parsedFill
                 fill.a *= try number(r["alpha"], "\(f).alpha", 0, 1, 1)
@@ -1703,7 +1707,7 @@ struct SkinSpec {
             for (i, mAny) in marks.enumerated() {
                 let f = "marks[\(i)]"
                 guard let m = mAny as? [String: Any] else { throw fail("\(f) 必须是对象") }
-                let sp = try space(m["space"], "\(f).space")
+                guard let sp = try space(m["space"], "\(f).space") else { continue }
                 guard let kind = m["kind"] as? String, kind == "polygon" || kind == "stroke" else { throw fail("\(f).kind 必须是 \"polygon\" 或 \"stroke\"") }
                 let stroke = kind == "stroke"
                 let parsedColor = try color(m["color"], "\(f).color")
@@ -1740,9 +1744,10 @@ struct SkinSpec {
                       let image = CGImage(pngDataProviderSource: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent) else {
                     throw fail("\(f).png 不是有效的 PNG（或尺寸超过 1024×1024）")
                 }
-                guard let anchorName = d["anchor"] as? String, let anchor = SkinAnchorPoint(rawValue: anchorName) else {
+                guard let anchorName = d["anchor"] as? String, !anchorName.isEmpty else {
                     throw fail("\(f).anchor 必须是 headTop / face / neck / tailTip 之一")
                 }
+                guard let anchor = SkinAnchorPoint(rawValue: anchorName) else { continue }
                 let offsetX = try number(d["offsetX"], "\(f).offsetX", -120, 120, 0)
                 let offsetY = try number(d["offsetY"], "\(f).offsetY", -120, 120, 0)
                 let scale = try number(d["scale"], "\(f).scale", 0.05, 4, 1)

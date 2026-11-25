@@ -24,7 +24,7 @@ struct SkinColor {
 };
 
 // Part coordinate spaces (see docs/skin-format.md for the diagram).
-enum class SkinSpace : int { Head = 0, Skull, Body, Tail, LeftEar, RightEar, LeftArm, RightArm };
+enum class SkinSpace : int { Head = 0, Skull, Body, Tail, LeftEar, RightEar, LeftArm, RightArm, HindLeg };
 enum class SkinBuild : int { Standard = 0, Sleek };
 enum class SkinHeadSurface : int { Dome = 0, Plane };
 enum class SkinAnchorPoint : int { HeadTop = 0, Face, Neck, TailTip };
@@ -67,7 +67,7 @@ struct SkinDecoration {
 };
 
 struct SkinPalette {
-    SkinColor body, bodyShade, belly, legs, paws, pawPads, earOuter, earInner, nose, mouth, iris,
+    SkinColor body, bodyShade, belly, legs, paws, hindLeg, hindPaw, pawPads, earOuter, earInner, nose, mouth, iris,
               tail, tailTip, stripes, whiskers, crease, outline, points, pointsMid;
 };
 
@@ -380,11 +380,14 @@ inline bool color(Ctx& c, const Value* v, const std::string& field, SkinColor& o
     return true;
 }
 
-inline bool space(Ctx& c, const Value* v, const std::string& field, SkinSpace& out) {
-    static const char* names[] = {"head", "skull", "body", "tail", "leftEar", "rightEar", "leftArm", "rightArm"};
-    if (!v || v->type != Value::JString) return c.fail(field + " 缺失：必须是 head / skull / body / tail / leftEar / rightEar / leftArm / rightArm 之一");
-    for (int i = 0; i < 8; ++i) if (v->s == names[i]) { out = (SkinSpace)i; return true; }
-    return c.fail(field + " 必须是 head / skull / body / tail / leftEar / rightEar / leftArm / rightArm 之一，现在是 \"" + v->s.substr(0, 24) + "\"");
+// Returns false only when the field is missing/not a string; sets recognized=false for unknown future spaces
+// so newer Workshop skins remain forward-compatible instead of failing import.
+inline bool space(Ctx& c, const Value* v, const std::string& field, SkinSpace& out, bool& recognized) {
+    static const char* names[] = {"head", "skull", "body", "tail", "leftEar", "rightEar", "leftArm", "rightArm", "hindLeg"};
+    if (!v || v->type != Value::JString || v->s.empty()) return c.fail(field + " 缺失：必须是 head / skull / body / tail / leftEar / rightEar / leftArm / rightArm / hindLeg 之一");
+    for (int i = 0; i < 9; ++i) if (v->s == names[i]) { out = (SkinSpace)i; recognized = true; return true; }
+    recognized = false;
+    return true;
 }
 
 inline std::string trimmedUtf8(const std::string& s, size_t maxChars) {
@@ -444,7 +447,8 @@ inline bool SkinSpec::parse(const std::string& bytes, SkinSpec& out, std::string
     struct Slot { const char* key; SkinColor SkinPalette::*member; };
     static const Slot slots[] = {
         {"body", &SkinPalette::body}, {"bodyShade", &SkinPalette::bodyShade}, {"belly", &SkinPalette::belly},
-        {"legs", &SkinPalette::legs}, {"paws", &SkinPalette::paws}, {"pawPads", &SkinPalette::pawPads},
+        {"legs", &SkinPalette::legs}, {"paws", &SkinPalette::paws}, {"hindLeg", &SkinPalette::hindLeg},
+        {"hindPaw", &SkinPalette::hindPaw}, {"pawPads", &SkinPalette::pawPads},
         {"earOuter", &SkinPalette::earOuter}, {"earInner", &SkinPalette::earInner}, {"nose", &SkinPalette::nose},
         {"mouth", &SkinPalette::mouth}, {"iris", &SkinPalette::iris}, {"tail", &SkinPalette::tail},
         {"tailTip", &SkinPalette::tailTip}, {"stripes", &SkinPalette::stripes}, {"whiskers", &SkinPalette::whiskers},
@@ -512,7 +516,9 @@ inline bool SkinSpec::parse(const std::string& bytes, SkinSpec& out, std::string
             std::string f = "regions[" + std::to_string(i) + "]";
             if (r.type != Value::JObject) { error = f + " 必须是对象"; return false; }
             SkinRegion reg;
-            if (!space(c, r.get("space"), f + ".space", reg.space)) { error = c.error; return false; }
+            bool knownSpace = false;
+            if (!space(c, r.get("space"), f + ".space", reg.space, knownSpace)) { error = c.error; return false; }
+            if (!knownSpace) continue;
             const Value* fill = r.get("fill");
             if (!fill || fill->type == Value::JNull) { error = f + ".fill 缺失"; return false; }
             if (!color(c, fill, f + ".fill", reg.fill)) { error = c.error; return false; }
@@ -554,7 +560,9 @@ inline bool SkinSpec::parse(const std::string& bytes, SkinSpec& out, std::string
             std::string f = "marks[" + std::to_string(i) + "]";
             if (m.type != Value::JObject) { error = f + " 必须是对象"; return false; }
             SkinMark mark;
-            if (!space(c, m.get("space"), f + ".space", mark.space)) { error = c.error; return false; }
+            bool knownSpace = false;
+            if (!space(c, m.get("space"), f + ".space", mark.space, knownSpace)) { error = c.error; return false; }
+            if (!knownSpace) continue;
             const Value* kind = m.get("kind");
             if (!kind || kind->type != Value::JString || (kind->s != "polygon" && kind->s != "stroke")) { error = f + ".kind 必须是 \"polygon\" 或 \"stroke\""; return false; }
             mark.stroke = kind->s == "stroke";
@@ -601,10 +609,12 @@ inline bool SkinSpec::parse(const std::string& bytes, SkinSpec& out, std::string
             }
             const Value* anchor = d.get("anchor");
             static const char* anchors[] = {"headTop", "face", "neck", "tailTip"};
+            if (!anchor || anchor->type != Value::JString || anchor->s.empty()) {
+                error = f + ".anchor 必须是 headTop / face / neck / tailTip 之一"; return false;
+            }
             bool ok = false;
-            if (anchor && anchor->type == Value::JString)
-                for (int k = 0; k < 4; ++k) if (anchor->s == anchors[k]) { deco.anchor = (SkinAnchorPoint)k; ok = true; }
-            if (!ok) { error = f + ".anchor 必须是 headTop / face / neck / tailTip 之一"; return false; }
+            for (int k = 0; k < 4; ++k) if (anchor->s == anchors[k]) { deco.anchor = (SkinAnchorPoint)k; ok = true; }
+            if (!ok) continue;
             if (!number(c, d.get("offsetX"), f + ".offsetX", -120, 120, deco.offsetX) || !number(c, d.get("offsetY"), f + ".offsetY", -120, 120, deco.offsetY) ||
                 !number(c, d.get("scale"), f + ".scale", 0.05, 4, deco.scale) || !number(c, d.get("rotation"), f + ".rotation", -180, 180, deco.rotation)) { error = c.error; return false; }
             s.decorations.push_back(std::move(deco));
