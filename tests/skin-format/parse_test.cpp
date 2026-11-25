@@ -96,6 +96,17 @@ int main() {
     auto jaw = skinJawSide(true, 1.0f);
     CHECK(jaw.size() == 3 + 1 + 32 + 1, "jaw polygon size");
 
+    // 1.4.5 heterochromia, pupil, headBody, transparent mouth, extended shape & partGradients
+    SkinSpec ext = accepts(R"({"formatVersion":1,"name":"异瞳猫","palette":{"body":"#FAF5EC","headBody":"#222226","mouth":"#00000000","iris":"#E5A63B","irisLeft":"#4DA6FF","irisRight":"#F5C542","pupil":"#111111","pupilLeft":"#220033","pupilRight":"#002211"},
+        "shape":{"earSpacing":1.2,"tailRootY":-8,"armSpacing":1.15,"armLength":0.9,"armRootY":5},
+        "partGradients":{"body":{"from":"#FAF5EC","to":"#E0D4C0","angle":90}}})");
+    CHECK(ext.palette.headBody.set && ext.palette.irisLeft.set && ext.palette.irisRight.set, "headBody + heterochromia iris");
+    CHECK(ext.palette.pupil.set && ext.palette.pupilLeft.set && ext.palette.pupilRight.set, "pupil + heterochromia pupil");
+    CHECK(ext.palette.mouth.set && ext.palette.mouth.a < 0.01, "transparent mouth parsed for hiding");
+    CHECK(std::fabs(ext.shape.earSpacing - 1.2f) < 1e-4f && std::fabs(ext.shape.tailRootY - (-8.0f)) < 1e-4f, "earSpacing + tailRootY");
+    CHECK(std::fabs(ext.shape.armSpacing - 1.15f) < 1e-4f && std::fabs(ext.shape.armLength - 0.9f) < 1e-4f && std::fabs(ext.shape.armRootY - 5.0f) < 1e-4f, "arm shape params");
+    CHECK(ext.partGradients.count("body") == 1 && ext.partGradients["body"].set, "partGradients parsed");
+
     if (failures) { std::printf("%d check(s) failed\n", failures); return 1; }
     std::printf("PASS: .kurocat parser — templates/sample load, 28 malformed inputs rejected in Chinese, clamping/defaults/escapes/stickers OK\n");
     return 0;

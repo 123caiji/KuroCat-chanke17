@@ -34,7 +34,7 @@
 #include <fcntl.h>
 #include <glib-unix.h>
 
-#define KUROCAT_VERSION_STR "1.4.4"
+#define KUROCAT_VERSION_STR "1.4.5"
 static constexpr const char* APP_VERSION = KUROCAT_VERSION_STR;
 // Other KuroCat builds scan installed binaries for this marker (see readBinaryVersion) to find the
 // newest copy WITHOUT executing it. Always derived from KUROCAT_VERSION_STR.
@@ -82,6 +82,7 @@ struct LinuxApp {
     GtkWidget* setMouseBadgesChk = nullptr;
     GtkWidget* setLegendsChk = nullptr;
     GtkWidget* setMarqueeChk = nullptr;
+    GtkWidget* setLevelKeyboardChk = nullptr;
     GtkWidget* setTypingLimbCombo = nullptr;
     GtkWidget* setTabletCombo = nullptr;
     GtkWidget* setTopmostChk = nullptr;
@@ -1323,6 +1324,7 @@ static void refreshSettingsWindow(LinuxApp& app) {
     setChk(app.setMouseBadgesChk, app.settings.showMouseBadges);
     setChk(app.setLegendsChk, app.settings.showKeyLegends);
     setChk(app.setMarqueeChk, app.settings.keyboardMarquee);
+    setChk(app.setLevelKeyboardChk, app.settings.levelKeyboard);
     setChk(app.setTopmostChk, app.settings.alwaysOnTop);
     setChk(app.setAutohideChk, app.settings.autoHideFullscreen);
     setChk(app.setClickThroughChk, app.settings.fullClickThrough);
@@ -1366,7 +1368,7 @@ static void showSettingsWindow() {
         g_app->setCoatCombo = g_app->setEyeCombo = g_app->setKbCombo = nullptr;
         g_app->setScaleSlider = g_app->setScaleLabel = g_app->setRotSlider = g_app->setRotLabel = nullptr;
         g_app->setFlipChk = g_app->setOutlineChk = g_app->setAngerChk = g_app->setPetChk = nullptr;
-        g_app->setBadgesChk = g_app->setMouseBadgesChk = g_app->setLegendsChk = g_app->setMarqueeChk = g_app->setTypingLimbCombo = nullptr;
+        g_app->setBadgesChk = g_app->setMouseBadgesChk = g_app->setLegendsChk = g_app->setMarqueeChk = g_app->setLevelKeyboardChk = g_app->setTypingLimbCombo = nullptr;
         g_app->setTabletCombo = g_app->setTopmostChk = g_app->setAutohideChk = g_app->setClickThroughChk = nullptr;
         g_app->setAutostartChk = g_app->setHighFpsChk = g_app->setObsCombo = g_app->setObsHideChk = g_app->setLangCombo = nullptr;
     }), nullptr);
@@ -1618,6 +1620,16 @@ static void showSettingsWindow() {
         gtk_grid_attach(GTK_GRID(g), app.setLegendsChk, 0, r, 1, 1);
         gtk_grid_attach(GTK_GRID(g), app.setMarqueeChk, 1, r++, 2, 1);
 
+        app.setLevelKeyboardChk = gtk_check_button_new_with_label(tr("键盘水平摆放", "Level Keyboard"));
+        g_signal_connect(app.setLevelKeyboardChk, "toggled", G_CALLBACK(+[](GtkToggleButton* b, gpointer) {
+            if (g_app->settingsUpdating) return;
+            g_app->settings.levelKeyboard = gtk_toggle_button_get_active(b);
+            KeyboardLayout::levelKeyboard() = g_app->settings.levelKeyboard;
+            g_app->settings.save();
+            if (g_app->drawArea) gtk_widget_queue_draw(g_app->drawArea);
+        }), nullptr);
+        gtk_grid_attach(GTK_GRID(g), app.setLevelKeyboardChk, 0, r++, 3, 1);
+
         gtk_grid_attach(GTK_GRID(g), leftLabel(tr("多键打字方式", "Multi-Key Typing")), 0, r, 1, 1);
         app.setTypingLimbCombo = gtk_combo_box_text_new();
         gtk_widget_set_hexpand(app.setTypingLimbCombo, TRUE);
@@ -1866,6 +1878,19 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
     addAction(tr("🎨 皮肤工坊（制作皮肤）…", "🎨 Skin Workshop (Create Skins)…"), G_CALLBACK(+[](GtkMenuItem*, gpointer) {
         openUrlInBrowser("https://chanke17.github.io/KuroCat-Workshop/");
     }));
+
+    {
+        GtkWidget* lvlItem = gtk_check_menu_item_new_with_label(tr("键盘水平摆放", "Level Keyboard"));
+        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(lvlItem), app.settings.levelKeyboard);
+        g_signal_connect(lvlItem, "toggled", G_CALLBACK(+[](GtkCheckMenuItem* item, gpointer) {
+            g_app->settings.levelKeyboard = gtk_check_menu_item_get_active(item);
+            KeyboardLayout::levelKeyboard() = g_app->settings.levelKeyboard;
+            g_app->settings.save();
+            if (g_app->drawArea) gtk_widget_queue_draw(g_app->drawArea);
+            refreshSettingsWindow(*g_app);
+        }), nullptr);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), lvlItem);
+    }
 
     addAction(tr("⚙️ 设置…", "⚙️ Settings…"), G_CALLBACK(+[](GtkMenuItem*, gpointer) {
         showSettingsWindow();
@@ -2351,6 +2376,7 @@ int main(int argc, char** argv) {
     }
 
     app.settings.load();
+    KeyboardLayout::levelKeyboard() = app.settings.levelKeyboard;
     CatSettings::loadStats(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
     app.lastSavedPetSessions = app.physics.totalPetSessions;
     app.skins.reload();

@@ -73,6 +73,12 @@ final class CatSettings {
     var keyboardMarquee: Bool {
         didSet { UserDefaults.standard.set(keyboardMarquee, forKey: "KuroCat.KeyboardMarquee") }
     }
+    var levelKeyboard: Bool {
+        didSet {
+            UserDefaults.standard.set(levelKeyboard, forKey: "KuroCat.LevelKeyboard")
+            KeyboardLayout.levelKeyboard = levelKeyboard
+        }
+    }
     /// 0 = normal desktop overlay, 1 = OBS transparent window capture, 2 = OBS green screen (#00FF00)
     var obsCaptureMode: Int {
         didSet { UserDefaults.standard.set(obsCaptureMode, forKey: "KuroCat.OBSCaptureMode") }
@@ -161,6 +167,8 @@ final class CatSettings {
         footEasterEgg = d.object(forKey: "KuroCat.FootEasterEgg") as? Bool ?? true
         tailEasterEgg = d.object(forKey: "KuroCat.TailEasterEgg") as? Bool ?? true
         keyboardMarquee = d.object(forKey: "KuroCat.KeyboardMarquee") as? Bool ?? true
+        levelKeyboard = d.object(forKey: "KuroCat.LevelKeyboard") as? Bool ?? true
+        KeyboardLayout.levelKeyboard = levelKeyboard
         obsCaptureMode = d.object(forKey: "KuroCat.OBSCaptureMode") as? Int ?? 0
         obsHideDesktop = d.object(forKey: "KuroCat.OBSHideDesktop") as? Bool ?? false
         autoHideFullscreen = d.object(forKey: "KuroCat.AutoHideFullscreen") as? Bool ?? false
@@ -1392,8 +1400,16 @@ struct SkinMark {
 
 struct SkinShape {
     var build: SkinBuild = .standard
-    var bodyWidth: CGFloat = 1, headScale: CGFloat = 1, earSize: CGFloat = 1, earBaseWidth: CGFloat = 1, earPointiness: CGFloat = 1
-    var tailLength: CGFloat = 1, tailThickness: CGFloat = 1, cheekFullness: CGFloat = 1, neckWidth: CGFloat = 1, pawStagger: CGFloat = 1
+    var bodyWidth: CGFloat = 1, headScale: CGFloat = 1, earSize: CGFloat = 1, earBaseWidth: CGFloat = 1, earPointiness: CGFloat = 1, earSpacing: CGFloat = 1
+    var tailLength: CGFloat = 1, tailThickness: CGFloat = 1, tailRootY: CGFloat = 0
+    var cheekFullness: CGFloat = 1, neckWidth: CGFloat = 1, pawStagger: CGFloat = 1
+    var armSpacing: CGFloat = 1, armLength: CGFloat = 1, armRootY: CGFloat = 0
+}
+
+struct SkinPartGradient {
+    var from: SkinColor
+    var to: SkinColor
+    var angle: CGFloat = 90
 }
 
 struct SkinDecoration {
@@ -1404,12 +1420,15 @@ struct SkinDecoration {
 
 struct SkinPalette {
     var body = SkinColor.rgba(0, 0, 0)
+    var headBody: SkinColor?
     var bodyShade: SkinColor?, belly: SkinColor?
     var legs = SkinColor.rgba(0, 0, 0), paws = SkinColor.rgba(0, 0, 0)
     var hindLeg: SkinColor?, hindPaw: SkinColor?
     var pawPads: SkinColor?
     var earOuter = SkinColor.rgba(0, 0, 0)
-    var earInner: SkinColor?, nose: SkinColor?, mouth: SkinColor?, iris: SkinColor?
+    var earInner: SkinColor?, nose: SkinColor?, mouth: SkinColor?
+    var iris: SkinColor?, irisLeft: SkinColor?, irisRight: SkinColor?
+    var pupil: SkinColor?, pupilLeft: SkinColor?, pupilRight: SkinColor?
     var tail = SkinColor.rgba(0, 0, 0)
     var tailTip: SkinColor?, stripes: SkinColor?
     var whiskers = SkinColor.rgba(0, 0, 0), crease = SkinColor.rgba(0, 0, 0)
@@ -1427,6 +1446,7 @@ struct SkinSpec {
     var author = ""
     var builtIn = false
     var palette = SkinPalette()
+    var partGradients: [String: SkinPartGradient] = [:]
     var regions: [SkinRegion] = []
     var marks: [SkinMark] = []
     var shape = SkinShape()
@@ -1604,22 +1624,27 @@ struct SkinSpec {
         // Palette
         guard let pal = root["palette"] as? [String: Any] else { throw fail("缺少调色板 palette") }
         func pc(_ key: String) throws -> SkinColor? { try color(pal[key], "palette.\(key)") }
-        let body = try pc("body"), bodyShade = try pc("bodyShade"), belly = try pc("belly"), legs = try pc("legs")
+        let body = try pc("body"), headBody = try pc("headBody"), bodyShade = try pc("bodyShade"), belly = try pc("belly"), legs = try pc("legs")
         let paws = try pc("paws"), pawPads = try pc("pawPads"), earOuter = try pc("earOuter"), earInner = try pc("earInner")
         let hindLeg = try pc("hindLeg"), hindPaw = try pc("hindPaw")
-        let nose = try pc("nose"), mouth = try pc("mouth"), iris = try pc("iris"), tail = try pc("tail")
+        let nose = try pc("nose"), mouth = try pc("mouth")
+        let iris = try pc("iris"), irisLeft = try pc("irisLeft"), irisRight = try pc("irisRight")
+        let pupil = try pc("pupil"), pupilLeft = try pc("pupilLeft"), pupilRight = try pc("pupilRight")
+        let tail = try pc("tail")
         let tailTip = try pc("tailTip"), stripes = try pc("stripes"), whiskers = try pc("whiskers"), crease = try pc("crease")
         let outline = try pc("outline"), points = try pc("points"), pointsMid = try pc("pointsMid")
         guard let bodyColor = body else { throw fail("调色板缺少主体颜色 palette.body") }
         var p = SkinPalette()
-        p.body = bodyColor; p.bodyShade = bodyShade; p.belly = belly
+        p.body = bodyColor; p.headBody = headBody; p.bodyShade = bodyShade; p.belly = belly
         p.legs = legs ?? bodyColor
         p.paws = paws ?? points ?? p.legs
         p.hindLeg = hindLeg
         p.hindPaw = hindPaw
         p.pawPads = pawPads
         p.earOuter = earOuter ?? points ?? p.legs
-        p.earInner = earInner; p.nose = nose; p.mouth = mouth; p.iris = iris
+        p.earInner = earInner; p.nose = nose; p.mouth = mouth
+        p.iris = iris; p.irisLeft = irisLeft; p.irisRight = irisRight
+        p.pupil = pupil; p.pupilLeft = pupilLeft; p.pupilRight = pupilRight
         p.tail = tail ?? p.earOuter
         p.tailTip = tailTip; p.stripes = stripes; p.outline = outline; p.points = points
         if let pt = points { p.pointsMid = pointsMid ?? .rgba((pt.r + bodyColor.r) * 0.5, (pt.g + bodyColor.g) * 0.5, (pt.b + bodyColor.b) * 0.5) }
@@ -1640,11 +1665,28 @@ struct SkinSpec {
             spec.shape.earSize = try number(sh["earSize"], "shape.earSize", 0.80, 1.25, 1)
             spec.shape.earBaseWidth = try number(sh["earBaseWidth"], "shape.earBaseWidth", 0.65, 1.40, 1)
             spec.shape.earPointiness = try number(sh["earPointiness"], "shape.earPointiness", 0.50, 1.50, 1)
+            spec.shape.earSpacing = try number(sh["earSpacing"], "shape.earSpacing", 0.60, 1.50, 1)
             spec.shape.tailLength = try number(sh["tailLength"], "shape.tailLength", 0.70, 1.30, 1)
             spec.shape.tailThickness = try number(sh["tailThickness"], "shape.tailThickness", 0.70, 1.50, 1)
+            spec.shape.tailRootY = try number(sh["tailRootY"], "shape.tailRootY", -30, 30, 0)
             spec.shape.cheekFullness = try number(sh["cheekFullness"], "shape.cheekFullness", 0.85, 1.25, 1)
             spec.shape.neckWidth = try number(sh["neckWidth"], "shape.neckWidth", 0.65, 1.40, 1)
             spec.shape.pawStagger = try number(sh["pawStagger"], "shape.pawStagger", 0, 1, 1)
+            spec.shape.armSpacing = try number(sh["armSpacing"], "shape.armSpacing", 0.50, 1.60, 1)
+            spec.shape.armLength = try number(sh["armLength"], "shape.armLength", 0.60, 1.50, 1)
+            spec.shape.armRootY = try number(sh["armRootY"], "shape.armRootY", -30, 30, 0)
+        }
+        if let pg = root["partGradients"] as? [String: Any] {
+            for (k, vAny) in pg {
+                guard let g = vAny as? [String: Any] else { continue }
+                let fromAny = g["from"] ?? g["start"]
+                let toAny = g["to"] ?? g["end"]
+                if let fromCol = try? color(fromAny, "partGradients.\(k).from"),
+                   let toCol = try? color(toAny, "partGradients.\(k).to") {
+                    let angle = (try? number(g["angle"], "partGradients.\(k).angle", -360, 360, 90)) ?? 90
+                    spec.partGradients[k] = SkinPartGradient(from: fromCol, to: toCol, angle: angle)
+                }
+            }
         }
         if let hs = root["headSurface"], !isNull(hs) {
             guard let hss = hs as? String, let surface = SkinHeadSurface(rawValue: hss) else { throw fail("headSurface 必须是 \"dome\" 或 \"plane\"") }
@@ -1833,6 +1875,51 @@ final class SkinLibrary {
         let ok = (try? FileManager.default.removeItem(at: Self.directory.appendingPathComponent("\(id).kurocat"))) != nil
         reload()
         return ok
+    }
+
+    /// Display name with short ID suffix when multiple imported skins share the same name.
+    func displayName(for skin: SkinSpec) -> String {
+        let dupCount = skins.filter { $0.name == skin.name }.count
+        if dupCount > 1 {
+            return "\(skin.name) (#\(skin.id.prefix(4)))"
+        }
+        return skin.name
+    }
+
+    /// Renames an imported skin by updating the JSON `"name"` field, writing the new content-hashed file,
+    /// removing the old file, and returning the new skin id.
+    func rename(id: String, newName: String) throws -> String {
+        guard id.count == 16, id.allSatisfy({ "0123456789abcdef".contains($0) }) else {
+            throw SkinError(message: "无效的皮肤 ID")
+        }
+        let cleanedScalars = newName.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.filter { $0.value >= 0x20 }
+        let cleaned = String(String.UnicodeScalarView(cleanedScalars.prefix(40)))
+        if cleaned.isEmpty { throw SkinError(message: "皮肤名称不能为空") }
+
+        let oldURL = Self.directory.appendingPathComponent("\(id).kurocat")
+        guard let data = try? Data(contentsOf: oldURL) else {
+            throw SkinError(message: "找不到原始皮肤文件")
+        }
+        guard var obj = (try? JSONSerialization.jsonObject(with: data, options: [])) as? [String: Any] else {
+            throw SkinError(message: "皮肤 JSON 解析失败")
+        }
+        obj["name"] = cleaned
+        guard let newData = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted]) else {
+            throw SkinError(message: "写入皮肤 JSON 失败")
+        }
+        let newSpec = try SkinSpec.parse(newData)
+        let newURL = Self.directory.appendingPathComponent("\(newSpec.id).kurocat")
+        do {
+            try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+            try newData.write(to: newURL, options: .atomic)
+            if newSpec.id != id {
+                try? FileManager.default.removeItem(at: oldURL)
+            }
+        } catch {
+            throw SkinError(message: "保存重命名后的皮肤失败")
+        }
+        reload()
+        return newSpec.id
     }
 }
 

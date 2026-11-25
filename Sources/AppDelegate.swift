@@ -21,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var settingsWindow: SettingsWindowController?
 
     private var currentAppVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.4.4"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.4.5"
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -325,7 +325,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !library.skins.isEmpty {
             coatMenu.addItem(.separator())
             for skin in library.skins {
-                let item = NSMenuItem(title: skin.name, action: #selector(selectCustomSkin(_:)), keyEquivalent: "")
+                let item = NSMenuItem(title: library.displayName(for: skin), action: #selector(selectCustomSkin(_:)), keyEquivalent: "")
                 item.target = self
                 item.representedObject = skin.id
                 item.state = settings.customSkin == skin.id ? .on : .off
@@ -344,14 +344,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         openDirItem.target = self
         coatMenu.addItem(openDirItem)
         if !library.skins.isEmpty {
+            coatMenu.addItem(.separator())
+            let renameMenu = NSMenu()
+            for skin in library.skins {
+                let item = NSMenuItem(title: "✏️ " + library.displayName(for: skin), action: #selector(renameCustomSkin(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = skin.id
+                renameMenu.addItem(item)
+            }
+            let renameParent = NSMenuItem(title: tr("✏️ 重命名皮肤…", "✏️ Rename Skin…"), action: nil, keyEquivalent: "")
+            renameParent.submenu = renameMenu
+            coatMenu.addItem(renameParent)
+
             let deleteMenu = NSMenu()
             for skin in library.skins {
-                let item = NSMenuItem(title: skin.name, action: #selector(deleteCustomSkin(_:)), keyEquivalent: "")
+                let delTitle = "🗑 " + library.displayName(for: skin)
+                let item = NSMenuItem(title: delTitle, action: #selector(deleteCustomSkin(_:)), keyEquivalent: "")
+                item.attributedTitle = NSAttributedString(
+                    string: delTitle,
+                    attributes: [.foregroundColor: NSColor.systemRed, .font: NSFont.menuFont(ofSize: 0)]
+                )
                 item.target = self
                 item.representedObject = skin.id
                 deleteMenu.addItem(item)
             }
-            let deleteParent = NSMenuItem(title: tr("删除皮肤", "Delete Skin"), action: nil, keyEquivalent: "")
+            let deleteTitle = tr("🗑 删除已导入皮肤…", "🗑 Delete Imported Skin…")
+            let deleteParent = NSMenuItem(title: deleteTitle, action: nil, keyEquivalent: "")
+            deleteParent.attributedTitle = NSAttributedString(
+                string: deleteTitle,
+                attributes: [.foregroundColor: NSColor.systemRed, .font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)]
+            )
             deleteParent.submenu = deleteMenu
             coatMenu.addItem(deleteParent)
         }
@@ -366,6 +388,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         topWorkshopItem.target = self
         menu.addItem(topWorkshopItem)
+
+        let levelKbItem = NSMenuItem(
+            title: tr("键盘水平摆放（平行屏幕）", "Level Keyboard (Parallel to Screen)"),
+            action: #selector(toggleLevelKeyboard),
+            keyEquivalent: ""
+        )
+        levelKbItem.target = self
+        levelKbItem.state = settings.levelKeyboard ? .on : .off
+        menu.addItem(levelKbItem)
 
         let settingsItem = NSMenuItem(title: tr("⚙️ 设置…", "⚙️ Settings…"), action: #selector(openSettingsWindow), keyEquivalent: ",")
         settingsItem.target = self
@@ -419,6 +450,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             ctrl.onOpenDressingRoom = { [weak self] in
                 self?.showDressingRoom()
+            }
+            ctrl.onRenameSkin = { [weak self] id in
+                self?.performRenameSkin(id: id)
+            }
+            ctrl.onDeleteSkin = { [weak self] id in
+                self?.performDeleteSkin(id: id)
             }
             ctrl.onImportKeyboardSkin = { [weak self] in
                 self?.promptImportKeyboardSkin()
@@ -604,6 +641,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         CatSettings.shared.keyboardMarquee.toggle()
     }
 
+    @objc private func toggleLevelKeyboard() {
+        CatSettings.shared.levelKeyboard.toggle()
+        overlayWindow.catView.needsDisplay = true
+        settingsWindow?.refresh()
+    }
+
     @objc private func togglePetInteraction() {
         CatSettings.shared.petInteraction.toggle()
     }
@@ -738,6 +781,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let skin = SkinLibrary.shared.skin(id: id)
             var message = "已换上「\(skin?.name ?? "新皮肤")」"
             if let author = skin?.author, !author.isEmpty { message += "（作者：\(author)）" }
+            if let sk = skin, SkinLibrary.shared.skins.filter({ $0.name == sk.name }).count > 1 {
+                message += " · 存在同名皮肤，已附加短编号区分"
+            }
             dressingRoom?.setStatus("✓ " + message, kind: 1)
             dressingRoom?.refresh()
             settingsWindow?.refresh()
@@ -765,12 +811,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settingsWindow?.refresh()
     }
 
-    @objc private func deleteCustomSkin(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String, let skin = SkinLibrary.shared.skin(id: id) else { return }
+    @objc private func renameCustomSkin(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        performRenameSkin(id: id)
+    }
+
+    private func performRenameSkin(id: String) {
+        guard let skin = SkinLibrary.shared.skin(id: id) else { return }
+        let en = CatSettings.shared.isEnglish
         let alert = NSAlert()
+        alert.messageText = en ? "Rename Skin" : "重命名皮肤"
+        alert.informativeText = en ? "Enter a new name for \"\(skin.name)\" (up to 40 characters):" : "为「\(skin.name)」输入新的名称（最多 40 字）："
+        alert.addButton(withTitle: en ? "Rename" : "保存")
+        alert.addButton(withTitle: en ? "Cancel" : "取消")
+
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        input.stringValue = skin.name
+        alert.accessoryView = input
+        alert.window.initialFirstResponder = input
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let newName = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if newName.isEmpty || newName == skin.name { return }
+        do {
+            let newId = try SkinLibrary.shared.rename(id: id, newName: newName)
+            if CatSettings.shared.customSkin == id {
+                CatSettings.shared.customSkin = newId
+            }
+            dressingRoom?.refresh()
+            settingsWindow?.refresh()
+        } catch {
+            let failed = NSAlert()
+            failed.alertStyle = .warning
+            failed.messageText = en ? "Rename Failed" : "重命名失败"
+            failed.informativeText = error.localizedDescription
+            failed.runModal()
+        }
+    }
+
+    @objc private func deleteCustomSkin(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        performDeleteSkin(id: id)
+    }
+
+    private func performDeleteSkin(id: String) {
+        guard let skin = SkinLibrary.shared.skin(id: id) else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
         alert.messageText = "删除皮肤「\(skin.name)」？"
         alert.informativeText = "会从皮肤文件夹里删除这个文件，删除后需要重新导入。"
-        alert.addButton(withTitle: "删除")
+        let delBtn = alert.addButton(withTitle: "🗑 删除")
+        if #available(macOS 11.0, *) { delBtn.hasDestructiveAction = true }
         alert.addButton(withTitle: "取消")
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }

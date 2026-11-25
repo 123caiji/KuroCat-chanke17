@@ -1193,8 +1193,8 @@ private:
                     GraphicsState ks = g.Save();
                     g.TranslateTransform(cx, cy);
                     // The keyboard is laid out 180° to face the cat, so the legends must be too
-                    // (upside-down to the viewer, upright from the cat's seat). +3° follows the deck slope.
-                    g.RotateTransform(180.0f + 3.0f);
+                    // (upside-down to the viewer, upright from the cat's seat). +3° follows the classic sloped deck.
+                    g.RotateTransform(KeyboardLayout::levelKeyboard() ? 180.0f : (180.0f + 3.0f));
                     g.DrawString(legend.c_str(), -1, &kf, RectF(-14.0f, -7.0f, 28.0f, 14.0f), &kbSF, &tb);
                     g.Restore(ks);
                 }
@@ -1254,11 +1254,12 @@ private:
         float fy = flick.y * flickScale;
         float curl = physics.tailCurl.value * flickScale;
 
+        float tailDY = skin.shape.tailRootY;
         TailCurve c;
-        c.root = PointF(seatX + 34.0f + shift, seatY - 6.0f);
-        c.c1 = PointF(seatX + 64.0f + shift + fx * 0.25f, seatY + 2.0f + wag1 * 0.35f + huntDrop * 0.4f + fy * 0.22f + curl * 0.35f);
-        c.c2 = PointF(seatX + 66.0f + wag2 * 0.4f + shift + fx * 0.65f - curl * 0.45f, seatY - 26.0f + wag1 * 0.7f + huntDrop + fy * 0.60f - curl * 0.55f);
-        c.tip = PointF(seatX + 91.0f + wag2 * 0.5f + shift + fx, seatY - 30.0f + wag1 * 0.85f + huntDrop + fy);
+        c.root = PointF(seatX + 34.0f + shift, seatY - 6.0f + tailDY);
+        c.c1 = PointF(seatX + 64.0f + shift + fx * 0.25f, seatY + 2.0f + tailDY + wag1 * 0.35f + huntDrop * 0.4f + fy * 0.22f + curl * 0.35f);
+        c.c2 = PointF(seatX + 66.0f + wag2 * 0.4f + shift + fx * 0.65f - curl * 0.45f, seatY - 26.0f + tailDY + wag1 * 0.7f + huntDrop + fy * 0.60f - curl * 0.55f);
+        c.tip = PointF(seatX + 91.0f + wag2 * 0.5f + shift + fx, seatY - 30.0f + tailDY + wag1 * 0.85f + huntDrop + fy);
         for (PointF* q : {&c.c1, &c.c2, &c.tip}) { q->X = around(q->X, c.root.X, tl); q->Y = around(q->Y, c.root.Y, tl); }
 
         Pt target = physics.tailTip.point();
@@ -1372,9 +1373,10 @@ private:
         float tipDx = std::sin(foldAngle) * earLen;
         float tipDy = -std::cos(foldAngle) * earLen;
 
-        Pt innerBase = projectHead3D(sign * bd.earInX, bd.earInY, 0.0f, yawRad, pitchRad);
-        Pt outerBase = projectHead3D(sign * bd.earOutX, bd.earOutY, -2.0f, yawRad, pitchRad);
-        Pt tip3D     = projectHead3D(sign * bd.earTipX + tipDx, bd.earTipY + tipDy, -3.0f, yawRad, pitchRad);
+        float earShiftX = (bd.earInX + bd.earOutX) * 0.5f * (skin.shape.earSpacing - 1.0f);
+        Pt innerBase = projectHead3D(sign * (bd.earInX + earShiftX), bd.earInY, 0.0f, yawRad, pitchRad);
+        Pt outerBase = projectHead3D(sign * (bd.earOutX + earShiftX), bd.earOutY, -2.0f, yawRad, pitchRad);
+        Pt tip3D     = projectHead3D(sign * (bd.earTipX + earShiftX) + tipDx, bd.earTipY + tipDy, -3.0f, yawRad, pitchRad);
         float es = skin.shape.earSize;
         if (es != 1.0f) { // grow / shrink around the middle of the ear base
             Pt m = { (innerBase.x + outerBase.x) * 0.5f, (innerBase.y + outerBase.y) * 0.5f };
@@ -1611,7 +1613,7 @@ private:
                 SolidBrush b(col(pal.body));
                 g.FillPath(&b, &path);
             }
-            if (pal.bodyShade.set || skin.colorpoint() || hasRegions || hasMarks) {
+            if (pal.bodyShade.set || pal.headBody.set || skin.colorpoint() || hasRegions || hasMarks) {
                 GraphicsState cs = g.Save();
                 g.SetClip(&path, CombineModeIntersect);
 
@@ -1623,6 +1625,16 @@ private:
                     REAL bodyPos[4] = { 0.0f, 0.22f, 0.80f, 1.0f };
                     bodyGrad.SetInterpolationColors(bodyCols, bodyPos, 4);
                     g.FillPath(&bodyGrad, &path);
+                }
+
+                if (pal.headBody.set) {
+                    GraphicsState hsState = g.Save();
+                    GraphicsPath headSide;
+                    jawSide(headSide, true, skin, headCenter, physics);
+                    g.SetClip(&headSide, CombineModeIntersect);
+                    SolidBrush hb(col(pal.headBody));
+                    g.FillPath(&hb, &path);
+                    g.Restore(hsState);
                 }
 
                 // Curve regions: head/skull above the jaw line, body below it.
@@ -1682,7 +1694,14 @@ private:
                 }
 
                 for (const SkinMark& m : skin.marks) {
-                    if (m.space == SkinSpace::Body) drawMark(g, m, bodyMap);
+                    if (m.space == SkinSpace::Body) {
+                        GraphicsState msState = g.Save();
+                        GraphicsPath bodySide;
+                        jawSide(bodySide, false, skin, headCenter, physics);
+                        g.SetClip(&bodySide, CombineModeIntersect);
+                        drawMark(g, m, bodyMap);
+                        g.Restore(msState);
+                    }
                     else if (m.space == SkinSpace::Skull) drawMark(g, m, skullMap);
                     else if (m.space == SkinSpace::Head) drawMark(g, m, headMap);
                 }
@@ -1782,11 +1801,27 @@ private:
 
     static void drawDazedSilhouette(Gdiplus::Graphics& g, float seatX, float seatY, Pt head, const CatPhysics& physics) {
         using namespace Gdiplus;
+        float lie = std::clamp(physics.lieIntensity.value, 0.0f, 1.0f);
+        float lieS = lie * lie * (3.0f - 2.0f * lie);
+        float squash = physics.bodySquash.value;
+        float sy = squash * (1.0f - lieS * 0.42f);
+        float sx = (1.0f + (1.0f - squash) * 0.55f) * (1.0f + lieS * 0.03f);
+        float bTilt = physics.bodyTilt.value;
+        float cB = std::cos(bTilt), sB = std::sin(bTilt);
+        auto B = [&](float lx, float ly) -> PointF {
+            float rx = lx * sx, ry = ly * sy;
+            return PointF(seatX + rx * cB - ry * sB, seatY + rx * sB + ry * cB);
+        };
+        float hTilt = physics.headTilt.value;
+        float cH = std::cos(hTilt), sH = std::sin(hTilt);
+        auto H = [&](float lx, float ly) -> PointF {
+            return PointF(head.x + lx * cH - ly * sH, head.y + lx * sH + ly * cH);
+        };
+
         GraphicsState body = g.Save();
         g.TranslateTransform(seatX, seatY);
-        g.RotateTransform(physics.bodyTilt.value * RadToDeg);
-        float squash = physics.bodySquash.value;
-        g.ScaleTransform(1.0f + (1.0f - squash) * 0.55f, squash);
+        g.RotateTransform(bTilt * RadToDeg);
+        g.ScaleTransform(sx, sy);
 
         drawDazedPaw(g, RectF(-34.0f, -2.0f, 19.0f, 18.0f));
         if (physics.hindFootActive.value < 0.35f) {
@@ -1800,22 +1835,41 @@ private:
         LinearGradientBrush bellyFur(PointF(0.0f, -16.0f), PointF(0.0f, 12.0f), rgb(0xF4DFB8), rgb(0xC8A77A));
         bellyFur.SetWrapMode(WrapModeTileFlipXY);
         g.FillPath(&bellyFur, &belly);
+        g.Restore(body);
+
+        // Tunic dynamically bridges head lower edge (H(±22, 22)) to lieS-adapted body hem (B(±44, -17))
+        // so the hood and cloak never detach during big motions or sleep.
+        PointF collarL = H(-22.0f, 22.0f);
+        PointF collarR = H(22.0f, 22.0f);
+        PointF hemL = B(-44.0f, -17.0f);
+        PointF hemR = B(44.0f, -17.0f);
+        PointF c1L(collarL.X * 0.55f + hemL.X * 0.45f - 5.0f, collarL.Y * 0.72f + hemL.Y * 0.28f);
+        PointF c2L = B(-44.0f, -35.0f);
+        PointF bC1 = B(-37.0f, -2.0f);
+        PointF bC2 = B(37.0f, -2.0f);
+        PointF c1R = B(44.0f, -35.0f);
+        PointF c2R(collarR.X * 0.55f + hemR.X * 0.45f + 5.0f, collarR.Y * 0.72f + hemR.Y * 0.28f);
 
         GraphicsPath tunic;
-        tunic.AddBezier(-21.0f, -65.0f, -34.0f, -56.0f, -44.0f, -35.0f, -44.0f, -17.0f);
-        tunic.AddBezier(-44.0f, -17.0f, -37.0f, -2.0f, 37.0f, -2.0f, 44.0f, -17.0f);
-        tunic.AddBezier(44.0f, -17.0f, 44.0f, -35.0f, 34.0f, -56.0f, 21.0f, -65.0f);
+        tunic.AddBezier(collarL, c1L, c2L, hemL);
+        tunic.AddBezier(hemL, bC1, bC2, hemR);
+        tunic.AddBezier(hemR, c1R, c2R, collarR);
         tunic.CloseFigure();
-        LinearGradientBrush cloth(PointF(-16.0f, -65.0f), PointF(12.0f, -5.0f), rgb(0x555F9B), rgb(0x252E58));
+        PointF gradStart(head.x - 16.0f, collarL.Y);
+        PointF gradEnd = B(12.0f, -5.0f);
+        if (std::fabs(gradStart.X - gradEnd.X) < 1.0f && std::fabs(gradStart.Y - gradEnd.Y) < 1.0f) {
+            gradEnd.Y += 10.0f;
+        }
+        LinearGradientBrush cloth(gradStart, gradEnd, rgb(0x555F9B), rgb(0x252E58));
         cloth.SetWrapMode(WrapModeTileFlipXY);
         g.FillPath(&cloth, &tunic);
         Pen hem(rgb(0x7C86BC, 155), 1.1f);
-        g.DrawBezier(&hem, -39.0f, -15.0f, -28.0f, -6.0f, 28.0f, -6.0f, 39.0f, -15.0f);
-        g.Restore(body);
+        PointF hL = B(-39.0f, -15.0f), hC1 = B(-28.0f, -6.0f), hC2 = B(28.0f, -6.0f), hR = B(39.0f, -15.0f);
+        g.DrawBezier(&hem, hL, hC1, hC2, hR);
 
         GraphicsState hoodState = g.Save();
         g.TranslateTransform(head.x, head.y);
-        g.RotateTransform(physics.headTilt.value * RadToDeg);
+        g.RotateTransform(hTilt * RadToDeg);
 
         GraphicsPath hood;
         hood.AddBezier(0.0f, -33.0f, 28.0f, -35.0f, 48.0f, -16.0f, 48.0f, 9.0f);
@@ -1869,7 +1923,7 @@ private:
             SolidBrush nb(col(skin.palette.nose));
             g.FillPath(&nb, &np);
         }
-        if (skin.palette.mouth.set && physics.yawnAmount < 0.15f) {
+        if (skin.palette.mouth.set && skin.palette.mouth.a >= 0.01 && physics.yawnAmount < 0.15f) {
             Pt mL   = projectHead3D(-4.2f, 12.2f, 28.4f, yawRad, pitchRad);
             Pt mM   = projectHead3D(0.0f, 11.2f, 28.8f, yawRad, pitchRad);
             Pt mR   = projectHead3D(4.2f, 12.2f, 28.4f, yawRad, pitchRad);
@@ -2091,8 +2145,12 @@ private:
                           float scruffStartle = 0.0f, float scruffWide = 0.0f) {
         using namespace Gdiplus;
         float sign = isLeft ? -1.0f : 1.0f;
-        bool customIris = skin.palette.iris.set; // a skin's iris overrides the eye-colour menu
-        Color eyeCol = customIris ? col(skin.palette.iris) : eyePrimary(eyeTheme);
+        const SkinColor& sideIris = isLeft ? skin.palette.irisLeft : skin.palette.irisRight;
+        const SkinColor& activeIris = sideIris.set ? sideIris : skin.palette.iris;
+        bool customIris = activeIris.set; // a skin's iris overrides the eye-colour menu
+        Color eyeCol = customIris ? col(activeIris) : eyePrimary(eyeTheme);
+        const SkinColor& sidePupil = isLeft ? skin.palette.pupilLeft : skin.palette.pupilRight;
+        const SkinColor& activePupil = sidePupil.set ? sidePupil : skin.palette.pupil;
         Pt proj = projectHead3D(sign * 17.2f, -2.0f, 27.5f, yawRad, pitchRad);
 
         float eyeNormal = yawRad + sign * 0.34f;
@@ -2126,7 +2184,7 @@ private:
         auto colorLuma = [](const SkinColor& c) -> float {
             return 0.299f * c.r + 0.587f * c.g + 0.114f * c.b;
         };
-        float bodyLuma = colorLuma(skin.palette.body);
+        float bodyLuma = colorLuma(skin.palette.headBody.set ? skin.palette.headBody : skin.palette.body);
         float pointsLuma = skin.palette.points.set ? colorLuma(skin.palette.points) : 1.0f;
         float outlineLuma = skin.palette.outline.set ? colorLuma(skin.palette.outline) : 1.0f;
         bool isDarkEyeArea = bodyLuma < 0.28f || (skin.colorpoint() && pointsLuma < 0.38f);
@@ -2257,7 +2315,7 @@ private:
                     pupilW+2*rim, pupilH+2*rim);
             }
         }
-        SolidBrush pupilBrush(catBlack());
+        SolidBrush pupilBrush(activePupil.set ? col(activePupil) : catBlack());
         g.FillEllipse(&pupilBrush, px - pupilW * 0.5f, py - pupilH * 0.5f, pupilW, pupilH);
 
         // Tiny crisp white sparkle glint as boba hunting pupils dilate (and delicate catchlight on Siamese blue eyes!)
@@ -2450,11 +2508,14 @@ private:
         float headLift = bd.headLift;
         float lie = std::clamp(physics.lieIntensity.value, 0.0f, 1.0f);
         float lieS = lie * lie * (3.0f - 2.0f * lie);
-        float idleTopY = (seatY - bd.idleTopDY) + lieS * 24.0f;
-        float idleTopX = bd.idleTopX * bw - lieS * 5.0f;
-        float idleBotX = bd.idleBotX * bw - lieS * 4.5f;
-        float idleBotY = seatY + 12.0f - lieS * 4.0f;
-        float shX = bd.shoulderX * bw;
+        float armSp = skin.shape.armSpacing;
+        float armLen = skin.shape.armLength;
+        float armRY = skin.shape.armRootY;
+        float idleTopY = (seatY - bd.idleTopDY + armRY) + lieS * 24.0f;
+        float idleTopX = bd.idleTopX * bw * armSp - lieS * 5.0f;
+        float idleBotX = bd.idleBotX * bw * armSp - lieS * 4.5f;
+        float idleBotY = (seatY + 12.0f + (armLen - 1.0f) * 16.0f) - lieS * 4.0f;
+        float shX = bd.shoulderX * bw * armSp;
         float limbStartW = bd.limbStartW;
         float limbEndW = bd.limbEndW;
 
@@ -5916,6 +5977,16 @@ private:
                         fillClampedLinearGradient(lg, &longCatPath, nullptr, PointF(headCenter.x, headCenter.y - 36.0f), PointF(rumpCenterX, torsoBottomY + bottomDip), cols, locs, 2);
                     }
 
+                    if (pal.headBody.set) {
+                        GraphicsState hsState = lg.Save();
+                        GraphicsPath headSide;
+                        jawSide(headSide, true, skin, headCenter, physics);
+                        lg.SetClip(&headSide, CombineModeIntersect);
+                        SolidBrush hbb(col(pal.headBody));
+                        lg.FillPath(&hbb, &longCatPath);
+                        lg.Restore(hsState);
+                    }
+
                     for (const SkinRegion& region : skin.regions) {
                         if (region.space != SkinSpace::Head && region.space != SkinSpace::Skull && region.space != SkinSpace::Body) continue;
                         GraphicsState rs = lg.Save();
@@ -5945,7 +6016,14 @@ private:
                     }
 
                     for (const SkinMark& mark : skin.marks) {
-                        if (mark.space == SkinSpace::Body) drawMark(lg, mark, dragBodyMap);
+                        if (mark.space == SkinSpace::Body) {
+                            GraphicsState msState = lg.Save();
+                            GraphicsPath bodySide;
+                            jawSide(bodySide, false, skin, headCenter, physics);
+                            lg.SetClip(&bodySide, CombineModeIntersect);
+                            drawMark(lg, mark, dragBodyMap);
+                            lg.Restore(msState);
+                        }
                     }
                     for (const SkinMark& mark : skin.marks) {
                         if (mark.space == SkinSpace::Skull) drawMark(lg, mark, skullMap);

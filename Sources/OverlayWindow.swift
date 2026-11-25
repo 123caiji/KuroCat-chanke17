@@ -10,6 +10,7 @@ private struct RenderedPose {
         let keyboardSkinId: String
         let eyes: EyeColorTheme
         let showsLegends: Bool
+        let levelKeyboard: Bool
         let size: CGSize
         let flipped: Bool
         let rotationDeg: CGFloat
@@ -48,7 +49,8 @@ private struct RenderedPose {
         appearance = Appearance(coat: coat, skinId: settings.activeSkin.id,
                                 keyboard: settings.keyboardTheme, keyboardSkinId: settings.activeKeyboardSkin.id,
                                 eyes: settings.eyeTheme,
-                                showsLegends: settings.showKeyLegends, size: size, flipped: settings.flipHorizontal,
+                                showsLegends: settings.showKeyLegends, levelKeyboard: settings.levelKeyboard,
+                                size: size, flipped: settings.flipHorizontal,
                                 rotationDeg: settings.rotationDeg, whiteOutline: settings.whiteOutline,
                                 captureMode: settings.obsCaptureMode, showEditControls: settings.isEditMode,
                                 englishLabels: settings.isEnglish, tabletActive: physics.isTabletActive)
@@ -861,6 +863,8 @@ final class SettingsWindowController: NSWindowController {
     var onScaleChanged: ((CGFloat) -> Void)?
     var onResetPoseAndPosition: (() -> Void)?
     var onOpenDressingRoom: (() -> Void)?
+    var onRenameSkin: ((String) -> Void)?
+    var onDeleteSkin: ((String) -> Void)?
     var onImportKeyboardSkin: (() -> Void)?
     var onApplyWindowLevel: (() -> Void)?
     var onApplyOBSMode: (() -> Void)?
@@ -885,6 +889,7 @@ final class SettingsWindowController: NSWindowController {
     private var mouseBadgesSwitch: NSSwitch!
     private var legendsSwitch: NSSwitch!
     private var marqueeSwitch: NSSwitch!
+    private var levelKeyboardSwitch: NSSwitch!
     private var fullscreenOverlaySwitch: NSSwitch!
     private var clickThroughSwitch: NSSwitch!
     private var autoHideSwitch: NSSwitch!
@@ -995,16 +1000,17 @@ final class SettingsWindowController: NSWindowController {
         // MARK: Card 1 — Appearance & Orientation
         addSectionHeader(tr("外观与方向", "Appearance & Orientation"))
         addCard(rows: 7) { card, rh in
-            // Row 0: Cat Skin + Dressing Room button
-            card.addSubview(makeLabel(tr("猫咪皮肤", "Cat Skin"), yPos: 4, width: 110))
-            skinPopup = NSPopUpButton(frame: NSRect(x: 130, y: 9, width: 222, height: 24), pullsDown: false)
+            // Row 0: Cat Skin + Dressing Room + Rename/Delete buttons (when a custom skin is active)
+            let hasCustomActive = !s.customSkin.isEmpty && SkinLibrary.shared.skin(id: s.customSkin) != nil
+            card.addSubview(makeLabel(tr("猫咪皮肤", "Cat Skin"), yPos: 4, width: 100))
+            skinPopup = NSPopUpButton(frame: NSRect(x: 112, y: 9, width: hasCustomActive ? 148 : 240, height: 24), pullsDown: false)
             skinIds = []
             for coat in CatCoatTheme.allCases {
                 skinPopup.addItem(withTitle: s.isEnglish ? englishCoatName(coat) : coat.rawValue)
                 skinIds.append("coat:\(coat.rawValue)")
             }
             for sk in SkinLibrary.shared.skins {
-                skinPopup.addItem(withTitle: sk.name)
+                skinPopup.addItem(withTitle: SkinLibrary.shared.displayName(for: sk))
                 skinIds.append("custom:\(sk.id)")
             }
             if !s.customSkin.isEmpty, let idx = skinIds.firstIndex(of: "custom:\(s.customSkin)") {
@@ -1016,11 +1022,33 @@ final class SettingsWindowController: NSWindowController {
             skinPopup.action = #selector(onSkinSelected)
             card.addSubview(skinPopup)
 
-            let dressBtn = NSButton(title: tr("换装间…", "Skins…"), target: self, action: #selector(onTapDressingRoom))
-            dressBtn.bezelStyle = .rounded
-            dressBtn.controlSize = .small
-            dressBtn.frame = NSRect(x: 358, y: 10, width: 84, height: 22)
-            card.addSubview(dressBtn)
+            if hasCustomActive {
+                let dressBtn = NSButton(title: tr("换装间…", "Skins…"), target: self, action: #selector(onTapDressingRoom))
+                dressBtn.bezelStyle = .rounded
+                dressBtn.controlSize = .small
+                dressBtn.frame = NSRect(x: 264, y: 10, width: 64, height: 22)
+                card.addSubview(dressBtn)
+
+                let renameBtn = NSButton(title: tr("✏️改名", "✏️"), target: self, action: #selector(onTapRenameSkin))
+                renameBtn.bezelStyle = .rounded
+                renameBtn.controlSize = .small
+                renameBtn.frame = NSRect(x: 332, y: 10, width: 52, height: 22)
+                card.addSubview(renameBtn)
+
+                let delBtn = NSButton(title: tr("🗑删除", "🗑Del"), target: self, action: #selector(onTapDeleteSkin))
+                delBtn.bezelStyle = .rounded
+                delBtn.controlSize = .small
+                delBtn.contentTintColor = .systemRed
+                if #available(macOS 11.0, *) { delBtn.hasDestructiveAction = true }
+                delBtn.frame = NSRect(x: 388, y: 10, width: 56, height: 22)
+                card.addSubview(delBtn)
+            } else {
+                let dressBtn = NSButton(title: tr("换装间…", "Skins…"), target: self, action: #selector(onTapDressingRoom))
+                dressBtn.bezelStyle = .rounded
+                dressBtn.controlSize = .small
+                dressBtn.frame = NSRect(x: 358, y: 10, width: 84, height: 22)
+                card.addSubview(dressBtn)
+            }
             addRowDivider(card, yPos: 4 + rh)
 
             // Row 1: Keyboard Theme + Import button
@@ -1120,7 +1148,7 @@ final class SettingsWindowController: NSWindowController {
 
         // MARK: Card 2 — Interaction & Effects
         addSectionHeader(tr("互动与特效", "Interaction & Effects"))
-        addCard(rows: 8) { card, rh in
+        addCard(rows: 9) { card, rh in
             // Row 0: Scruff-drag animation toggle
             card.addSubview(makeLabel(tr("拎起拖拽动画（拖动时切换拎起姿态）", "Scruff-Drag Lift Animation"), yPos: 4, width: 320))
             dragAnimSwitch = makeSwitch(s.enableDragAnimation, action: #selector(onToggleDragAnim), yPos: 4)
@@ -1181,10 +1209,17 @@ final class SettingsWindowController: NSWindowController {
             card.addSubview(marqueeSwitch)
             addRowDivider(card, yPos: r6 + rh)
 
-            // Row 7: Drawing Tablet & Stylus
+            // Row 7: Level keyboard (parallel to screen)
             let r7 = 4 + rh * 7
-            card.addSubview(makeLabel(tr("数位板与触控笔", "Tablet & Stylus"), yPos: r7, width: 130))
-            tabletPopup = NSPopUpButton(frame: NSRect(x: 150, y: r7 + 5, width: 292, height: 24), pullsDown: false)
+            card.addSubview(makeLabel(tr("键盘水平摆放（平行屏幕）", "Level Keyboard (Parallel to Screen)"), yPos: r7, width: 320))
+            levelKeyboardSwitch = makeSwitch(s.levelKeyboard, action: #selector(onToggleLevelKeyboard), yPos: r7)
+            card.addSubview(levelKeyboardSwitch)
+            addRowDivider(card, yPos: r7 + rh)
+
+            // Row 8: Drawing Tablet & Stylus
+            let r8 = 4 + rh * 8
+            card.addSubview(makeLabel(tr("数位板与触控笔", "Tablet & Stylus"), yPos: r8, width: 130))
+            tabletPopup = NSPopUpButton(frame: NSRect(x: 150, y: r8 + 5, width: 292, height: 24), pullsDown: false)
             tabletPopup.addItems(withTitles: [
                 tr("自动检测（连接数位板时切换）", "Auto-Detect When Connected"),
                 tr("始终显示数位板与触控笔", "Always Show Tablet & Stylus"),
@@ -1311,6 +1346,19 @@ final class SettingsWindowController: NSWindowController {
             }
         }
         onSettingsChanged?()
+        rebuildUI()
+    }
+
+    @objc private func onTapRenameSkin() {
+        let id = CatSettings.shared.customSkin
+        guard !id.isEmpty else { return }
+        onRenameSkin?(id)
+    }
+
+    @objc private func onTapDeleteSkin() {
+        let id = CatSettings.shared.customSkin
+        guard !id.isEmpty else { return }
+        onDeleteSkin?(id)
     }
 
     @objc private func onKBSelected() {
@@ -1413,6 +1461,11 @@ final class SettingsWindowController: NSWindowController {
 
     @objc private func onToggleMarquee() {
         CatSettings.shared.keyboardMarquee = (marqueeSwitch.state == .on)
+        onSettingsChanged?()
+    }
+
+    @objc private func onToggleLevelKeyboard() {
+        CatSettings.shared.levelKeyboard = (levelKeyboardSwitch.state == .on)
         onSettingsChanged?()
     }
 

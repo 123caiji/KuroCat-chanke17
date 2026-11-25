@@ -42,6 +42,7 @@ struct CatSettings {
     bool footEasterEgg = true;
     bool tailEasterEgg = true;
     bool keyboardMarquee = true;
+    bool levelKeyboard = true;
     int obsCaptureMode = 0; // 0 = off, 1 = OBS transparent window capture, 2 = OBS green screen (#00FF00)
     bool obsHideDesktop = false;
     bool autoHideFullscreen = false;
@@ -82,6 +83,8 @@ struct CatSettings {
         footEasterEgg    = readDword(L"FootEasterEgg", 1) != 0;
         tailEasterEgg    = readDword(L"TailEasterEgg", 1) != 0;
         keyboardMarquee  = readDword(L"KeyboardMarquee", 1) != 0;
+        levelKeyboard    = readDword(L"LevelKeyboard", 1) != 0;
+        KeyboardLayout::levelKeyboard() = levelKeyboard;
         obsCaptureMode   = std::clamp((int)readDword(L"OBSCaptureMode", 0), 0, 2);
         obsHideDesktop   = readDword(L"OBSHideDesktop", 0) != 0;
         autoHideFullscreen = readDword(L"AutoHideFullscreen", 0) != 0;
@@ -149,6 +152,7 @@ struct CatSettings {
         writeDword(L"FootEasterEgg", footEasterEgg ? 1 : 0);
         writeDword(L"TailEasterEgg", tailEasterEgg ? 1 : 0);
         writeDword(L"KeyboardMarquee", keyboardMarquee ? 1 : 0);
+        writeDword(L"LevelKeyboard", levelKeyboard ? 1 : 0);
         writeDword(L"OBSCaptureMode", (DWORD)obsCaptureMode);
         writeDword(L"OBSHideDesktop", obsHideDesktop ? 1 : 0);
         writeDword(L"AutoHideFullscreen", autoHideFullscreen ? 1 : 0);

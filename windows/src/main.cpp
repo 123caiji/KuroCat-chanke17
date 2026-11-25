@@ -52,7 +52,7 @@ using std::max;
 
 namespace {
 
-constexpr const wchar_t* APP_VERSION = L"1.4.4";
+constexpr const wchar_t* APP_VERSION = L"1.4.5";
 constexpr const wchar_t* VERSION_PROP = L"KuroCatVersion"; // set on the tray owner window so newer builds can take over older ones
 constexpr const wchar_t* TRAY_OWNER_CLASS = L"KuroCatTrayOwnerClass";
 constexpr const wchar_t* OVERLAY_CLASS = L"KuroCatOverlayWindowClass";
@@ -80,6 +80,7 @@ enum MenuCmd : UINT {
     CMD_TOGGLE_FOOT,
     CMD_TOGGLE_TAIL,
     CMD_TOGGLE_MARQUEE,
+    CMD_TOGGLE_LEVEL_KEYBOARD,
     CMD_TOGGLE_PET,
     CMD_OBS_OFF,
     CMD_OBS_TRANSPARENT,
@@ -130,6 +131,7 @@ enum MenuCmd : UINT {
     CMD_SKIN_DELETE_BASE = 5000,
     CMD_KB_SELECT_BASE = 6000,    // + index into AppState::kbLibrary.skins
     CMD_KB_DELETE_BASE = 7000,
+    CMD_SKIN_RENAME_BASE = 8000,
     CMD_SKIN_RANGE = 900
 };
 constexpr const wchar_t* DRESSING_ROOM_CLASS = L"KuroCatDressingRoomClass";
@@ -1036,6 +1038,11 @@ bool importSkinFile(AppState& app, const std::wstring& path) {
     const SkinSpec* s = app.skins.find(id);
     std::wstring msg = L"✓ 已换上「" + (s ? utf8ToWide(s->name) : std::wstring(L"新皮肤")) + L"」";
     if (s && !s->author.empty()) msg += L"（作者：" + utf8ToWide(s->author) + L"）";
+    if (s) {
+        int dup = 0;
+        for (const auto& item : app.skins.skins) if (item.name == s->name) ++dup;
+        if (dup > 1) msg += L" · 存在同名皮肤，已附加短编号区分";
+    }
     setDressingStatus(app, msg, 1);
     if (!app.dressingRoom) showTrayBalloon(app, L"KuroCat 换装间", msg.c_str());
     return true;
@@ -1369,6 +1376,133 @@ void showDressingRoom(AppState& app) {
     SetForegroundWindow(win);
 }
 
+void refreshSettingsWindow(AppState& app);
+
+struct RenameDialogState {
+    std::wstring value;
+    bool accepted = false;
+    bool done = false;
+    HWND editHwnd = nullptr;
+};
+
+static LRESULT CALLBACK RenameSkinDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    auto* st = (RenameDialogState*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+    switch (msg) {
+        case WM_NCCREATE: {
+            auto* cs = (CREATESTRUCTW*)lParam;
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)cs->lpCreateParams);
+            return TRUE;
+        }
+        case WM_COMMAND: {
+            int id = LOWORD(wParam);
+            if (id == IDOK && st) {
+                wchar_t buf[128] = {};
+                GetWindowTextW(st->editHwnd, buf, 127);
+                st->value = buf;
+                st->accepted = true;
+                st->done = true;
+                DestroyWindow(hwnd);
+                return 0;
+            }
+            if (id == IDCANCEL && st) {
+                st->accepted = false;
+                st->done = true;
+                DestroyWindow(hwnd);
+                return 0;
+            }
+            break;
+        }
+        case WM_CLOSE:
+            if (st) { st->accepted = false; st->done = true; }
+            DestroyWindow(hwnd);
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+bool promptRenameSkin(AppState& app, const std::string& id) {
+    const SkinSpec* s = app.skins.find(id);
+    if (!s) return false;
+    static bool reg = false;
+    const wchar_t* clsName = L"KuroCatRenameSkinDlg";
+    HINSTANCE inst = GetModuleHandleW(nullptr);
+    if (!reg) {
+        WNDCLASSW wc = {};
+        wc.lpfnWndProc = RenameSkinDlgProc;
+        wc.hInstance = inst;
+        wc.lpszClassName = clsName;
+        wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        RegisterClassW(&wc);
+        reg = true;
+    }
+    bool en = app.settings.isEnglish;
+    RenameDialogState st;
+    st.value = utf8ToWide(s->name);
+
+    int w = 360, h = 150;
+    int sx = (GetSystemMetrics(SM_CXSCREEN) - w) / 2;
+    int sy = (GetSystemMetrics(SM_CYSCREEN) - h) / 2;
+    HWND dlg = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_DLGMODALFRAME,
+        clsName,
+        en ? L"Rename Skin" : L"重命名皮肤",
+        WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+        sx, sy, w, h,
+        app.settingsHwnd ? app.settingsHwnd : app.menuOwnerHwnd,
+        nullptr, inst, &st
+    );
+    if (!dlg) return false;
+
+    HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+    HWND lbl = CreateWindowExW(0, L"STATIC",
+        en ? L"Enter a new skin name (max 40 chars):" : L"请输入新的皮肤名称（最多 40 字）：",
+        WS_CHILD | WS_VISIBLE, 18, 16, 316, 20, dlg, nullptr, inst, nullptr);
+    st.editHwnd = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", st.value.c_str(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 18, 42, 316, 24, dlg, (HMENU)1001, inst, nullptr);
+    HWND okBtn = CreateWindowExW(0, L"BUTTON", en ? L"Save" : L"保存",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, 174, 80, 76, 26, dlg, (HMENU)IDOK, inst, nullptr);
+    HWND cancelBtn = CreateWindowExW(0, L"BUTTON", en ? L"Cancel" : L"取消",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, 258, 80, 76, 26, dlg, (HMENU)IDCANCEL, inst, nullptr);
+    for (HWND c : {lbl, st.editHwnd, okBtn, cancelBtn}) SendMessageW(c, WM_SETFONT, (WPARAM)font, TRUE);
+    SendMessageW(st.editHwnd, EM_SETLIMITTEXT, 40, 0);
+    SendMessageW(st.editHwnd, EM_SETSEL, 0, -1);
+    SetForegroundWindow(dlg);
+    SetFocus(st.editHwnd);
+
+    MSG m;
+    while (!st.done && GetMessageW(&m, nullptr, 0, 0) > 0) {
+        if (m.message == WM_KEYDOWN && m.wParam == VK_RETURN) {
+            PostMessageW(dlg, WM_COMMAND, IDOK, 0);
+            continue;
+        }
+        if (m.message == WM_KEYDOWN && m.wParam == VK_ESCAPE) {
+            PostMessageW(dlg, WM_COMMAND, IDCANCEL, 0);
+            continue;
+        }
+        if (!IsDialogMessageW(dlg, &m)) {
+            TranslateMessage(&m);
+            DispatchMessageW(&m);
+        }
+    }
+    if (!st.accepted) return false;
+
+    std::string newNameUtf8 = wideToUtf8(st.value);
+    std::string newId, err;
+    if (!app.skins.rename(id, newNameUtf8, newId, err)) {
+        MessageBoxW(app.menuOwnerHwnd, utf8ToWide(err).c_str(),
+                    en ? L"Rename Failed" : L"重命名失败", MB_OK | MB_ICONWARNING | MB_TOPMOST);
+        return false;
+    }
+    if (app.settings.customSkin == id) {
+        app.settings.customSkin = newId;
+        app.settings.saveToRegistry();
+    }
+    refreshDressingRoom(app);
+    refreshSettingsWindow(app);
+    return true;
+}
+
 void confirmDeleteSkin(AppState& app, const std::string& id) {
     const SkinSpec* s = app.skins.find(id);
     if (!s) return;
@@ -1382,6 +1516,7 @@ void confirmDeleteSkin(AppState& app, const std::string& id) {
     }
     if (app.settings.customSkin == removing) { app.settings.customSkin.clear(); app.settings.saveToRegistry(); }
     refreshDressingRoom(app);
+    refreshSettingsWindow(app);
 }
 
 void confirmDeleteKeyboardSkin(AppState& app, const std::string& id) {
@@ -1403,6 +1538,8 @@ namespace settings_ui {
 enum CtrlId : int {
     ID_COAT_COMBO = 2001,
     ID_BTN_DRESSING,
+    ID_BTN_RENAME_SKIN,
+    ID_BTN_DEL_SKIN,
     ID_EYE_COMBO,
     ID_KB_COMBO,
     ID_BTN_IMPORT_KB,
@@ -1421,6 +1558,7 @@ enum CtrlId : int {
     ID_CHK_MOUSE_BADGES,
     ID_CHK_LEGENDS,
     ID_CHK_MARQUEE,
+    ID_CHK_LEVEL_KEYBOARD,
     ID_TYPING_LIMB_COMBO,
     ID_TABLET_COMBO,
     ID_CHK_TOPMOST,
@@ -1483,12 +1621,18 @@ void rebuildCombosAndSync(AppState& app) {
         for (int i = 0; i < 6; ++i) SendMessageW(coatCb, CB_ADDSTRING, 0, (LPARAM)builtins[i]);
         int sel = (int)app.settings.coatTheme;
         for (size_t i = 0; i < app.skins.skins.size(); ++i) {
-            SendMessageW(coatCb, CB_ADDSTRING, 0, (LPARAM)utf8ToWide(app.skins.skins[i].name).c_str());
+            SendMessageW(coatCb, CB_ADDSTRING, 0, (LPARAM)utf8ToWide(app.skins.displayName(app.skins.skins[i])).c_str());
             if (!app.settings.customSkin.empty() && app.skins.skins[i].id == app.settings.customSkin) {
                 sel = 6 + (int)i;
             }
         }
         SendMessageW(coatCb, CB_SETCURSEL, (WPARAM)sel, 0);
+        bool hasCustom = !app.settings.customSkin.empty() && app.skins.find(app.settings.customSkin) != nullptr;
+        if (HWND hRen = GetDlgItem(hwnd, ID_BTN_RENAME_SKIN)) EnableWindow(hRen, hasCustom ? TRUE : FALSE);
+        if (HWND hDel = GetDlgItem(hwnd, ID_BTN_DEL_SKIN)) {
+            EnableWindow(hDel, hasCustom ? TRUE : FALSE);
+            InvalidateRect(hDel, nullptr, TRUE);
+        }
     }
 
     // Eye combo
@@ -1554,6 +1698,7 @@ void rebuildCombosAndSync(AppState& app) {
     setChk(ID_CHK_MOUSE_BADGES, app.settings.showMouseBadges);
     setChk(ID_CHK_LEGENDS, app.settings.showKeyLegends);
     setChk(ID_CHK_MARQUEE, app.settings.keyboardMarquee);
+    setChk(ID_CHK_LEVEL_KEYBOARD, app.settings.levelKeyboard);
     setChk(ID_CHK_TOPMOST, app.settings.alwaysOnTop);
     setChk(ID_CHK_AUTOHIDE_FS, app.settings.autoHideFullscreen);
     setChk(ID_CHK_CLICKTHROUGH, app.settings.fullClickThrough);
@@ -1642,6 +1787,32 @@ LRESULT CALLBACK settingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             }
             return 0;
         }
+        case WM_DRAWITEM: {
+            auto* dis = (DRAWITEMSTRUCT*)lParam;
+            if (dis && dis->CtlID == settings_ui::ID_BTN_DEL_SKIN) {
+                bool disabled = (dis->itemState & ODS_DISABLED) != 0;
+                bool pressed = (dis->itemState & ODS_SELECTED) != 0;
+                COLORREF bgCol = disabled ? RGB(224, 224, 224) : (pressed ? RGB(175, 35, 35) : RGB(217, 56, 56));
+                COLORREF txtCol = disabled ? RGB(145, 145, 145) : RGB(255, 255, 255);
+                HBRUSH br = CreateSolidBrush(bgCol);
+                FillRect(dis->hDC, &dis->rcItem, br);
+                DeleteObject(br);
+                HPEN pen = CreatePen(PS_SOLID, 1, disabled ? RGB(195, 195, 195) : RGB(165, 30, 30));
+                HGDIOBJ oldPen = SelectObject(dis->hDC, pen);
+                HGDIOBJ oldBr = SelectObject(dis->hDC, GetStockObject(NULL_BRUSH));
+                Rectangle(dis->hDC, dis->rcItem.left, dis->rcItem.top, dis->rcItem.right, dis->rcItem.bottom);
+                SelectObject(dis->hDC, oldPen);
+                SelectObject(dis->hDC, oldBr);
+                DeleteObject(pen);
+                SetBkMode(dis->hDC, TRANSPARENT);
+                SetTextColor(dis->hDC, txtCol);
+                wchar_t txt[64] = {};
+                GetWindowTextW(dis->hwndItem, txt, 63);
+                DrawTextW(dis->hDC, txt, -1, &dis->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                return TRUE;
+            }
+            break;
+        }
         case WM_COMMAND: {
             if (!app || app->settingsUpdating) return 0;
             int id = LOWORD(wParam);
@@ -1667,6 +1838,7 @@ LRESULT CALLBACK settingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                     }
                     app->settings.saveToRegistry();
                     refreshDressingRoom(*app);
+                    refreshSettingsWindow(*app);
                 } else if (id == ID_EYE_COMBO && sel <= (int)EyeColorTheme::OliveGold) {
                     app->settings.eyeTheme = (EyeColorTheme)sel;
                     app->settings.saveToRegistry();
@@ -1706,6 +1878,12 @@ LRESULT CALLBACK settingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                 auto isChk = [&](int cid) { return SendMessageW(GetDlgItem(hwnd, cid), BM_GETCHECK, 0, 0) == BST_CHECKED; };
                 switch (id) {
                     case ID_BTN_DRESSING: showDressingRoom(*app); break;
+                    case ID_BTN_RENAME_SKIN:
+                        if (!app->settings.customSkin.empty()) promptRenameSkin(*app, app->settings.customSkin);
+                        break;
+                    case ID_BTN_DEL_SKIN:
+                        if (!app->settings.customSkin.empty()) confirmDeleteSkin(*app, app->settings.customSkin);
+                        break;
                     case ID_BTN_IMPORT_KB: chooseKeyboardSkinFile(*app); break;
                     case ID_BTN_ROT_ZERO:
                         app->settings.rotationDeg = 0.0f;
@@ -1758,6 +1936,11 @@ LRESULT CALLBACK settingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                         break;
                     case ID_CHK_MARQUEE:
                         app->settings.keyboardMarquee = isChk(id);
+                        app->settings.saveToRegistry();
+                        break;
+                    case ID_CHK_LEVEL_KEYBOARD:
+                        app->settings.levelKeyboard = isChk(id);
+                        KeyboardLayout::levelKeyboard() = app->settings.levelKeyboard;
                         app->settings.saveToRegistry();
                         break;
                     case ID_CHK_TOPMOST:
@@ -1889,8 +2072,10 @@ void showSettingsWindow(AppState& app) {
     addCtrl(L"BUTTON", tr(L"\u5916\u89C2\u4E0E\u65B9\u5411", L"Appearance & Orientation"), BS_GROUPBOX, 14, 10, 512, 232, 0, true);
 
     addCtrl(L"STATIC", tr(L"\u732B\u54AA\u76AE\u80A4", L"Cat Skin"), SS_LEFT, 28, 38, 76, 20, 0);
-    addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 110, 34, 290, 220, ID_COAT_COMBO);
-    addCtrl(L"BUTTON", tr(L"\u6362\u88C5\u95F4\u2026", L"Wardrobe..."), BS_PUSHBUTTON | WS_TABSTOP, 410, 34, 102, 24, ID_BTN_DRESSING);
+    addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 110, 34, 186, 220, ID_COAT_COMBO);
+    addCtrl(L"BUTTON", tr(L"\u6362\u88C5\u95F4\u2026", L"Wardrobe"), BS_PUSHBUTTON | WS_TABSTOP, 302, 34, 74, 24, ID_BTN_DRESSING);
+    addCtrl(L"BUTTON", tr(L"\u270F \u6539\u540D", L"\u270F Name"), BS_PUSHBUTTON | WS_TABSTOP, 380, 34, 62, 24, ID_BTN_RENAME_SKIN);
+    addCtrl(L"BUTTON", tr(L"\U0001F5D1 \u5220\u9664", L"\U0001F5D1 Del"), BS_OWNERDRAW | WS_TABSTOP, 446, 34, 66, 24, ID_BTN_DEL_SKIN, true);
 
     addCtrl(L"STATIC", tr(L"\u77B3\u8272\u5207\u6362", L"Eye Color"), SS_LEFT, 28, 70, 76, 20, 0);
     addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 110, 66, 290, 220, ID_EYE_COMBO);
@@ -1924,6 +2109,7 @@ void showSettingsWindow(AppState& app) {
     addCtrl(L"BUTTON", tr(L"\u663E\u793A\u9F20\u6807\u70B9\u51FB", L"Show Mouse Click Badges"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 334, 236, 22, ID_CHK_MOUSE_BADGES);
     addCtrl(L"BUTTON", tr(L"\u663E\u793A\u952E\u76D8\u5B57\u7B26", L"Show Keycap Legends"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 334, 236, 22, ID_CHK_LEGENDS);
     addCtrl(L"BUTTON", tr(L"\u952E\u76D8\u8DD1\u9A6C\u706F\u6D41\u5149", L"Keyboard RGB Marquee"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 362, 236, 22, ID_CHK_MARQUEE);
+    addCtrl(L"BUTTON", tr(L"\u952E\u76D8\u6C34\u5E73\u6446\u653E", L"Level Keyboard"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 362, 236, 22, ID_CHK_LEVEL_KEYBOARD);
 
     addCtrl(L"STATIC", tr(L"\u591A\u952E\u6253\u5B57", L"Multi-Key"), SS_LEFT, 28, 394, 90, 20, 0);
     HWND limbCb = addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, 124, 390, 388, 140, ID_TYPING_LIMB_COMBO);
@@ -2016,7 +2202,20 @@ void showContextMenu(AppState& app, POINT screenPt) {
     if (listed) AppendMenuW(coatMenu, MF_SEPARATOR, 0, nullptr);
     for (size_t i = 0; i < listed; ++i) {
         const SkinSpec& s = app.skins.skins[i];
-        AppendMenuW(coatMenu, MF_STRING | (app.settings.customSkin == s.id ? MF_CHECKED : 0), CMD_SKIN_SELECT_BASE + (UINT)i, utf8ToWide(s.name).c_str());
+        AppendMenuW(coatMenu, MF_STRING | (app.settings.customSkin == s.id ? MF_CHECKED : 0),
+                    CMD_SKIN_SELECT_BASE + (UINT)i, utf8ToWide(app.skins.displayName(s)).c_str());
+    }
+    if (listed) {
+        AppendMenuW(coatMenu, MF_SEPARATOR, 0, nullptr);
+        HMENU renameMenu = CreatePopupMenu();
+        HMENU deleteMenu = CreatePopupMenu();
+        for (size_t i = 0; i < listed; ++i) {
+            std::wstring label = utf8ToWide(app.skins.displayName(app.skins.skins[i]));
+            AppendMenuW(renameMenu, MF_STRING, CMD_SKIN_RENAME_BASE + (UINT)i, (L"\u270F " + label).c_str());
+            AppendMenuW(deleteMenu, MF_STRING, CMD_SKIN_DELETE_BASE + (UINT)i, (L"\U0001F5D1 " + label).c_str());
+        }
+        AppendMenuW(coatMenu, MF_POPUP, (UINT_PTR)renameMenu, tr(L"\u270F \u91CD\u547D\u540D\u76AE\u80A4\u2026", L"\u270F Rename Skin..."));
+        AppendMenuW(coatMenu, MF_POPUP, (UINT_PTR)deleteMenu, tr(L"\U0001F5D1 \u5220\u9664\u5DF2\u5BFC\u5165\u76AE\u80A4\u2026", L"\U0001F5D1 Delete Imported Skin..."));
     }
     AppendMenuW(coatMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(coatMenu, MF_STRING, CMD_IMPORT_SKIN, tr(L"\u5BFC\u5165\u76AE\u80A4 / \u6362\u88C5\u95F4\u2026", L"Import Skin / Wardrobe..."));
@@ -2027,6 +2226,9 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(menu, MF_STRING, CMD_OPEN_WORKSHOP,
         tr(L"\U0001F3A8 \u76AE\u80A4\u5DE5\u574A\uFF08\u5236\u4F5C\u76AE\u80A4\uFF09\u2026",
            L"\U0001F3A8 Skin Workshop (Create Skins)..."));
+
+    AppendMenuW(menu, MF_STRING | (app.settings.levelKeyboard ? MF_CHECKED : 0), CMD_TOGGLE_LEVEL_KEYBOARD,
+        tr(L"\u952E\u76D8\u6C34\u5E73\u6446\u653E", L"Level Keyboard"));
 
     // Unified Settings window
     AppendMenuW(menu, MF_STRING, CMD_OPEN_SETTINGS, tr(L"\u2699\uFE0F \u8BBE\u7F6E\u2026", L"\u2699\uFE0F Settings..."));
@@ -2107,6 +2309,12 @@ void showContextMenu(AppState& app, POINT screenPt) {
         case CMD_TOGGLE_MARQUEE:
             app.settings.keyboardMarquee = !app.settings.keyboardMarquee;
             app.settings.saveToRegistry();
+            break;
+        case CMD_TOGGLE_LEVEL_KEYBOARD:
+            app.settings.levelKeyboard = !app.settings.levelKeyboard;
+            KeyboardLayout::levelKeyboard() = app.settings.levelKeyboard;
+            app.settings.saveToRegistry();
+            settings_ui::rebuildCombosAndSync(app);
             break;
         case CMD_TOGGLE_PET:
             app.settings.petInteraction = !app.settings.petInteraction;
@@ -2274,6 +2482,8 @@ void showContextMenu(AppState& app, POINT screenPt) {
                 app.settings.saveToRegistry();
             } else if (cmd >= CMD_SKIN_DELETE_BASE && cmd < CMD_SKIN_DELETE_BASE + CMD_SKIN_RANGE && cmd - CMD_SKIN_DELETE_BASE < app.skins.skins.size()) {
                 confirmDeleteSkin(app, app.skins.skins[cmd - CMD_SKIN_DELETE_BASE].id);
+            } else if (cmd >= CMD_SKIN_RENAME_BASE && cmd < CMD_SKIN_RENAME_BASE + CMD_SKIN_RANGE && cmd - CMD_SKIN_RENAME_BASE < app.skins.skins.size()) {
+                promptRenameSkin(app, app.skins.skins[cmd - CMD_SKIN_RENAME_BASE].id);
             } else if (cmd >= CMD_KB_SELECT_BASE && cmd < CMD_KB_SELECT_BASE + CMD_SKIN_RANGE && cmd - CMD_KB_SELECT_BASE < app.kbLibrary.skins.size()) {
                 app.settings.customKeyboard = app.kbLibrary.skins[cmd - CMD_KB_SELECT_BASE].id;
                 app.settings.saveToRegistry();
@@ -3070,6 +3280,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     AppState app;
     g_app = &app;
     app.settings.loadFromRegistry();
+    KeyboardLayout::levelKeyboard() = app.settings.levelKeyboard;
     CatSettings::loadStatsFromRegistry(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
     app.lastSavedPetSessions = app.physics.totalPetSessions;
     app.skins.reload();

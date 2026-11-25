@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -54,8 +55,16 @@ struct SkinMark {
 
 struct SkinShape {
     SkinBuild build = SkinBuild::Standard;
-    float bodyWidth = 1, headScale = 1, earSize = 1, earBaseWidth = 1, earPointiness = 1;
-    float tailLength = 1, tailThickness = 1, cheekFullness = 1, neckWidth = 1, pawStagger = 1;
+    float bodyWidth = 1, headScale = 1, earSize = 1, earBaseWidth = 1, earPointiness = 1, earSpacing = 1;
+    float tailLength = 1, tailThickness = 1, tailRootY = 0;
+    float cheekFullness = 1, neckWidth = 1, pawStagger = 1;
+    float armSpacing = 1, armLength = 1, armRootY = 0;
+};
+
+struct SkinPartGradient {
+    SkinColor from, to;
+    float angle = 90.0f; // degrees (90 = top to bottom)
+    bool set = false;
 };
 
 struct SkinDecoration {
@@ -67,7 +76,8 @@ struct SkinDecoration {
 };
 
 struct SkinPalette {
-    SkinColor body, bodyShade, belly, legs, paws, hindLeg, hindPaw, pawPads, earOuter, earInner, nose, mouth, iris,
+    SkinColor body, headBody, bodyShade, belly, legs, paws, hindLeg, hindPaw, pawPads, earOuter, earInner, nose, mouth,
+              iris, irisLeft, irisRight, pupil, pupilLeft, pupilRight,
               tail, tailTip, stripes, whiskers, crease, outline, points, pointsMid;
 };
 
@@ -76,6 +86,7 @@ struct SkinSpec {
     std::string name, author;
     bool builtIn = false;
     SkinPalette palette;
+    std::map<std::string, SkinPartGradient> partGradients;
     std::vector<SkinRegion> regions;
     std::vector<SkinMark> marks;
     SkinShape shape;
@@ -446,12 +457,13 @@ inline bool SkinSpec::parse(const std::string& bytes, SkinSpec& out, std::string
     if (!pal || pal->type != Value::JObject) { error = "缺少调色板 palette"; return false; }
     struct Slot { const char* key; SkinColor SkinPalette::*member; };
     static const Slot slots[] = {
-        {"body", &SkinPalette::body}, {"bodyShade", &SkinPalette::bodyShade}, {"belly", &SkinPalette::belly},
+        {"body", &SkinPalette::body}, {"headBody", &SkinPalette::headBody}, {"bodyShade", &SkinPalette::bodyShade}, {"belly", &SkinPalette::belly},
         {"legs", &SkinPalette::legs}, {"paws", &SkinPalette::paws}, {"hindLeg", &SkinPalette::hindLeg},
         {"hindPaw", &SkinPalette::hindPaw}, {"pawPads", &SkinPalette::pawPads},
         {"earOuter", &SkinPalette::earOuter}, {"earInner", &SkinPalette::earInner}, {"nose", &SkinPalette::nose},
-        {"mouth", &SkinPalette::mouth}, {"iris", &SkinPalette::iris}, {"tail", &SkinPalette::tail},
-        {"tailTip", &SkinPalette::tailTip}, {"stripes", &SkinPalette::stripes}, {"whiskers", &SkinPalette::whiskers},
+        {"mouth", &SkinPalette::mouth}, {"iris", &SkinPalette::iris}, {"irisLeft", &SkinPalette::irisLeft}, {"irisRight", &SkinPalette::irisRight},
+        {"pupil", &SkinPalette::pupil}, {"pupilLeft", &SkinPalette::pupilLeft}, {"pupilRight", &SkinPalette::pupilRight},
+        {"tail", &SkinPalette::tail}, {"tailTip", &SkinPalette::tailTip}, {"stripes", &SkinPalette::stripes}, {"whiskers", &SkinPalette::whiskers},
         {"crease", &SkinPalette::crease}, {"outline", &SkinPalette::outline}, {"points", &SkinPalette::points},
         {"pointsMid", &SkinPalette::pointsMid},
     };
@@ -484,11 +496,31 @@ inline bool SkinSpec::parse(const std::string& bytes, SkinSpec& out, std::string
             !number(c, sh->get("earSize"), "shape.earSize", 0.80, 1.25, h.earSize) ||
             !number(c, sh->get("earBaseWidth"), "shape.earBaseWidth", 0.65, 1.40, h.earBaseWidth) ||
             !number(c, sh->get("earPointiness"), "shape.earPointiness", 0.50, 1.50, h.earPointiness) ||
+            !number(c, sh->get("earSpacing"), "shape.earSpacing", 0.60, 1.50, h.earSpacing) ||
             !number(c, sh->get("tailLength"), "shape.tailLength", 0.70, 1.30, h.tailLength) ||
             !number(c, sh->get("tailThickness"), "shape.tailThickness", 0.70, 1.50, h.tailThickness) ||
+            !number(c, sh->get("tailRootY"), "shape.tailRootY", -30.0, 30.0, h.tailRootY) ||
             !number(c, sh->get("cheekFullness"), "shape.cheekFullness", 0.85, 1.25, h.cheekFullness) ||
             !number(c, sh->get("neckWidth"), "shape.neckWidth", 0.65, 1.40, h.neckWidth) ||
-            !number(c, sh->get("pawStagger"), "shape.pawStagger", 0.0, 1.0, h.pawStagger)) { error = c.error; return false; }
+            !number(c, sh->get("pawStagger"), "shape.pawStagger", 0.0, 1.0, h.pawStagger) ||
+            !number(c, sh->get("armSpacing"), "shape.armSpacing", 0.50, 1.60, h.armSpacing) ||
+            !number(c, sh->get("armLength"), "shape.armLength", 0.60, 1.50, h.armLength) ||
+            !number(c, sh->get("armRootY"), "shape.armRootY", -30.0, 30.0, h.armRootY)) { error = c.error; return false; }
+    }
+    if (const Value* pg = root.get("partGradients"); pg && pg->type == Value::JObject) {
+        for (size_t i = 0; i < pg->keys.size(); ++i) {
+            const Value& g = pg->items[i];
+            if (g.type != Value::JObject) continue;
+            SkinPartGradient grad;
+            Ctx gc;
+            const Value* vFrom = g.get("from") ? g.get("from") : g.get("start");
+            const Value* vTo = g.get("to") ? g.get("to") : g.get("end");
+            if (!color(gc, vFrom, "partGradients.from", grad.from) || !color(gc, vTo, "partGradients.to", grad.to)) continue;
+            if (!grad.from.set || !grad.to.set) continue;
+            number(gc, g.get("angle"), "partGradients.angle", -360.0, 360.0, grad.angle);
+            grad.set = true;
+            s.partGradients[pg->keys[i]] = grad;
+        }
     }
     if (const Value* hs = root.get("headSurface")) {
         if (hs->type != Value::JString || (hs->s != "dome" && hs->s != "plane")) { error = "headSurface 必须是 \"dome\" 或 \"plane\""; return false; }

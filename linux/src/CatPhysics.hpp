@@ -43,6 +43,7 @@ struct CatSettings {
     bool footEasterEgg = true;
     bool tailEasterEgg = true;
     bool keyboardMarquee = true;
+    bool levelKeyboard = true;
     int obsCaptureMode = 0; // 0 = off, 1 = OBS transparent window capture, 2 = OBS green screen (#00FF00)
     bool obsHideDesktop = false;
     bool autoHideFullscreen = false;
@@ -98,6 +99,7 @@ struct CatSettings {
                 else if (k == "footEasterEgg") footEasterEgg = (std::stoi(v) != 0);
                 else if (k == "tailEasterEgg") tailEasterEgg = (std::stoi(v) != 0);
                 else if (k == "keyboardMarquee") keyboardMarquee = (std::stoi(v) != 0);
+                else if (k == "levelKeyboard") levelKeyboard = (std::stoi(v) != 0);
                 else if (k == "obsCaptureMode") obsCaptureMode = std::clamp(std::stoi(v), 0, 2);
                 else if (k == "obsHideDesktop") obsHideDesktop = (std::stoi(v) != 0);
                 else if (k == "autoHideFullscreen") autoHideFullscreen = (std::stoi(v) != 0);
@@ -122,6 +124,7 @@ struct CatSettings {
                 else if (k == "posY") posY = std::stoi(v);
             } catch (...) {}
         }
+        KeyboardLayout::levelKeyboard() = levelKeyboard;
     }
 
     void save() const {
@@ -137,6 +140,7 @@ struct CatSettings {
           << "footEasterEgg=" << (footEasterEgg ? 1 : 0) << "\n"
           << "tailEasterEgg=" << (tailEasterEgg ? 1 : 0) << "\n"
           << "keyboardMarquee=" << (keyboardMarquee ? 1 : 0) << "\n"
+          << "levelKeyboard=" << (levelKeyboard ? 1 : 0) << "\n"
           << "obsCaptureMode=" << obsCaptureMode << "\n"
           << "obsHideDesktop=" << (obsHideDesktop ? 1 : 0) << "\n"
           << "autoHideFullscreen=" << (autoHideFullscreen ? 1 : 0) << "\n"
