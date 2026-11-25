@@ -63,10 +63,13 @@ struct LinuxApp {
     GtkWidget* dressingSubtitle = nullptr;
     GtkWidget* dressingPreview = nullptr;
     GtkWidget* dressingDrop = nullptr;
+    GtkWidget* dressingFooter = nullptr;
     bool dropHover = false;
 
     GtkWidget* settingsWindow = nullptr;
     GtkWidget* setCoatCombo = nullptr;
+    GtkWidget* setSkinsDirLabel = nullptr;
+    GtkWidget* setResetSkinsDirBtn = nullptr;
     GtkWidget* setEyeCombo = nullptr;
     GtkWidget* setKbCombo = nullptr;
     GtkWidget* setScaleSlider = nullptr;
@@ -882,6 +885,14 @@ static void setDressingStatus(LinuxApp& app, const std::string& text, int kind) 
 
 static void refreshSettingsWindow(LinuxApp& app);
 
+static std::string abbreviatedSkinsDirText() {
+    std::string where = SkinLibrary::dir();
+    if (const char* home = std::getenv("HOME"); home && home[0] && where.rfind(home, 0) == 0) {
+        where = "~" + where.substr(std::strlen(home));
+    }
+    return where;
+}
+
 static void refreshDressingRoom(LinuxApp& app) {
     if (app.dressingSubtitle) {
         const SkinSpec& skin = activeSkin(app);
@@ -895,6 +906,10 @@ static void refreshDressingRoom(LinuxApp& app) {
             g_free(author);
         }
         gtk_label_set_markup(GTK_LABEL(app.dressingSubtitle), markup.c_str());
+    }
+    if (app.dressingFooter) {
+        std::string footerText = "皮肤独立保存在 " + abbreviatedSkinsDirText() + "（软件更新会自动保留）  ·  右键小猫 → 猫咪皮肤 可切换或备份";
+        gtk_label_set_text(GTK_LABEL(app.dressingFooter), footerText.c_str());
     }
     if (app.dressingPreview) gtk_widget_queue_draw(app.dressingPreview);
     refreshSettingsWindow(app);
@@ -1199,9 +1214,9 @@ static void showDressingRoom() {
     gtk_label_set_justify(GTK_LABEL(g_app->dressingStatus), GTK_JUSTIFY_CENTER);
     gtk_box_pack_start(GTK_BOX(box), g_app->dressingStatus, FALSE, FALSE, 0);
 
-    std::string where = SkinLibrary::dir();
-    if (const char* home = std::getenv("HOME"); home && home[0] && where.rfind(home, 0) == 0) where = "~" + where.substr(std::strlen(home));
+    std::string where = abbreviatedSkinsDirText();
     GtkWidget* footer = gtk_label_new(("皮肤独立保存在 " + where + "（软件更新会自动保留）  ·  右键小猫 → 猫咪皮肤 可切换或备份").c_str());
+    g_app->dressingFooter = footer;
     style(footer, "kc-footer");
     gtk_label_set_line_wrap(GTK_LABEL(footer), TRUE);
     gtk_label_set_max_width_chars(GTK_LABEL(footer), 56);
@@ -1217,6 +1232,7 @@ static void showDressingRoom() {
         g_app->dressingSubtitle = nullptr;
         g_app->dressingPreview = nullptr;
         g_app->dressingDrop = nullptr;
+        g_app->dressingFooter = nullptr;
         g_app->dropHover = false;
     }), nullptr);
     gtk_widget_show_all(win);
@@ -1342,8 +1358,26 @@ static void refreshSettingsWindow(LinuxApp& app) {
     if (app.setTabletCombo) gtk_combo_box_set_active(GTK_COMBO_BOX(app.setTabletCombo), app.settings.tabletMode);
     if (app.setObsCombo) gtk_combo_box_set_active(GTK_COMBO_BOX(app.setObsCombo), app.settings.obsCaptureMode);
     if (app.setLangCombo) gtk_combo_box_set_active(GTK_COMBO_BOX(app.setLangCombo), app.settings.isEnglish ? 1 : 0);
+    if (app.setSkinsDirLabel) {
+        gtk_label_set_text(GTK_LABEL(app.setSkinsDirLabel), abbreviatedSkinsDirText().c_str());
+        gtk_widget_set_tooltip_text(app.setSkinsDirLabel, SkinLibrary::dir().c_str());
+    }
+    if (app.setResetSkinsDirBtn) {
+        gtk_widget_set_sensitive(app.setResetSkinsDirBtn, SkinLibrary::isUsingCustomDir() ? TRUE : FALSE);
+    }
 
     app.settingsUpdating = false;
+}
+
+static void applySkinsDirectory(LinuxApp& app, const std::string& rawDir) {
+    std::string cleaned = SkinLibrary::trimmedDir(rawDir);
+    SkinLibrary::customDir() = cleaned;
+    app.settings.customSkinsDir = cleaned;
+    app.settings.save();
+    app.skins.reload();
+    refreshDressingRoom(app);
+    refreshSettingsWindow(app);
+    if (app.drawArea) gtk_widget_queue_draw(app.drawArea);
 }
 
 static void showSettingsWindow() {
@@ -1365,7 +1399,7 @@ static void showSettingsWindow() {
 
     g_signal_connect(win, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer) {
         g_app->settingsWindow = nullptr;
-        g_app->setCoatCombo = g_app->setEyeCombo = g_app->setKbCombo = nullptr;
+        g_app->setCoatCombo = g_app->setSkinsDirLabel = g_app->setResetSkinsDirBtn = g_app->setEyeCombo = g_app->setKbCombo = nullptr;
         g_app->setScaleSlider = g_app->setScaleLabel = g_app->setRotSlider = g_app->setRotLabel = nullptr;
         g_app->setFlipChk = g_app->setOutlineChk = g_app->setAngerChk = g_app->setPetChk = nullptr;
         g_app->setBadgesChk = g_app->setMouseBadgesChk = g_app->setLegendsChk = g_app->setMarqueeChk = g_app->setLevelKeyboardChk = g_app->setTypingLimbCombo = nullptr;
@@ -1428,6 +1462,45 @@ static void showSettingsWindow() {
         GtkWidget* dressBtn = gtk_button_new_with_label(tr("换装间…", "Wardrobe…"));
         g_signal_connect(dressBtn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) { showDressingRoom(); }), nullptr);
         gtk_grid_attach(GTK_GRID(g), dressBtn, 2, r++, 1, 1);
+
+        gtk_grid_attach(GTK_GRID(g), leftLabel(tr("皮肤目录", "Skins Dir")), 0, r, 1, 1);
+        app.setSkinsDirLabel = leftLabel(abbreviatedSkinsDirText().c_str());
+        gtk_label_set_ellipsize(GTK_LABEL(app.setSkinsDirLabel), PANGO_ELLIPSIZE_MIDDLE);
+        gtk_widget_set_hexpand(app.setSkinsDirLabel, TRUE);
+        gtk_widget_set_tooltip_text(app.setSkinsDirLabel, SkinLibrary::dir().c_str());
+        gtk_grid_attach(GTK_GRID(g), app.setSkinsDirLabel, 1, r, 1, 1);
+
+        GtkWidget* sDirActions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+        GtkWidget* chooseDirBtn = gtk_button_new_with_label(tr("选择文件夹…", "Choose…"));
+        g_signal_connect(chooseDirBtn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) {
+            bool en = g_app->settings.isEnglish;
+            GtkWidget* dlg = gtk_file_chooser_dialog_new(
+                en ? "Choose Skins Folder" : "选择皮肤文件夹",
+                g_app->settingsWindow ? GTK_WINDOW(g_app->settingsWindow) : nullptr,
+                GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
+                en ? "Cancel" : "取消", GTK_RESPONSE_CANCEL,
+                en ? "Select" : "选择", GTK_RESPONSE_ACCEPT,
+                nullptr);
+            gtk_file_chooser_set_create_folders(GTK_FILE_CHOOSER(dlg), TRUE);
+            std::string cur = SkinLibrary::dir();
+            if (!cur.empty()) gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(dlg), cur.c_str());
+            if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
+                char* folder = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dlg));
+                if (folder) {
+                    applySkinsDirectory(*g_app, folder);
+                    g_free(folder);
+                }
+            }
+            gtk_widget_destroy(dlg);
+        }), nullptr);
+        gtk_box_pack_start(GTK_BOX(sDirActions), chooseDirBtn, FALSE, FALSE, 0);
+
+        app.setResetSkinsDirBtn = gtk_button_new_with_label(tr("恢复默认", "Reset"));
+        g_signal_connect(app.setResetSkinsDirBtn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) {
+            applySkinsDirectory(*g_app, "");
+        }), nullptr);
+        gtk_box_pack_start(GTK_BOX(sDirActions), app.setResetSkinsDirBtn, FALSE, FALSE, 0);
+        gtk_grid_attach(GTK_GRID(g), sDirActions, 2, r++, 1, 1);
 
         gtk_grid_attach(GTK_GRID(g), leftLabel(tr("瞳色切换", "Eye Color")), 0, r, 1, 1);
         app.setEyeCombo = gtk_combo_box_text_new();
@@ -1816,15 +1889,6 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
         else gtk_widget_hide(g_app->window);
     }));
 
-    addAction(app.settings.isEditMode
-        ? tr("✓ 完成调整大小与方向", "✓ Finish Resize & Direction")
-        : tr("调整大小与方向 (双击小猫)", "Resize & Direction (Double-Click Cat)"),
-        G_CALLBACK(+[](GtkMenuItem*, gpointer) {
-            g_app->settings.isEditMode = !g_app->settings.isEditMode;
-            updateInputShape(*g_app);
-            gtk_widget_queue_draw(g_app->drawArea);
-        }));
-
     // Quick Cat Skin switcher submenu
     {
         GtkWidget* sub = gtk_menu_new();
@@ -1877,6 +1941,10 @@ static void showPopupMenu(LinuxApp& app, GdkEventButton* evt) {
 
     addAction(tr("🎨 皮肤工坊（制作皮肤）…", "🎨 Skin Workshop (Create Skins)…"), G_CALLBACK(+[](GtkMenuItem*, gpointer) {
         openUrlInBrowser("https://chanke17.github.io/KuroCat-Workshop/");
+    }));
+
+    addAction(tr("🌐 软件官网 (kurocat.cc)", "🌐 Website (kurocat.cc)"), G_CALLBACK(+[](GtkMenuItem*, gpointer) {
+        openUrlInBrowser("https://kurocat.cc");
     }));
 
     {
@@ -2376,6 +2444,7 @@ int main(int argc, char** argv) {
     }
 
     app.settings.load();
+    SkinLibrary::customDir() = app.settings.customSkinsDir;
     KeyboardLayout::levelKeyboard() = app.settings.levelKeyboard;
     CatSettings::loadStats(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
     app.lastSavedPetSessions = app.physics.totalPetSessions;

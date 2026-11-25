@@ -122,6 +122,7 @@ enum MenuCmd : UINT {
     CMD_TABLET_OFF,
     CMD_IMPORT_SKIN,
     CMD_OPEN_WORKSHOP,
+    CMD_OPEN_WEBSITE,
     CMD_OPEN_SKINS_DIR,
     CMD_IMPORT_KB,
     CMD_OPEN_KB_PLAZA,
@@ -1257,8 +1258,8 @@ void paint(AppState& app, HWND hwnd, HDC hdc) {
                       : app.dressingStatusKind == 2 ? Color(255, 194, 73, 59) : Color(255, 138, 123, 112);
     text(g, app.dressingStatusText, 12.5f, app.dressingStatusKind ? FontStyleBold : FontStyleRegular, statusColor,
          RectF(22, 390, 400, 42), StringAlignmentCenter);
-    text(g, L"皮肤独立保存在 %APPDATA%\\KuroCat\\skins（软件更新会自动保留）  ·  右键小猫 → 猫咪皮肤 可切换或备份", 10.0f, FontStyleRegular,
-         Color(255, 179, 166, 155), RectF(18, 434, 408, 34), StringAlignmentCenter);
+    text(g, (std::wstring(L"皮肤独立保存在 ") + SkinLibrary::dir() + L"（软件更新会自动保留）  ·  右键小猫 → 猫咪皮肤 可切换或备份").c_str(),
+         10.0f, FontStyleRegular, Color(255, 179, 166, 155), RectF(18, 434, 408, 34), StringAlignmentCenter);
     (void)orange;
 
     Graphics screen(hdc);
@@ -1572,7 +1573,11 @@ enum CtrlId : int {
     ID_LANG_COMBO,
     ID_BTN_SKINS_DIR,
     ID_BTN_KB_DIR,
-    ID_BTN_EDIT_MODE
+    ID_BTN_EDIT_MODE,
+    ID_SKINS_DIR_PATH,
+    ID_BTN_CHOOSE_SKINS_DIR,
+    ID_BTN_OPEN_SKINS_DIR,
+    ID_BTN_RESET_SKINS_DIR
 };
 
 bool isWindowsDarkMode() {
@@ -1716,7 +1721,90 @@ void rebuildCombosAndSync(AppState& app) {
     SendMessageW(GetDlgItem(hwnd, ID_OBS_COMBO), CB_SETCURSEL, (WPARAM)app.settings.obsCaptureMode, 0);
     SendMessageW(GetDlgItem(hwnd, ID_LANG_COMBO), CB_SETCURSEL, (WPARAM)(app.settings.isEnglish ? 1 : 0), 0);
 
+    if (HWND hDir = GetDlgItem(hwnd, ID_SKINS_DIR_PATH)) {
+        SetWindowTextW(hDir, SkinLibrary::dir().c_str());
+    }
+    if (HWND hResetDir = GetDlgItem(hwnd, ID_BTN_RESET_SKINS_DIR)) {
+        EnableWindow(hResetDir, SkinLibrary::isUsingCustomDir() ? TRUE : FALSE);
+    }
+
     app.settingsUpdating = false;
+}
+
+bool pickFolderDialog(HWND owner, const wchar_t* title, const std::wstring& initialDir, std::wstring& outPath) {
+    outPath.clear();
+    using CoInitExFn = HRESULT (WINAPI*)(LPVOID, DWORD);
+    using CoCreateInstFn = HRESULT (WINAPI*)(REFCLSID, LPUNKNOWN, DWORD, REFIID, LPVOID*);
+    using CoTaskMemFreeFn = void (WINAPI*)(LPVOID);
+    using CoUninitFn = void (WINAPI*)();
+    if (HMODULE ole = LoadLibraryW(L"ole32.dll")) {
+        auto pCoInit = (CoInitExFn)(void*)GetProcAddress(ole, "CoInitializeEx");
+        auto pCoCreate = (CoCreateInstFn)(void*)GetProcAddress(ole, "CoCreateInstance");
+        auto pCoFree = (CoTaskMemFreeFn)(void*)GetProcAddress(ole, "CoTaskMemFree");
+        auto pCoUninit = (CoUninitFn)(void*)GetProcAddress(ole, "CoUninitialize");
+        if (pCoInit && pCoCreate && pCoFree && pCoUninit) {
+            static const GUID kCLSID_FileOpenDialog = {0xDC1C5A9C, 0xE88A, 0x4DDE, {0xA5, 0xA1, 0x60, 0xF8, 0x2A, 0x20, 0xAE, 0xF7}};
+            static const GUID kIID_IFileDialog      = {0x42F85136, 0xDB7E, 0x439C, {0x85, 0xF1, 0xE4, 0x07, 0x5D, 0x13, 0x5F, 0xC8}};
+            static const GUID kIID_IShellItem       = {0x43826D1E, 0xE718, 0x42EE, {0xBC, 0x55, 0xA1, 0xE2, 0x61, 0xC3, 0x7B, 0xFE}};
+            HRESULT hrInit = pCoInit(nullptr, 0x2 | 0x4);
+            bool needUninit = SUCCEEDED(hrInit);
+            if (SUCCEEDED(hrInit) || hrInit == RPC_E_CHANGED_MODE) {
+                IFileDialog* pfd = nullptr;
+                if (SUCCEEDED(pCoCreate(kCLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, kIID_IFileDialog, (void**)&pfd)) && pfd) {
+                    DWORD opts = 0;
+                    if (SUCCEEDED(pfd->GetOptions(&opts))) {
+                        pfd->SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+                    }
+                    if (title) pfd->SetTitle(title);
+                    if (!initialDir.empty()) {
+                        using SHCreateItemFn = HRESULT (WINAPI*)(PCWSTR, IBindCtx*, REFIID, void**);
+                        if (HMODULE sh32 = GetModuleHandleW(L"shell32.dll")) {
+                            auto pCreateItem = (SHCreateItemFn)(void*)GetProcAddress(sh32, "SHCreateItemFromParsingName");
+                            IShellItem* initItem = nullptr;
+                            if (pCreateItem && SUCCEEDED(pCreateItem(initialDir.c_str(), nullptr, kIID_IShellItem, (void**)&initItem)) && initItem) {
+                                pfd->SetFolder(initItem);
+                                initItem->Release();
+                            }
+                        }
+                    }
+                    bool picked = false;
+                    if (SUCCEEDED(pfd->Show(owner))) {
+                        IShellItem* item = nullptr;
+                        if (SUCCEEDED(pfd->GetResult(&item)) && item) {
+                            PWSTR psz = nullptr;
+                            if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &psz)) && psz) {
+                                outPath = psz;
+                                pCoFree(psz);
+                                picked = !outPath.empty();
+                            }
+                            item->Release();
+                        }
+                    }
+                    pfd->Release();
+                    if (needUninit) pCoUninit();
+                    FreeLibrary(ole);
+                    return picked;
+                }
+                if (needUninit) pCoUninit();
+            }
+        }
+        FreeLibrary(ole);
+    }
+    BROWSEINFOW bi = {};
+    bi.hwndOwner = owner;
+    bi.lpszTitle = title;
+    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+    PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
+    if (!pidl) return false;
+    wchar_t buf[MAX_PATH] = {0};
+    bool ok = SHGetPathFromIDListW(pidl, buf) != FALSE && buf[0] != L'\0';
+    if (ok) outPath = buf;
+    if (HMODULE ole = LoadLibraryW(L"ole32.dll")) {
+        auto pCoFree = (CoTaskMemFreeFn)(void*)GetProcAddress(ole, "CoTaskMemFree");
+        if (pCoFree) pCoFree(pidl);
+        FreeLibrary(ole);
+    }
+    return ok;
 }
 } // namespace settings_ui
 
@@ -1726,6 +1814,16 @@ void refreshSettingsWindow(AppState& app) {
     if (app.settingsWnd && IsWindow(app.settingsWnd)) {
         settings_ui::rebuildCombosAndSync(app);
     }
+}
+
+void applySkinsDirectory(AppState& app, const std::wstring& dirW) {
+    std::wstring cleaned = SkinLibrary::trimmedDir(dirW);
+    SkinLibrary::customDir() = cleaned;
+    app.settings.customSkinsDir = wideToUtf8(cleaned);
+    app.settings.saveToRegistry();
+    app.skins.reload();
+    refreshDressingRoom(app);
+    refreshSettingsWindow(app);
 }
 
 LRESULT CALLBACK settingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -1984,8 +2082,21 @@ LRESULT CALLBACK settingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                         applyOBSMode(*app);
                         break;
                     case ID_BTN_SKINS_DIR:
+                    case ID_BTN_OPEN_SKINS_DIR:
                         SkinLibrary::ensureDir();
                         ShellExecuteW(nullptr, L"open", SkinLibrary::dir().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                        break;
+                    case ID_BTN_CHOOSE_SKINS_DIR: {
+                        std::wstring chosen;
+                        if (settings_ui::pickFolderDialog(hwnd,
+                                app->settings.isEnglish ? L"Choose Skins Folder" : L"\u9009\u62E9\u76AE\u80A4\u6587\u4EF6\u5939",
+                                SkinLibrary::dir(), chosen)) {
+                            applySkinsDirectory(*app, chosen);
+                        }
+                        break;
+                    }
+                    case ID_BTN_RESET_SKINS_DIR:
+                        applySkinsDirectory(*app, L"");
                         break;
                     case ID_BTN_KB_DIR:
                         KeyboardSkinLibrary::ensureDir();
@@ -2045,7 +2156,7 @@ void showSettingsWindow(AppState& app) {
     bool en = app.settings.isEnglish;
     auto tr = [&](const wchar_t* zh, const wchar_t* eng) -> const wchar_t* { return en ? eng : zh; };
 
-    const int W = 540, H = 678;
+    const int W = 540, H = 710;
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
     RECT rc = { 0, 0, px(W), px(H) };
     AdjustWindowRectEx(&rc, style, FALSE, 0);
@@ -2069,7 +2180,7 @@ void showSettingsWindow(AppState& app) {
 
     using namespace settings_ui;
     // Section 1: Appearance & Orientation
-    addCtrl(L"BUTTON", tr(L"\u5916\u89C2\u4E0E\u65B9\u5411", L"Appearance & Orientation"), BS_GROUPBOX, 14, 10, 512, 232, 0, true);
+    addCtrl(L"BUTTON", tr(L"\u5916\u89C2\u4E0E\u65B9\u5411", L"Appearance & Orientation"), BS_GROUPBOX, 14, 10, 512, 264, 0, true);
 
     addCtrl(L"STATIC", tr(L"\u732B\u54AA\u76AE\u80A4", L"Cat Skin"), SS_LEFT, 28, 38, 76, 20, 0);
     addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 110, 34, 186, 220, ID_COAT_COMBO);
@@ -2077,77 +2188,83 @@ void showSettingsWindow(AppState& app) {
     addCtrl(L"BUTTON", tr(L"\u270F \u6539\u540D", L"\u270F Name"), BS_PUSHBUTTON | WS_TABSTOP, 380, 34, 62, 24, ID_BTN_RENAME_SKIN);
     addCtrl(L"BUTTON", tr(L"\U0001F5D1 \u5220\u9664", L"\U0001F5D1 Del"), BS_OWNERDRAW | WS_TABSTOP, 446, 34, 66, 24, ID_BTN_DEL_SKIN, true);
 
-    addCtrl(L"STATIC", tr(L"\u77B3\u8272\u5207\u6362", L"Eye Color"), SS_LEFT, 28, 70, 76, 20, 0);
-    addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 110, 66, 290, 220, ID_EYE_COMBO);
-    addCtrl(L"BUTTON", tr(L"\u6846\u9009\u8C03\u6574", L"Edit Box"), BS_PUSHBUTTON | WS_TABSTOP, 410, 66, 102, 24, ID_BTN_EDIT_MODE);
+    addCtrl(L"STATIC", tr(L"\u76AE\u80A4\u76EE\u5F55", L"Skins Dir"), SS_LEFT, 28, 70, 76, 20, 0);
+    addCtrl(L"STATIC", L"", SS_LEFT | SS_PATHELLIPSIS | SS_NOPREFIX, 110, 70, 178, 20, ID_SKINS_DIR_PATH);
+    addCtrl(L"BUTTON", tr(L"\u9009\u62E9\u6587\u4EF6\u5939\u2026", L"Choose..."), BS_PUSHBUTTON | WS_TABSTOP, 292, 66, 100, 24, ID_BTN_CHOOSE_SKINS_DIR);
+    addCtrl(L"BUTTON", tr(L"\u6253\u5F00", L"Open"), BS_PUSHBUTTON | WS_TABSTOP, 396, 66, 50, 24, ID_BTN_OPEN_SKINS_DIR);
+    addCtrl(L"BUTTON", tr(L"\u9ED8\u8BA4", L"Reset"), BS_PUSHBUTTON | WS_TABSTOP, 450, 66, 62, 24, ID_BTN_RESET_SKINS_DIR);
 
-    addCtrl(L"STATIC", tr(L"\u952E\u76D8\u914D\u8272", L"Keyboard"), SS_LEFT, 28, 102, 76, 20, 0);
-    addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 110, 98, 290, 220, ID_KB_COMBO);
-    addCtrl(L"BUTTON", tr(L"\u5BFC\u5165\u952E\u76D8\u2026", L"Import..."), BS_PUSHBUTTON | WS_TABSTOP, 410, 98, 102, 24, ID_BTN_IMPORT_KB);
+    addCtrl(L"STATIC", tr(L"\u77B3\u8272\u5207\u6362", L"Eye Color"), SS_LEFT, 28, 102, 76, 20, 0);
+    addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 110, 98, 290, 220, ID_EYE_COMBO);
+    addCtrl(L"BUTTON", tr(L"\u6846\u9009\u8C03\u6574", L"Edit Box"), BS_PUSHBUTTON | WS_TABSTOP, 410, 98, 102, 24, ID_BTN_EDIT_MODE);
 
-    addCtrl(L"STATIC", tr(L"\u7F29\u653E\u5927\u5C0F", L"Pet Scale"), SS_LEFT, 28, 136, 76, 20, 0);
-    HWND scaleSb = addCtrl(L"SCROLLBAR", L"", SBS_HORZ | WS_TABSTOP, 110, 136, 290, 18, ID_SCALE_SCROLL);
+    addCtrl(L"STATIC", tr(L"\u952E\u76D8\u914D\u8272", L"Keyboard"), SS_LEFT, 28, 134, 76, 20, 0);
+    addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 110, 130, 290, 220, ID_KB_COMBO);
+    addCtrl(L"BUTTON", tr(L"\u5BFC\u5165\u952E\u76D8\u2026", L"Import..."), BS_PUSHBUTTON | WS_TABSTOP, 410, 130, 102, 24, ID_BTN_IMPORT_KB);
+
+    addCtrl(L"STATIC", tr(L"\u7F29\u653E\u5927\u5C0F", L"Pet Scale"), SS_LEFT, 28, 168, 76, 20, 0);
+    HWND scaleSb = addCtrl(L"SCROLLBAR", L"", SBS_HORZ | WS_TABSTOP, 110, 168, 290, 18, ID_SCALE_SCROLL);
     SetScrollRange(scaleSb, SB_CTL, 45, 250, FALSE);
-    addCtrl(L"STATIC", L"100%", SS_RIGHT, 410, 136, 48, 20, ID_SCALE_VAL);
+    addCtrl(L"STATIC", L"100%", SS_RIGHT, 410, 168, 48, 20, ID_SCALE_VAL);
 
-    addCtrl(L"STATIC", tr(L"\u671D\u5411\u89D2\u5EA6", L"Rotation"), SS_LEFT, 28, 168, 76, 20, 0);
-    HWND rotSb = addCtrl(L"SCROLLBAR", L"", SBS_HORZ | WS_TABSTOP, 110, 168, 290, 18, ID_ROT_SCROLL);
+    addCtrl(L"STATIC", tr(L"\u671D\u5411\u89D2\u5EA6", L"Rotation"), SS_LEFT, 28, 200, 76, 20, 0);
+    HWND rotSb = addCtrl(L"SCROLLBAR", L"", SBS_HORZ | WS_TABSTOP, 110, 200, 290, 18, ID_ROT_SCROLL);
     SetScrollRange(rotSb, SB_CTL, -180, 180, FALSE);
-    addCtrl(L"STATIC", L"0\u00B0", SS_RIGHT, 408, 168, 42, 20, ID_ROT_VAL);
-    addCtrl(L"BUTTON", tr(L"\u5F52\u96F6", L"0\u00B0"), BS_PUSHBUTTON | WS_TABSTOP, 458, 164, 54, 24, ID_BTN_ROT_ZERO);
+    addCtrl(L"STATIC", L"0\u00B0", SS_RIGHT, 408, 200, 42, 20, ID_ROT_VAL);
+    addCtrl(L"BUTTON", tr(L"\u5F52\u96F6", L"0\u00B0"), BS_PUSHBUTTON | WS_TABSTOP, 458, 196, 54, 24, ID_BTN_ROT_ZERO);
 
-    addCtrl(L"BUTTON", tr(L"\u6C34\u5E73\u7FFB\u8F6C", L"Flip Horizontal"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 202, 140, 22, ID_CHK_FLIP);
-    addCtrl(L"BUTTON", tr(L"\u767D\u8272\u8D34\u7EB8\u63CF\u8FB9", L"White Sticker Outline"), BS_AUTOCHECKBOX | WS_TABSTOP, 180, 202, 180, 22, ID_CHK_OUTLINE);
-    addCtrl(L"BUTTON", tr(L"\u91CD\u7F6E\u4F4D\u7F6E\u4E0E\u671D\u5411", L"Reset Pose"), BS_PUSHBUTTON | WS_TABSTOP, 384, 200, 128, 24, ID_BTN_RESET_POS);
+    addCtrl(L"BUTTON", tr(L"\u6C34\u5E73\u7FFB\u8F6C", L"Flip Horizontal"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 234, 140, 22, ID_CHK_FLIP);
+    addCtrl(L"BUTTON", tr(L"\u767D\u8272\u8D34\u7EB8\u63CF\u8FB9", L"White Sticker Outline"), BS_AUTOCHECKBOX | WS_TABSTOP, 180, 234, 180, 22, ID_CHK_OUTLINE);
+    addCtrl(L"BUTTON", tr(L"\u91CD\u7F6E\u4F4D\u7F6E\u4E0E\u671D\u5411", L"Reset Pose"), BS_PUSHBUTTON | WS_TABSTOP, 384, 232, 128, 24, ID_BTN_RESET_POS);
 
     // Section 2: Interaction & Effects
-    addCtrl(L"BUTTON", tr(L"\u4E92\u52A8\u4E0E\u7279\u6548", L"Interaction & Effects"), BS_GROUPBOX, 14, 252, 512, 208, 0, true);
-    addCtrl(L"BUTTON", tr(L"\u62CE\u8D77\u62D6\u62FD\u52A8\u753B", L"Scruff-Drag Lift Animation"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 278, 236, 22, ID_CHK_DRAG_ANIM);
-    addCtrl(L"BUTTON", tr(L"\u9AD8\u901F\u6253\u5B57\u751F\u6C14\u8868\u60C5", L"Angry Expression on Fast Typing"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 278, 236, 22, ID_CHK_ANGER);
-    addCtrl(L"BUTTON", tr(L"\u6478\u732B\u4E92\u52A8\u4E0E\u5495\u565C\u7279\u6548", L"Petting & Purr Sparkles"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 306, 236, 22, ID_CHK_PET);
-    addCtrl(L"BUTTON", tr(L"\u663E\u793A\u6309\u952E\u6C14\u6CE1", L"Show Keyboard Key Badges"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 306, 236, 22, ID_CHK_BADGES);
-    addCtrl(L"BUTTON", tr(L"\u663E\u793A\u9F20\u6807\u70B9\u51FB", L"Show Mouse Click Badges"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 334, 236, 22, ID_CHK_MOUSE_BADGES);
-    addCtrl(L"BUTTON", tr(L"\u663E\u793A\u952E\u76D8\u5B57\u7B26", L"Show Keycap Legends"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 334, 236, 22, ID_CHK_LEGENDS);
-    addCtrl(L"BUTTON", tr(L"\u952E\u76D8\u8DD1\u9A6C\u706F\u6D41\u5149", L"Keyboard RGB Marquee"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 362, 236, 22, ID_CHK_MARQUEE);
-    addCtrl(L"BUTTON", tr(L"\u952E\u76D8\u6C34\u5E73\u6446\u653E", L"Level Keyboard"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 362, 236, 22, ID_CHK_LEVEL_KEYBOARD);
+    addCtrl(L"BUTTON", tr(L"\u4E92\u52A8\u4E0E\u7279\u6548", L"Interaction & Effects"), BS_GROUPBOX, 14, 284, 512, 208, 0, true);
+    addCtrl(L"BUTTON", tr(L"\u62CE\u8D77\u62D6\u62FD\u52A8\u753B", L"Scruff-Drag Lift Animation"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 310, 236, 22, ID_CHK_DRAG_ANIM);
+    addCtrl(L"BUTTON", tr(L"\u9AD8\u901F\u6253\u5B57\u751F\u6C14\u8868\u60C5", L"Angry Expression on Fast Typing"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 310, 236, 22, ID_CHK_ANGER);
+    addCtrl(L"BUTTON", tr(L"\u6478\u732B\u4E92\u52A8\u4E0E\u5495\u565C\u7279\u6548", L"Petting & Purr Sparkles"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 338, 236, 22, ID_CHK_PET);
+    addCtrl(L"BUTTON", tr(L"\u663E\u793A\u6309\u952E\u6C14\u6CE1", L"Show Keyboard Key Badges"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 338, 236, 22, ID_CHK_BADGES);
+    addCtrl(L"BUTTON", tr(L"\u663E\u793A\u9F20\u6807\u70B9\u51FB", L"Show Mouse Click Badges"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 366, 236, 22, ID_CHK_MOUSE_BADGES);
+    addCtrl(L"BUTTON", tr(L"\u663E\u793A\u952E\u76D8\u5B57\u7B26", L"Show Keycap Legends"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 366, 236, 22, ID_CHK_LEGENDS);
+    addCtrl(L"BUTTON", tr(L"\u952E\u76D8\u8DD1\u9A6C\u706F\u6D41\u5149", L"Keyboard RGB Marquee"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 394, 236, 22, ID_CHK_MARQUEE);
+    addCtrl(L"BUTTON", tr(L"\u952E\u76D8\u6C34\u5E73\u6446\u653E", L"Level Keyboard"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 394, 236, 22, ID_CHK_LEVEL_KEYBOARD);
 
-    addCtrl(L"STATIC", tr(L"\u591A\u952E\u6253\u5B57", L"Multi-Key"), SS_LEFT, 28, 394, 90, 20, 0);
-    HWND limbCb = addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, 124, 390, 388, 140, ID_TYPING_LIMB_COMBO);
+    addCtrl(L"STATIC", tr(L"\u591A\u952E\u6253\u5B57", L"Multi-Key"), SS_LEFT, 28, 426, 90, 20, 0);
+    HWND limbCb = addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, 124, 422, 388, 140, ID_TYPING_LIMB_COMBO);
     SendMessageW(limbCb, CB_ADDSTRING, 0, (LPARAM)tr(L"\u540E\u811A + \u5C3E\u5DF4\uFF083\u952E\u540E\u811A / 4\u952E\u5C3E\u5DF4\uFF09", L"Hind Foot + Tail (3-Key / 4-Key)"));
     SendMessageW(limbCb, CB_ADDSTRING, 0, (LPARAM)tr(L"\u7528\u7B2C\u4E09\u53EA\u811A\u6253\u5B57\uFF08\u4EC5\u540E\u811A\uFF09", L"3rd Hind Foot Only"));
     SendMessageW(limbCb, CB_ADDSTRING, 0, (LPARAM)tr(L"\u7528\u5C3E\u5DF4\u6253\u5B57\uFF08\u4EC5\u5C3E\u5DF4\uFF09", L"Tail Typing Only"));
     SendMessageW(limbCb, CB_ADDSTRING, 0, (LPARAM)tr(L"\u53EA\u7528\u4E24\u53EA\u722A\u722A\u6253\u5B57", L"Two Front Paws Only"));
 
-    addCtrl(L"STATIC", tr(L"\u6570\u4F4D\u677F\u6A21\u5F0F", L"Tablet Mode"), SS_LEFT, 28, 426, 90, 20, 0);
-    HWND tabCb = addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, 124, 422, 388, 120, ID_TABLET_COMBO);
+    addCtrl(L"STATIC", tr(L"\u6570\u4F4D\u677F\u6A21\u5F0F", L"Tablet Mode"), SS_LEFT, 28, 458, 90, 20, 0);
+    HWND tabCb = addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, 124, 454, 388, 120, ID_TABLET_COMBO);
     SendMessageW(tabCb, CB_ADDSTRING, 0, (LPARAM)tr(L"\u81EA\u52A8\u68C0\u6D4B\uFF08\u8FDE\u63A5\u6570\u4F4D\u677F\u65F6\u81EA\u52A8\u5207\u6362\uFF09", L"Auto-Detect (Switch When Connected)"));
     SendMessageW(tabCb, CB_ADDSTRING, 0, (LPARAM)tr(L"\u59CB\u7EC8\u663E\u793A\u6570\u4F4D\u677F\u4E0E\u89E6\u63A7\u7B14", L"Always Show Tablet & Stylus"));
     SendMessageW(tabCb, CB_ADDSTRING, 0, (LPARAM)tr(L"\u59CB\u7EC8\u663E\u793A\u9F20\u6807", L"Always Show Mouse"));
 
     // Section 3: Window & System
-    addCtrl(L"BUTTON", tr(L"\u7A97\u53E3\u4E0E\u7CFB\u7EDF", L"Window & System"), BS_GROUPBOX, 14, 470, 512, 194, 0, true);
-    addCtrl(L"BUTTON", tr(L"\u7A97\u53E3\u7F6E\u9876\u663E\u793A", L"Always On Top"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 496, 236, 22, ID_CHK_TOPMOST);
-    addCtrl(L"BUTTON", tr(L"\u5168\u5C4F\u5E94\u7528\u65F6\u81EA\u52A8\u9690\u85CF", L"Auto-Hide in Fullscreen"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 496, 236, 22, ID_CHK_AUTOHIDE_FS);
-    addCtrl(L"BUTTON", tr(L"\u5B8C\u5168\u9F20\u6807\u7A7F\u900F (Alt \u4E34\u65F6\u89E3\u9501)", L"Full Click-Through (Hold Alt)"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 524, 236, 22, ID_CHK_CLICKTHROUGH);
-    addCtrl(L"BUTTON", tr(L"\u5F00\u673A\u81EA\u52A8\u542F\u52A8", L"Launch at Startup"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 524, 236, 22, ID_CHK_AUTOSTART);
-    addCtrl(L"BUTTON", tr(L"\u59CB\u7EC8\u4EE5\u7BA1\u7406\u5458\u8EAB\u4EFD\u8FD0\u884C", L"Always Run as Administrator"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 552, 236, 22, ID_CHK_RUN_ADMIN);
+    addCtrl(L"BUTTON", tr(L"\u7A97\u53E3\u4E0E\u7CFB\u7EDF", L"Window & System"), BS_GROUPBOX, 14, 502, 512, 194, 0, true);
+    addCtrl(L"BUTTON", tr(L"\u7A97\u53E3\u7F6E\u9876\u663E\u793A", L"Always On Top"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 528, 236, 22, ID_CHK_TOPMOST);
+    addCtrl(L"BUTTON", tr(L"\u5168\u5C4F\u5E94\u7528\u65F6\u81EA\u52A8\u9690\u85CF", L"Auto-Hide in Fullscreen"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 528, 236, 22, ID_CHK_AUTOHIDE_FS);
+    addCtrl(L"BUTTON", tr(L"\u5B8C\u5168\u9F20\u6807\u7A7F\u900F (Alt \u4E34\u65F6\u89E3\u9501)", L"Full Click-Through (Hold Alt)"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 556, 236, 22, ID_CHK_CLICKTHROUGH);
+    addCtrl(L"BUTTON", tr(L"\u5F00\u673A\u81EA\u52A8\u542F\u52A8", L"Launch at Startup"), BS_AUTOCHECKBOX | WS_TABSTOP, 276, 556, 236, 22, ID_CHK_AUTOSTART);
+    addCtrl(L"BUTTON", tr(L"\u59CB\u7EC8\u4EE5\u7BA1\u7406\u5458\u8EAB\u4EFD\u8FD0\u884C", L"Always Run as Administrator"), BS_AUTOCHECKBOX | WS_TABSTOP, 28, 584, 236, 22, ID_CHK_RUN_ADMIN);
     addCtrl(L"BUTTON", app.isElevated ? tr(L"\u2713 \u5DF2\u7BA1\u7406\u5458\u8FD0\u884C", L"\u2713 Running as Admin")
                                       : tr(L"\u7BA1\u7406\u5458\u8EAB\u4EFD\u91CD\u542F", L"Restart as Admin"),
-            BS_PUSHBUTTON | WS_TABSTOP, 276, 550, 148, 24, ID_BTN_RELAUNCH_ADMIN);
+            BS_PUSHBUTTON | WS_TABSTOP, 276, 582, 148, 24, ID_BTN_RELAUNCH_ADMIN);
 
-    addCtrl(L"STATIC", tr(L"OBS \u76F4\u64AD", L"OBS Capture"), SS_LEFT, 28, 586, 78, 20, 0);
-    HWND obsCb = addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, 110, 582, 210, 120, ID_OBS_COMBO);
+    addCtrl(L"STATIC", tr(L"OBS \u76F4\u64AD", L"OBS Capture"), SS_LEFT, 28, 618, 78, 20, 0);
+    HWND obsCb = addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, 110, 614, 210, 120, ID_OBS_COMBO);
     SendMessageW(obsCb, CB_ADDSTRING, 0, (LPARAM)tr(L"\u5173\u95ED\uFF08\u6B63\u5E38\u60AC\u6D6E\uFF09", L"Off (Normal Overlay)"));
     SendMessageW(obsCb, CB_ADDSTRING, 0, (LPARAM)tr(L"OBS \u900F\u660E\u7A97\u53E3\uFF08\u9700 WGC \u91C7\u96C6\uFF09", L"OBS Transparent (Needs WGC)"));
     SendMessageW(obsCb, CB_ADDSTRING, 0, (LPARAM)tr(L"OBS \u7EFF\u5E55\uFF08\u901A\u7528\u517C\u5BB9\uFF0C\u63A8\u8350\u76F4\u64AD\u59EC\uFF09", L"OBS Green Screen (Universal)"));
-    addCtrl(L"BUTTON", tr(L"\u540E\u53F0\u6355\u83B7\uFF08\u9690\u85CF\u684C\u9762\uFF09", L"Hide on Desktop"), BS_AUTOCHECKBOX | WS_TABSTOP, 332, 584, 180, 22, ID_CHK_OBS_HIDE);
+    addCtrl(L"BUTTON", tr(L"\u540E\u53F0\u6355\u83B7\uFF08\u9690\u85CF\u684C\u9762\uFF09", L"Hide on Desktop"), BS_AUTOCHECKBOX | WS_TABSTOP, 332, 616, 180, 22, ID_CHK_OBS_HIDE);
 
-    addCtrl(L"STATIC", tr(L"\u754C\u9762\u8BED\u8A00", L"Language"), SS_LEFT, 28, 620, 78, 20, 0);
-    HWND langCb = addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, 110, 616, 150, 90, ID_LANG_COMBO);
+    addCtrl(L"STATIC", tr(L"\u754C\u9762\u8BED\u8A00", L"Language"), SS_LEFT, 28, 652, 78, 20, 0);
+    HWND langCb = addCtrl(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP, 110, 648, 150, 90, ID_LANG_COMBO);
     SendMessageW(langCb, CB_ADDSTRING, 0, (LPARAM)L"\u7B80\u4F53\u4E2D\u6587");
     SendMessageW(langCb, CB_ADDSTRING, 0, (LPARAM)L"English");
-    addCtrl(L"BUTTON", tr(L"\u76AE\u80A4\u76EE\u5F55", L"Skins Dir"), BS_PUSHBUTTON | WS_TABSTOP, 290, 616, 106, 24, ID_BTN_SKINS_DIR);
-    addCtrl(L"BUTTON", tr(L"\u952E\u76D8\u76EE\u5F55", L"Keyboards Dir"), BS_PUSHBUTTON | WS_TABSTOP, 406, 616, 106, 24, ID_BTN_KB_DIR);
+    addCtrl(L"BUTTON", tr(L"\u76AE\u80A4\u76EE\u5F55", L"Skins Dir"), BS_PUSHBUTTON | WS_TABSTOP, 290, 648, 106, 24, ID_BTN_SKINS_DIR);
+    addCtrl(L"BUTTON", tr(L"\u952E\u76D8\u76EE\u5F55", L"Keyboards Dir"), BS_PUSHBUTTON | WS_TABSTOP, 406, 648, 106, 24, ID_BTN_KB_DIR);
 
     settings_ui::rebuildCombosAndSync(app);
     ShowWindow(win, SW_SHOWNORMAL);
@@ -2183,10 +2300,6 @@ void showContextMenu(AppState& app, POINT screenPt) {
 
     // Essential quick actions
     AppendMenuW(menu, MF_STRING, CMD_TOGGLE_VISIBLE, app.isVisible ? tr(L"\u9690\u85CF\u684C\u5BA0", L"Hide Pet") : tr(L"\u663E\u793A\u684C\u5BA0", L"Show Pet"));
-    AppendMenuW(menu, MF_STRING | (app.settings.isEditMode ? MF_CHECKED : 0), CMD_TOGGLE_EDIT,
-        app.settings.isEditMode
-            ? tr(L"\u2713 \u5B8C\u6210\u8C03\u6574\u5927\u5C0F\u4E0E\u65B9\u5411", L"\u2713 Finish Resize & Direction")
-            : tr(L"\u8C03\u6574\u5927\u5C0F\u4E0E\u65B9\u5411 (\u53CC\u51FB\u5C0F\u732B)", L"Resize & Direction (Double-Click Cat)"));
 
     // Quick Cat Skin switcher
     HMENU coatMenu = CreatePopupMenu();
@@ -2226,6 +2339,10 @@ void showContextMenu(AppState& app, POINT screenPt) {
     AppendMenuW(menu, MF_STRING, CMD_OPEN_WORKSHOP,
         tr(L"\U0001F3A8 \u76AE\u80A4\u5DE5\u574A\uFF08\u5236\u4F5C\u76AE\u80A4\uFF09\u2026",
            L"\U0001F3A8 Skin Workshop (Create Skins)..."));
+
+    AppendMenuW(menu, MF_STRING, CMD_OPEN_WEBSITE,
+        tr(L"\U0001F310 \u8F6F\u4EF6\u5B98\u7F51 (kurocat.cc)",
+           L"\U0001F310 Website (kurocat.cc)"));
 
     AppendMenuW(menu, MF_STRING | (app.settings.levelKeyboard ? MF_CHECKED : 0), CMD_TOGGLE_LEVEL_KEYBOARD,
         tr(L"\u952E\u76D8\u6C34\u5E73\u6446\u653E", L"Level Keyboard"));
@@ -2369,6 +2486,9 @@ void showContextMenu(AppState& app, POINT screenPt) {
             break;
         case CMD_OPEN_WORKSHOP:
             ShellExecuteW(nullptr, L"open", L"https://chanke17.github.io/KuroCat-Workshop/", nullptr, nullptr, SW_SHOWNORMAL);
+            break;
+        case CMD_OPEN_WEBSITE:
+            ShellExecuteW(nullptr, L"open", L"https://kurocat.cc", nullptr, nullptr, SW_SHOWNORMAL);
             break;
         case CMD_OPEN_SKINS_DIR:
             SkinLibrary::ensureDir();
@@ -3280,6 +3400,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     AppState app;
     g_app = &app;
     app.settings.loadFromRegistry();
+    SkinLibrary::customDir() = utf8ToWide(app.settings.customSkinsDir);
     KeyboardLayout::levelKeyboard() = app.settings.levelKeyboard;
     CatSettings::loadStatsFromRegistry(app.statsDay, app.input.totalKeystrokesToday, app.physics.totalPetSessions);
     app.lastSavedPetSessions = app.physics.totalPetSessions;

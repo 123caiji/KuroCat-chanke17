@@ -69,6 +69,7 @@ struct CatSettings {
     std::string customSkin;
     // Content id of the imported .kurokb / keyboard.json skin in use; empty = the built-in keyboardTheme.
     std::string customKeyboard;
+    std::string customSkinsDir;
     int posX = -99999;
     int posY = -99999;
 
@@ -120,6 +121,10 @@ struct CatSettings {
                 else if (k == "eyeTheme") eyeTheme = (EyeColorTheme)std::clamp(std::stoi(v), 0, 5);
                 else if (k == "customSkin") customSkin = v.size() == 16 && v.find_first_not_of("0123456789abcdef") == std::string::npos ? v : "";
                 else if (k == "customKeyboard") customKeyboard = v.size() == 16 && v.find_first_not_of("0123456789abcdef") == std::string::npos ? v : "";
+                else if (k == "customSkinsDir") {
+                    while (!v.empty() && (v.back() == '\r' || v.back() == ' ' || v.back() == '\t')) v.pop_back();
+                    customSkinsDir = v;
+                }
                 else if (k == "posX") posX = std::stoi(v);
                 else if (k == "posY") posY = std::stoi(v);
             } catch (...) {}
@@ -160,7 +165,8 @@ struct CatSettings {
           << "keyboardTheme=" << (int)keyboardTheme << "\n"
           << "eyeTheme=" << (int)eyeTheme << "\n"
           << "customSkin=" << customSkin << "\n"
-          << "customKeyboard=" << customKeyboard << "\n";
+          << "customKeyboard=" << customKeyboard << "\n"
+          << "customSkinsDir=" << customSkinsDir << "\n";
         if (posX != -99999 && posY != -99999) {
             f << "posX=" << posX << "\nposY=" << posY << "\n";
         }
@@ -836,8 +842,9 @@ public:
             rightKey = recentRightKey_;
         }
 
+        float flipSign = settings.flipHorizontal ? -1.0f : 1.0f;
         mouseOffset.setTarget({
-            std::clamp(engine.mouseVelocity.x * 0.0045f, -5.5f, 5.5f),
+            std::clamp(engine.mouseVelocity.x * 0.0045f * flipSign, -5.5f, 5.5f),
             std::clamp(engine.mouseVelocity.y * 0.0045f, -4.5f, 4.5f)
         });
         mouseOffset.step(dt, 120.0f, 16.0f);
@@ -860,12 +867,13 @@ public:
                 }
             }
             float nx = std::clamp(engine.lastCursorPos.x / scrW, 0.0f, 1.0f);
+            float mappedNx = settings.flipHorizontal ? (1.0f - nx) : nx;
             float ny = std::clamp(engine.lastCursorPos.y / scrH, 0.0f, 1.0f);
-            tabletNib.setTarget(tabletQuadPoint(0.25f + nx * 0.64f, 0.16f + ny * 0.68f));
+            tabletNib.setTarget(tabletQuadPoint(0.25f + mappedNx * 0.64f, 0.16f + ny * 0.68f));
             tabletNib.step(dt, 240.0f, 20.0f);
             tabletPenPress.target = engine.leftMouseDown ? 0.88f : 0.0f;
             tabletPenPress.step(dt, 360.0f, 22.0f);
-            tabletPenTilt.target = std::clamp(engine.mouseVelocity.x * 0.00018f, -0.22f, 0.22f);
+            tabletPenTilt.target = std::clamp(engine.mouseVelocity.x * 0.00018f * flipSign, -0.22f, 0.22f);
             tabletPenTilt.step(dt, 120.0f, 14.0f);
         } else {
             tabletPenPress.target = 0.0f;
@@ -1105,10 +1113,11 @@ public:
         Pt eyeOrigin = { SeatAnchor.x + bodyShiftX.value, 124.0f + headOffsetY.value };
 
         float winScale = std::max(0.2f, winW / CanvasWidth);
-        float headScreenX = winX + eyeOrigin.x * winScale;
+        float headCanvasX = settings.flipHorizontal ? (CanvasWidth - eyeOrigin.x) : eyeOrigin.x;
+        float headScreenX = winX + headCanvasX * winScale;
         float headScreenY = winY + eyeOrigin.y * winScale;
 
-        float curDx = (engine.lastCursorPos.x - headScreenX) / 290.0f;
+        float curDx = ((engine.lastCursorPos.x - headScreenX) / 290.0f) * flipSign;
         float curDy = (engine.lastCursorPos.y - headScreenY) / 260.0f;
         float curMag = std::hypot(curDx, curDy);
         float clampedCur = std::min(1.0f, curMag);

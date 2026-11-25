@@ -735,6 +735,7 @@ final class DressingRoomWindowController: NSWindowController {
     private let nameLabel = NSTextField(labelWithString: "")
     private let authorLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
+    private let footerLabel = NSTextField(wrappingLabelWithString: "")
 
     init() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 444, height: 472),
@@ -787,11 +788,11 @@ final class DressingRoomWindowController: NSWindowController {
         statusLabel.frame = NSRect(x: 22, y: 390, width: 400, height: 40)
         content.addSubview(statusLabel)
 
-        let footerPath = (SkinLibrary.directory.path as NSString).abbreviatingWithTildeInPath
-        let footer = label("皮肤独立保存在 \(footerPath)（软件更新会自动保留）  ·  右键小猫 → 猫咪皮肤 可切换或备份", .systemFont(ofSize: 10.5),
-                           DressingPalette.footer, NSRect(x: 22, y: 434, width: 400, height: 34), wraps: true)
-        footer.alignment = .center
-        content.addSubview(footer)
+        footerLabel.font = .systemFont(ofSize: 10.5)
+        footerLabel.textColor = DressingPalette.footer
+        footerLabel.frame = NSRect(x: 22, y: 434, width: 400, height: 34)
+        footerLabel.alignment = .center
+        content.addSubview(footerLabel)
 
         window.contentView = content
         window.center()
@@ -815,6 +816,8 @@ final class DressingRoomWindowController: NSWindowController {
         let skin = CatSettings.shared.activeSkin
         nameLabel.stringValue = skin.name
         authorLabel.stringValue = skin.author.isEmpty ? "" : "作者 \(skin.author)"
+        let footerPath = (SkinLibrary.directory.path as NSString).abbreviatingWithTildeInPath
+        footerLabel.stringValue = "皮肤独立保存在 \(footerPath)（软件更新会自动保留）  ·  右键小猫 → 猫咪皮肤 可切换或备份"
         preview.needsDisplay = true
     }
 
@@ -863,6 +866,7 @@ final class SettingsWindowController: NSWindowController {
     var onScaleChanged: ((CGFloat) -> Void)?
     var onResetPoseAndPosition: (() -> Void)?
     var onOpenDressingRoom: (() -> Void)?
+    var onSkinsDirectoryChanged: (() -> Void)?
     var onRenameSkin: ((String) -> Void)?
     var onDeleteSkin: ((String) -> Void)?
     var onImportKeyboardSkin: (() -> Void)?
@@ -874,6 +878,8 @@ final class SettingsWindowController: NSWindowController {
     var onLanguageChanged: (() -> Void)?
 
     private var skinPopup: NSPopUpButton!
+    private var skinsDirLabel: NSTextField!
+    private var resetSkinsDirBtn: NSButton!
     private var kbPopup: NSPopUpButton!
     private var eyePopup: NSPopUpButton!
     private var tabletPopup: NSPopUpButton!
@@ -999,7 +1005,7 @@ final class SettingsWindowController: NSWindowController {
 
         // MARK: Card 1 — Appearance & Orientation
         addSectionHeader(tr("外观与方向", "Appearance & Orientation"))
-        addCard(rows: 7) { card, rh in
+        addCard(rows: 8) { card, rh in
             // Row 0: Cat Skin + Dressing Room + Rename/Delete buttons (when a custom skin is active)
             let hasCustomActive = !s.customSkin.isEmpty && SkinLibrary.shared.skin(id: s.customSkin) != nil
             card.addSubview(makeLabel(tr("猫咪皮肤", "Cat Skin"), yPos: 4, width: 100))
@@ -1051,10 +1057,42 @@ final class SettingsWindowController: NSWindowController {
             }
             addRowDivider(card, yPos: 4 + rh)
 
-            // Row 1: Keyboard Theme + Import button
+            // Row 1: Skins Folder path + Choose / Open / Reset
             let r1 = 4 + rh
-            card.addSubview(makeLabel(tr("键盘配色", "Keyboard Theme"), yPos: r1, width: 110))
-            kbPopup = NSPopUpButton(frame: NSRect(x: 130, y: r1 + 5, width: 222, height: 24), pullsDown: false)
+            card.addSubview(makeLabel(tr("皮肤目录", "Skins Dir"), yPos: r1, width: 66))
+            let dirDisplay = (SkinLibrary.directory.path as NSString).abbreviatingWithTildeInPath
+            skinsDirLabel = NSTextField(labelWithString: dirDisplay)
+            skinsDirLabel.font = .systemFont(ofSize: 11.5)
+            skinsDirLabel.textColor = .secondaryLabelColor
+            skinsDirLabel.lineBreakMode = .byTruncatingMiddle
+            skinsDirLabel.toolTip = SkinLibrary.directory.path
+            skinsDirLabel.frame = NSRect(x: 84, y: r1 + 10, width: 138, height: 17)
+            card.addSubview(skinsDirLabel)
+
+            let chooseDirBtn = NSButton(title: tr("选择文件夹…", "Choose…"), target: self, action: #selector(onTapChooseSkinsDir))
+            chooseDirBtn.bezelStyle = .rounded
+            chooseDirBtn.controlSize = .small
+            chooseDirBtn.frame = NSRect(x: 226, y: r1 + 7, width: 96, height: 22)
+            card.addSubview(chooseDirBtn)
+
+            let openDirBtn = NSButton(title: tr("打开", "Open"), target: self, action: #selector(onTapOpenSkinsDir))
+            openDirBtn.bezelStyle = .rounded
+            openDirBtn.controlSize = .small
+            openDirBtn.frame = NSRect(x: 326, y: r1 + 7, width: 46, height: 22)
+            card.addSubview(openDirBtn)
+
+            resetSkinsDirBtn = NSButton(title: tr("恢复默认", "Reset"), target: self, action: #selector(onTapResetSkinsDir))
+            resetSkinsDirBtn.bezelStyle = .rounded
+            resetSkinsDirBtn.controlSize = .small
+            resetSkinsDirBtn.isEnabled = SkinLibrary.isUsingCustomDirectory
+            resetSkinsDirBtn.frame = NSRect(x: 376, y: r1 + 7, width: 66, height: 22)
+            card.addSubview(resetSkinsDirBtn)
+            addRowDivider(card, yPos: r1 + rh)
+
+            // Row 2: Keyboard Theme + Import button
+            let r2 = 4 + rh * 2
+            card.addSubview(makeLabel(tr("键盘配色", "Keyboard Theme"), yPos: r2, width: 110))
+            kbPopup = NSPopUpButton(frame: NSRect(x: 130, y: r2 + 5, width: 222, height: 24), pullsDown: false)
             kbIds = []
             KeyboardSkinLibrary.shared.reload()
             for kb in KeyboardTheme.allCases {
@@ -1077,14 +1115,14 @@ final class SettingsWindowController: NSWindowController {
             let kbBtn = NSButton(title: tr("导入…", "Import…"), target: self, action: #selector(onTapImportKB))
             kbBtn.bezelStyle = .rounded
             kbBtn.controlSize = .small
-            kbBtn.frame = NSRect(x: 358, y: r1 + 6, width: 84, height: 22)
+            kbBtn.frame = NSRect(x: 358, y: r2 + 6, width: 84, height: 22)
             card.addSubview(kbBtn)
-            addRowDivider(card, yPos: r1 + rh)
+            addRowDivider(card, yPos: r2 + rh)
 
-            // Row 2: Eye Color
-            let r2 = 4 + rh * 2
-            card.addSubview(makeLabel(tr("瞳色切换", "Eye Color"), yPos: r2, width: 110))
-            eyePopup = NSPopUpButton(frame: NSRect(x: 130, y: r2 + 5, width: 312, height: 24), pullsDown: false)
+            // Row 3: Eye Color
+            let r3 = 4 + rh * 3
+            card.addSubview(makeLabel(tr("瞳色切换", "Eye Color"), yPos: r3, width: 110))
+            eyePopup = NSPopUpButton(frame: NSRect(x: 130, y: r3 + 5, width: 312, height: 24), pullsDown: false)
             for eye in EyeColorTheme.allCases {
                 eyePopup.addItem(withTitle: s.isEnglish ? englishEyeName(eye) : eye.rawValue)
             }
@@ -1092,57 +1130,57 @@ final class SettingsWindowController: NSWindowController {
             eyePopup.target = self
             eyePopup.action = #selector(onEyeSelected)
             card.addSubview(eyePopup)
-            addRowDivider(card, yPos: r2 + rh)
-
-            // Row 3: White Outline toggle
-            let r3 = 4 + rh * 3
-            card.addSubview(makeLabel(tr("小猫白色外描边（贴纸风）", "White Sticker Outline"), yPos: r3, width: 320))
-            whiteOutlineSwitch = makeSwitch(s.whiteOutline, action: #selector(onToggleWhiteOutline), yPos: r3)
-            card.addSubview(whiteOutlineSwitch)
             addRowDivider(card, yPos: r3 + rh)
 
-            // Row 4: Horizontal Flip toggle
+            // Row 4: White Outline toggle
             let r4 = 4 + rh * 4
-            card.addSubview(makeLabel(tr("水平镜像翻转（左右朝向）", "Flip Horizontal"), yPos: r4, width: 320))
-            flipSwitch = makeSwitch(s.flipHorizontal, action: #selector(onToggleFlip), yPos: r4)
-            card.addSubview(flipSwitch)
+            card.addSubview(makeLabel(tr("小猫白色外描边（贴纸风）", "White Sticker Outline"), yPos: r4, width: 320))
+            whiteOutlineSwitch = makeSwitch(s.whiteOutline, action: #selector(onToggleWhiteOutline), yPos: r4)
+            card.addSubview(whiteOutlineSwitch)
             addRowDivider(card, yPos: r4 + rh)
 
-            // Row 5: Rotation Angle slider + Reset 0°
+            // Row 5: Horizontal Flip toggle
             let r5 = 4 + rh * 5
-            card.addSubview(makeLabel(tr("旋转方向", "Rotation"), yPos: r5, width: 96))
+            card.addSubview(makeLabel(tr("水平镜像翻转（左右朝向）", "Flip Horizontal"), yPos: r5, width: 320))
+            flipSwitch = makeSwitch(s.flipHorizontal, action: #selector(onToggleFlip), yPos: r5)
+            card.addSubview(flipSwitch)
+            addRowDivider(card, yPos: r5 + rh)
+
+            // Row 6: Rotation Angle slider + Reset 0°
+            let r6 = 4 + rh * 6
+            card.addSubview(makeLabel(tr("旋转方向", "Rotation"), yPos: r6, width: 96))
             rotSlider = NSSlider(value: Double(s.rotationDeg), minValue: -180, maxValue: 180, target: self, action: #selector(onRotationChanged))
-            rotSlider.frame = NSRect(x: 112, y: r5 + 8, width: 204, height: 20)
+            rotSlider.frame = NSRect(x: 112, y: r6 + 8, width: 204, height: 20)
             card.addSubview(rotSlider)
             rotValLabel = NSTextField(labelWithString: "\(Int(s.rotationDeg.rounded()))°")
             rotValLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
             rotValLabel.textColor = .secondaryLabelColor
             rotValLabel.alignment = .right
-            rotValLabel.frame = NSRect(x: 320, y: r5 + 9, width: 42, height: 18)
+            rotValLabel.frame = NSRect(x: 320, y: r6 + 9, width: 42, height: 18)
             card.addSubview(rotValLabel)
             let zeroBtn = NSButton(title: tr("回正", "0°"), target: self, action: #selector(onResetRotation))
             zeroBtn.bezelStyle = .rounded
             zeroBtn.controlSize = .small
-            zeroBtn.frame = NSRect(x: 368, y: r5 + 7, width: 74, height: 22)
+            zeroBtn.frame = NSRect(x: 368, y: r6 + 7, width: 74, height: 22)
             card.addSubview(zeroBtn)
-            addRowDivider(card, yPos: r5 + rh)
+            addRowDivider(card, yPos: r6 + rh)
 
-            // Row 6: Scale slider + Reset Pose & Position
-            let r6 = 4 + rh * 6
-            card.addSubview(makeLabel(tr("桌宠大小", "Scale"), yPos: r6, width: 96))
+            // Row 7: Scale slider + Reset Pose & Position
+            let r7 = 4 + rh * 7
+            card.addSubview(makeLabel(tr("桌宠大小", "Scale"), yPos: r7, width: 96))
             scaleSlider = NSSlider(value: Double(s.scale), minValue: 0.45, maxValue: 2.0, target: self, action: #selector(onScaleSliderChanged))
-            scaleSlider.frame = NSRect(x: 112, y: r6 + 8, width: 204, height: 20)
+            scaleSlider.frame = NSRect(x: 112, y: r7 + 8, width: 204, height: 20)
             card.addSubview(scaleSlider)
             scaleValLabel = NSTextField(labelWithString: "\(Int((s.scale * 100).rounded()))%")
             scaleValLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
             scaleValLabel.textColor = .secondaryLabelColor
             scaleValLabel.alignment = .right
-            scaleValLabel.frame = NSRect(x: 320, y: r6 + 9, width: 42, height: 18)
+            scaleValLabel.frame = NSRect(x: 320, y: r7 + 9, width: 42, height: 18)
             card.addSubview(scaleValLabel)
             let resetAllBtn = NSButton(title: tr("重置位置", "Reset"), target: self, action: #selector(onTapResetPose))
             resetAllBtn.bezelStyle = .rounded
             resetAllBtn.controlSize = .small
-            resetAllBtn.frame = NSRect(x: 368, y: r6 + 7, width: 74, height: 22)
+            resetAllBtn.frame = NSRect(x: 368, y: r7 + 7, width: 74, height: 22)
             card.addSubview(resetAllBtn)
         }
 
@@ -1426,6 +1464,40 @@ final class SettingsWindowController: NSWindowController {
 
     @objc private func onTapDressingRoom() { onOpenDressingRoom?() }
     @objc private func onTapImportKB() { onImportKeyboardSkin?() }
+
+    @objc private func onTapChooseSkinsDir() {
+        guard let win = window else { return }
+        let panel = NSOpenPanel()
+        panel.title = tr("选择皮肤文件夹", "Choose Skins Folder")
+        panel.prompt = tr("选择", "Choose")
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = SkinLibrary.directory
+        panel.beginSheetModal(for: win) { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            CatSettings.shared.customSkinsDirectory = url.path
+            SkinLibrary.shared.reload()
+            self?.onSkinsDirectoryChanged?()
+            self?.onSettingsChanged?()
+            self?.rebuildUI()
+        }
+    }
+
+    @objc private func onTapOpenSkinsDir() {
+        let dir = SkinLibrary.directory
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(dir)
+    }
+
+    @objc private func onTapResetSkinsDir() {
+        CatSettings.shared.customSkinsDirectory = ""
+        SkinLibrary.shared.reload()
+        onSkinsDirectoryChanged?()
+        onSettingsChanged?()
+        rebuildUI()
+    }
 
     @objc private func onToggleDragAnim() {
         CatSettings.shared.enableDragAnimation = (dragAnimSwitch.state == .on)
