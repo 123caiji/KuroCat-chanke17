@@ -296,13 +296,17 @@ public:
         }
 
         if (isDazed(skin)) drawDazedSword(g, seatX, seatY, physics);
-        bool tailInFront = (physics.tailTyping.value >= 0.5f) || (lieS >= 0.45f);
+        bool tailInFront = (physics.tailTyping.value > 0.05f) || (lieS >= 0.45f);
         // Pass 1: unified sticker-style outer white outline for ALL cat skins (optional)
         if (whiteOutlineEnabled()) {
-            // Outline connected parts first; fills cover the internal tail-root seam.
+            // Outline connected parts first; fills cover internal tail-root and shoulder seams.
             drawTail(g, seatX, seatY, physics, skin, true);
             drawEarsLayer(g, headCenter, physics, skin, true);
             drawUnifiedSilhouette(g, seatX, seatY, headCenter, breath, physics, skin, true);
+            if (physics.hindFootActive.value > 0.03f) {
+                drawHindFoot(g, seatX, seatY, physics, skin, true);
+            }
+            drawFrontPaws(g, seatX, seatY, breath, physics, skin, true);
         }
         // 3. Tail (behind body unless 4-key tail typing or curled up asleep)
         if (!tailInFront) {
@@ -490,6 +494,13 @@ private:
                std::fabs(mark.color.g - 238.0 / 255.0) < 0.01 &&
                std::fabs(mark.color.b - 228.0 / 255.0) < 0.01;
     }
+    static bool shouldSkipJawHeadClip(const SkinMark& mark) {
+        if (mark.space != SkinSpace::Head || mark.stroke || !isMilkMark(mark)) return false;
+        for (const auto& pt : mark.points) {
+            if (std::fabs(pt.x) > 46.0f) return true;
+        }
+        return false;
+    }
 
     // Base skeleton per SkinBuild; SkinShape multipliers are applied on top (all exact no-ops at 1).
     struct Build {
@@ -617,16 +628,86 @@ private:
     template <class Map>
     static void drawMark(Gdiplus::Graphics& g, const SkinMark& mark, Map map, bool roundCaps = true) {
         using namespace Gdiplus;
+        if (mark.points.empty()) return;
         std::vector<PointF> points = mapPoints(mark.points, map);
         GraphicsPath path;
         Color color = col(mark.color);
-        if (!mark.stroke) { path.AddPolygon(points.data(), (INT)points.size()); SolidBrush brush(color); g.FillPath(&brush, &path); }
-        else if (!roundCaps) {
-            Pen pen(color, mark.width);
+        if (!mark.stroke) { path.AddPolygon(points.data(), (INT)points.size()); SolidBrush brush(color); g.FillPath(&brush, &path); return; }
+
+        float baseW = mark.width > 0.0f ? mark.width : 2.0f;
+        if (mark.brush == SkinBrush::Airbrush) {
+            float radius = std::max(2.2f, baseW * 1.15f);
+            float stepDist = std::max(1.4f, radius * 0.34f);
+            auto scaledCol = [&](float aMul) {
+                SkinColor sc = mark.color;
+                sc.a *= aMul;
+                return col(sc);
+            };
+            Color cols[3] = { scaledCol(0.0f), scaledCol(0.16f), scaledCol(0.34f) };
+            REAL pos[3] = { 0.0f, 0.55f, 1.0f };
+            auto stamp = [&](float x, float y) {
+                GraphicsPath circle;
+                circle.AddEllipse(x - radius, y - radius, radius * 2.0f, radius * 2.0f);
+                PathGradientBrush pgb(&circle);
+                pgb.SetCenterPoint(PointF(x, y));
+                pgb.SetInterpolationColors(cols, pos, 3);
+                g.FillPath(&pgb, &circle);
+            };
+            if (points.size() == 1) {
+                stamp(points[0].X, points[0].Y);
+            } else {
+                float carry = 0.0f;
+                stamp(points[0].X, points[0].Y);
+                for (size_t i = 1; i < points.size(); ++i) {
+                    const PointF& a = points[i - 1], &b = points[i];
+                    float seg = std::hypot(b.X - a.X, b.Y - a.Y);
+                    if (seg < 0.001f) continue;
+                    float d = stepDist - carry;
+                    while (d <= seg) {
+                        float t = d / seg;
+                        stamp(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t);
+                        d += stepDist;
+                    }
+                    carry = seg - (d - stepDist);
+                }
+            }
+            return;
+        }
+
+        if (mark.brush == SkinBrush::Soft || mark.brush == SkinBrush::Smudge) {
+            float soft = std::max(0.0f, std::min(1.0f, mark.softness));
+            struct Pass { float mul; float a; };
+            Pass passes[4];
+            if (mark.brush == SkinBrush::Smudge) {
+                passes[0] = {1.0f + soft * 1.25f, 0.12f};
+                passes[1] = {1.0f + soft * 0.72f, 0.18f};
+                passes[2] = {1.0f + soft * 0.25f, 0.28f};
+                passes[3] = {0.68f, 0.42f};
+            } else {
+                passes[0] = {1.0f + soft * 1.15f, 0.14f};
+                passes[1] = {1.0f + soft * 0.65f, 0.24f};
+                passes[2] = {1.0f + soft * 0.22f, 0.38f};
+                passes[3] = {0.72f, 0.62f};
+            }
+            path.AddLines(points.data(), (INT)points.size());
+            for (const Pass& p : passes) {
+                SkinColor sc = mark.color;
+                sc.a *= p.a;
+                Pen pen(col(sc), std::max(0.6f, baseW * p.mul));
+                pen.SetStartCap(LineCapRound);
+                pen.SetEndCap(LineCapRound);
+                pen.SetLineJoin(LineJoinRound);
+                g.DrawPath(&pen, &path);
+            }
+            return;
+        }
+
+        if (!roundCaps) {
+            Pen pen(color, baseW);
             if (points.size() == 2) g.DrawLine(&pen, points[0].X, points[0].Y, points[1].X, points[1].Y);
             else { pen.SetLineJoin(LineJoinRound); g.DrawLines(&pen, points.data(), (INT)points.size()); }
         }
-        else { path.AddLines(points.data(), (INT)points.size()); Pen pen(color, mark.width); pen.SetStartCap(LineCapRound); pen.SetEndCap(LineCapRound); pen.SetLineJoin(LineJoinRound); g.DrawPath(&pen, &path); }
+        else { path.AddLines(points.data(), (INT)points.size()); Pen pen(color, baseW); pen.SetStartCap(LineCapRound); pen.SetEndCap(LineCapRound); pen.SetLineJoin(LineJoinRound); g.DrawPath(&pen, &path); }
     }
     template <class Map>
     static void drawRegion(Gdiplus::Graphics& g, const SkinRegion& region, Map map) {
@@ -1622,7 +1703,9 @@ private:
                 Pt projected = projectHead3D(x, y, depth, yaw * .50f, pitch * .36f);
                 return H(projected.x, projected.y);
             };
-            tabby::drawBody(g, path, face, B, physics);
+            GraphicsPath tabbyJawBody;
+            jawSide(tabbyJawBody, false, skin, headCenter, physics);
+            tabby::drawBody(g, path, tabbyJawBody, face, B, physics);
         } else if (isPatternedBuiltIn(skin)) {
             SolidBrush b(col(pal.body));
             g.FillPath(&b, &path);
@@ -1763,9 +1846,18 @@ private:
                         g.SetClip(&bodySide, CombineModeIntersect);
                         drawMark(g, m, bodyMap);
                         g.Restore(msState);
+                    } else if (m.space == SkinSpace::Skull || m.space == SkinSpace::Head) {
+                        if (shouldSkipJawHeadClip(m)) {
+                            drawMark(g, m, m.space == SkinSpace::Skull ? skullMap : headMap);
+                        } else {
+                            GraphicsState hsState = g.Save();
+                            GraphicsPath headSide;
+                            jawSide(headSide, true, skin, headCenter, physics);
+                            g.SetClip(&headSide, CombineModeIntersect);
+                            drawMark(g, m, m.space == SkinSpace::Skull ? skullMap : headMap);
+                            g.Restore(hsState);
+                        }
                     }
-                    else if (m.space == SkinSpace::Skull) drawMark(g, m, skullMap);
-                    else if (m.space == SkinSpace::Head) drawMark(g, m, headMap);
                 }
                 g.Restore(cs);
             }
@@ -1947,7 +2039,7 @@ private:
 
     // MARK: - 3rd Key Hind Foot
 
-    static void drawHindFoot(Gdiplus::Graphics& g, float seatX, float seatY, const CatPhysics& physics, const SkinSpec& skin) {
+    static void drawHindFoot(Gdiplus::Graphics& g, float seatX, float seatY, const CatPhysics& physics, const SkinSpec& skin, bool outlineOnly = false) {
         float hlRX = skin.shape.hindLegRootX;
         float hlRY = skin.shape.hindLegRootY;
         float hlW = skin.shape.hindLegWidth;
@@ -1959,7 +2051,7 @@ private:
             hip.y + (rawT.y - hip.y) * hlReach
         };
         Pt mid = { (hip.x + target.x) * 0.5f + 10.0f * hlReach, (hip.y + target.y) * 0.5f - 8.0f * hlReach };
-        drawLimb(g, hip, mid, target, 15.0f * hlW, 12.0f * hlW, true, 0.85f * physics.hindFootActive.value, skin);
+        drawLimb(g, hip, mid, target, 15.0f * hlW, 12.0f * hlW, true, 0.85f * physics.hindFootActive.value, skin, false, outlineOnly);
     }
 
     // MARK: - 2.5D Eyes & Whiskers
@@ -2614,7 +2706,7 @@ private:
 
     // MARK: - Front Paws
 
-    static void drawFrontPaws(Gdiplus::Graphics& g, float seatX, float seatY, float breath, const CatPhysics& physics, const SkinSpec& skin) {
+    static void drawFrontPaws(Gdiplus::Graphics& g, float seatX, float seatY, float breath, const CatPhysics& physics, const SkinSpec& skin, bool outlineOnly = false) {
         Pt lPos = physics.leftPaw.point();
         Pt rPos = physics.rightPaw.point();
 
@@ -2656,33 +2748,33 @@ private:
         if (lDist < 6.0f && !physics.leftPawOnMouse && !physics.leftPawTyping) {
             if (lieS < 0.78f) {
                 auto drawLeftIdle = [&](Gdiplus::Graphics& lg) {
-                    drawIdleFrontLeg(lg, leftIdleTop, { seatX - idleBotX, idleBotY }, true, skin);
+                    drawIdleFrontLeg(lg, leftIdleTop, { seatX - idleBotX, idleBotY }, true, skin, outlineOnly);
                 };
-                if (idleAlpha < 0.999f) drawWithLayerAlpha(g, idleAlpha, drawLeftIdle);
+                if (!outlineOnly && idleAlpha < 0.999f) drawWithLayerAlpha(g, idleAlpha, drawLeftIdle);
                 else drawLeftIdle(g);
             }
         } else {
             Pt mid = { (leftShoulder.x + lPos.x) * 0.5f - (physics.leftPawOnMouse ? 8.0f : 4.0f),
                        std::max((leftShoulder.y + lPos.y) * 0.5f - 6.0f, headBottom - 1.0f) };
-            drawLimb(g, leftShoulder, mid, lPos, limbStartW, limbEndW, false, 0.78f, skin, true);
+            drawLimb(g, leftShoulder, mid, lPos, limbStartW, limbEndW, false, 0.78f, skin, true, outlineOnly);
         }
 
         if (rDist < 6.0f && !physics.rightPawTyping) {
             if (lieS < 0.78f) {
                 auto drawRightIdle = [&](Gdiplus::Graphics& lg) {
-                    drawIdleFrontLeg(lg, rightIdleTop, { seatX + idleBotX, idleBotY }, false, skin);
+                    drawIdleFrontLeg(lg, rightIdleTop, { seatX + idleBotX, idleBotY }, false, skin, outlineOnly);
                 };
-                if (idleAlpha < 0.999f) drawWithLayerAlpha(g, idleAlpha, drawRightIdle);
+                if (!outlineOnly && idleAlpha < 0.999f) drawWithLayerAlpha(g, idleAlpha, drawRightIdle);
                 else drawRightIdle(g);
             }
         } else {
             Pt mid = { (rightShoulder.x + rPos.x) * 0.5f + 4.0f,
                        std::max((rightShoulder.y + rPos.y) * 0.5f - 6.0f, headBottom - 1.0f) };
-            drawLimb(g, rightShoulder, mid, rPos, limbStartW, limbEndW, true, 0.78f, skin, true);
+            drawLimb(g, rightShoulder, mid, rPos, limbStartW, limbEndW, true, 0.78f, skin, true, outlineOnly);
         }
     }
 
-    static void drawIdleFrontLeg(Gdiplus::Graphics& g, Pt top, Pt bottom, bool isLeft, const SkinSpec& skin) {
+    static void drawIdleFrontLeg(Gdiplus::Graphics& g, Pt top, Pt bottom, bool isLeft, const SkinSpec& skin, bool outlineOnly = false) {
         using namespace Gdiplus;
         const SkinPalette& pal = skin.palette;
         float sign = isLeft ? -1.0f : 1.0f;
@@ -2690,9 +2782,10 @@ private:
             Pt shoulder = {top.x + sign * 2.0f, top.y + 13.0f};
             Pt elbow = {top.x + sign * 9.0f, top.y + 20.0f};
             Pt paw = {top.x + sign * 8.0f, top.y + 34.0f};
-            drawLimb(g, shoulder, elbow, paw, 19.0f, 14.0f, !isLeft, 0.78f, skin, true);
+            drawLimb(g, shoulder, elbow, paw, 19.0f, 14.0f, !isLeft, 0.78f, skin, true, outlineOnly);
             return;
         }
+        if (outlineOnly) return;
 
         if (skin.colorpoint()) {
             GraphicsPath lp;
@@ -2830,7 +2923,7 @@ private:
     }
 
     static void drawLimb(Gdiplus::Graphics& g, Pt start, Pt ctrl, Pt end, float startW, float endW, bool outlineOnLeft,
-        float outlineAlpha, const SkinSpec& skin, bool frontPaw = false) {
+        float outlineAlpha, const SkinSpec& skin, bool frontPaw = false, bool outlineOnly = false) {
         using namespace Gdiplus;
         const SkinPalette& pal = skin.palette;
         constexpr int steps = 14;
@@ -2864,17 +2957,22 @@ private:
         RectF pawRect(end.x - pawR, end.y - pawR * 0.85f, pawR * 2.0f, pawR * 1.7f);
         const SkinColor& lineCol = pal.outline.set ? pal.outline : pal.crease;
 
+        if (outlineOnly) {
+            if (!whiteOutlineEnabled()) return;
+            RectF rimPawRect = pawRect;
+            if (isDazed(skin)) rimPawRect.Inflate(pawR * 0.28f, pawR * 0.46f);
+            Pen outPen(blackOutline(), BlackOutlineW * 2.0f);
+            outPen.SetStartCap(LineCapRound); outPen.SetEndCap(LineCapRound); outPen.SetLineJoin(LineJoinRound);
+            if (leftEdge.size() > 1) {
+                g.DrawLines(&outPen, leftEdge.data(), (INT)leftEdge.size());
+                g.DrawLines(&outPen, rightEdge.data(), (INT)rightEdge.size());
+            }
+            g.DrawEllipse(&outPen, rimPawRect);
+            return;
+        }
+
         if (isDazed(skin)) {
             pawRect.Inflate(pawR * 0.28f, pawR * 0.46f);
-            if (whiteOutlineEnabled()) {
-                Pen outPen(blackOutline(), BlackOutlineW * 2.0f);
-                outPen.SetStartCap(LineCapRound); outPen.SetEndCap(LineCapRound); outPen.SetLineJoin(LineJoinRound);
-                if ((int)leftEdge.size() > 5) {
-                    g.DrawLines(&outPen, leftEdge.data() + 4, (INT)leftEdge.size() - 4);
-                    g.DrawLines(&outPen, rightEdge.data() + 4, (INT)rightEdge.size() - 4);
-                }
-                g.DrawEllipse(&outPen, pawRect);
-            }
             if (frontPaw) {
                 drawDazedArm(g, limbPath, leftEdge, rightEdge, pawRect);
             } else {
@@ -2885,16 +2983,6 @@ private:
             return;
         }
 
-        if (whiteOutlineEnabled()) {
-            Pen outPen(blackOutline(), BlackOutlineW * 2.0f);
-            outPen.SetStartCap(LineCapRound); outPen.SetEndCap(LineCapRound); outPen.SetLineJoin(LineJoinRound);
-            int rimStart = isClassicBlackRim(skin) ? 2 : 4;
-            if ((int)leftEdge.size() > rimStart + 1) {
-                g.DrawLines(&outPen, leftEdge.data() + rimStart, (INT)leftEdge.size() - rimStart);
-                g.DrawLines(&outPen, rightEdge.data() + rimStart, (INT)rightEdge.size() - rimStart);
-            }
-            g.DrawEllipse(&outPen, pawRect);
-        }
         if (isTabby(skin)) {
             tabby::drawLimb(g, limbPath, pawRect, start, ctrl, end, startW, endW);
         } else if (!skin.colorpoint()) {
@@ -3069,10 +3157,12 @@ private:
                 Font f(&ff, 11.0f + p * 3.0f, FontStyleBold, UnitPixel);
                 SolidBrush sb(c);
                 if (flipped) {
+                    RectF mZ;
+                    g.MeasureString(L"z", -1, &f, PointF(0.0f, 0.0f), &mZ);
                     GraphicsState zs = g.Save();
-                    g.TranslateTransform(sp.position.x, sp.position.y);
+                    g.TranslateTransform(sp.position.x + mZ.Width * 0.5f, sp.position.y);
                     g.ScaleTransform(-1.0f, 1.0f);
-                    g.DrawString(L"z", -1, &f, PointF(0.0f, 0.0f), &sb);
+                    g.DrawString(L"z", -1, &f, PointF(-mZ.Width * 0.5f, 0.0f), &sb);
                     g.Restore(zs);
                 } else {
                     g.DrawString(L"z", -1, &f, PointF(sp.position.x, sp.position.y), &sb);
@@ -6195,7 +6285,9 @@ private:
                     auto tabbyBack = [&](float x, float y) -> PointF {
                         return dragBodyMap(SkinPoint{ x, y - 44.0f });
                     };
-                    tabby::drawBody(lg, longCatPath, tabbyFace, tabbyBack, physics);
+                    GraphicsPath tabbyJawBody;
+                    jawSide(tabbyJawBody, false, skin, headCenter, physics);
+                    tabby::drawBody(lg, longCatPath, tabbyJawBody, tabbyFace, tabbyBack, physics);
                 } else {
                     SolidBrush hb(col(pal.body));
                     lg.FillPath(&hb, &longCatPath);
@@ -6280,11 +6372,21 @@ private:
                             lg.SetClip(&bodySide, CombineModeIntersect);
                             drawMark(lg, mark, dragBodyMap);
                             lg.Restore(msState);
-                        } else if (mark.space == SkinSpace::Skull) {
-                            drawMark(lg, mark, skullMap);
-                        } else if (mark.space == SkinSpace::Head) {
-                            if (isMilkMark(mark)) drawMark(lg, mark, headWhiteMap);
-                            else drawMark(lg, mark, headMap);
+                        } else if (mark.space == SkinSpace::Skull || mark.space == SkinSpace::Head) {
+                            auto mapFn = [&](SkinPoint p) -> PointF {
+                                if (mark.space == SkinSpace::Skull) return skullMap(p);
+                                return isMilkMark(mark) ? headWhiteMap(p) : headMap(p);
+                            };
+                            if (shouldSkipJawHeadClip(mark)) {
+                                drawMark(lg, mark, mapFn);
+                            } else {
+                                GraphicsState hsState = lg.Save();
+                                GraphicsPath headSide;
+                                jawSide(headSide, true, skin, headCenter, physics);
+                                lg.SetClip(&headSide, CombineModeIntersect);
+                                drawMark(lg, mark, mapFn);
+                                lg.Restore(hsState);
+                            }
                         }
                     }
                     lg.Restore(bcs);

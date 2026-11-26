@@ -1107,9 +1107,15 @@ final class CatPhysics {
 
         // Subtle mini-mouse movement driven by global cursor velocity
         let flipped = CatSettings.shared.flipHorizontal
+        let rotationDeg = CatSettings.shared.rotationDeg
+        let hasRot = abs(rotationDeg) > 0.05
+        let rotRad = hasRot ? (rotationDeg * .pi / 180.0) : 0.0
         let flipSign: CGFloat = flipped ? -1.0 : 1.0
-        let targetMouseDx = max(-5.5, min(5.5, curMouseVel.dx * 0.0045 * flipSign))
-        let targetMouseDy = max(-4.5, min(4.5, -curMouseVel.dy * 0.0045))
+        let velDownY = -curMouseVel.dy
+        let rotVelDx = hasRot ? (curMouseVel.dx * cos(-rotRad) - velDownY * sin(-rotRad)) : curMouseVel.dx
+        let rotVelDy = hasRot ? (curMouseVel.dx * sin(-rotRad) + velDownY * cos(-rotRad)) : velDownY
+        let targetMouseDx = max(-5.5, min(5.5, rotVelDx * 0.0045 * flipSign))
+        let targetMouseDy = max(-4.5, min(4.5, rotVelDy * 0.0045))
         mouseOffset.target = CGPoint(x: targetMouseDx, y: targetMouseDy)
         mouseOffset.step(dt: dt, stiffness: 120, damping: 16)
         mousePressLeft.step(dt: dt, stiffness: 400, damping: 24)
@@ -1365,12 +1371,24 @@ final class CatPhysics {
 
         // Compute normalized vector from cat head to real macOS screen cursor
         let scale = max(0.2, windowFrameInScreen.width / CatPhysics.canvasSize.width)
-        let headCanvasX = flipped ? (CatPhysics.canvasSize.width - eyeOriginCanvas.x) : eyeOriginCanvas.x
+        var headCanvasX = flipped ? (CatPhysics.canvasSize.width - eyeOriginCanvas.x) : eyeOriginCanvas.x
+        var headCanvasY = eyeOriginCanvas.y
+        if hasRot {
+            let fitScale = 1.0 - abs(sin(rotRad)) * 0.14
+            let dx = headCanvasX - 180.0
+            let dy = headCanvasY - 160.0
+            headCanvasX = 180.0 + (dx * cos(rotRad) - dy * sin(rotRad)) * fitScale
+            headCanvasY = 160.0 + (dx * sin(rotRad) + dy * cos(rotRad)) * fitScale
+        }
         let headScreenX = windowFrameInScreen.minX + headCanvasX * scale
-        let headScreenY = windowFrameInScreen.maxY - eyeOriginCanvas.y * scale
+        let headScreenY = windowFrameInScreen.maxY - headCanvasY * scale
         let cursor = curMouseLoc
-        let curDx = ((cursor.x - headScreenX) / 290.0) * flipSign
-        let curDy = -(cursor.y - headScreenY) / 260.0
+        let rawWorldDx = cursor.x - headScreenX
+        let rawWorldDy = -(cursor.y - headScreenY)
+        let localWorldDx = hasRot ? (rawWorldDx * cos(-rotRad) - rawWorldDy * sin(-rotRad)) : rawWorldDx
+        let localWorldDy = hasRot ? (rawWorldDx * sin(-rotRad) + rawWorldDy * cos(-rotRad)) : rawWorldDy
+        let curDx = (localWorldDx / 290.0) * flipSign
+        let curDy = localWorldDy / 260.0
         let curMag = hypot(curDx, curDy)
         let clampedCur = min(1.0, curMag)
         let cursorNX = curMag > 0.001 ? (curDx / curMag) * clampedCur : 0
@@ -1528,6 +1546,10 @@ struct SkinRegion {
     var flat: [CGPoint]                  // 16 segments per cubic, in part space
 }
 
+enum SkinBrush: String {
+    case round, soft, airbrush, smudge
+}
+
 struct SkinMark {
     var space: SkinSpace
     var stroke: Bool
@@ -1535,6 +1557,8 @@ struct SkinMark {
     var color: SkinColor
     var points: [CGPoint]
     var clipToBib: Bool = false
+    var brush: SkinBrush = .round
+    var softness: CGFloat = 0.65
 }
 
 struct SkinShape: Hashable {
@@ -1915,7 +1939,9 @@ struct SkinSpec {
                     pts.append(CGPoint(x: min(400, max(-400, x)), y: min(400, max(-400, y))))
                 }
                 let clipToBib = (m["clipToBib"] as? Bool) == true
-                spec.marks.append(SkinMark(space: sp, stroke: stroke, width: width, color: c, points: pts, clipToBib: clipToBib))
+                let brush = (m["brush"] as? String).flatMap(SkinBrush.init(rawValue:)) ?? .round
+                let softness = try number(m["softness"], "\(f).softness", 0, 1, 0.65)
+                spec.marks.append(SkinMark(space: sp, stroke: stroke, width: width, color: c, points: pts, clipToBib: clipToBib, brush: brush, softness: softness))
             }
         }
 

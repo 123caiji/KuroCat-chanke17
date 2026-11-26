@@ -921,10 +921,14 @@ public:
             rightKey = recentRightKey_;
         }
 
+        bool hasRot = std::fabs(settings.rotationDeg) > 0.05f;
+        float rotRad = hasRot ? (settings.rotationDeg * 3.14159265f / 180.0f) : 0.0f;
         float flipSign = settings.flipHorizontal ? -1.0f : 1.0f;
+        float rotVelDx = hasRot ? (engine.mouseVelocity.x * std::cos(-rotRad) - engine.mouseVelocity.y * std::sin(-rotRad)) : engine.mouseVelocity.x;
+        float rotVelDy = hasRot ? (engine.mouseVelocity.x * std::sin(-rotRad) + engine.mouseVelocity.y * std::cos(-rotRad)) : engine.mouseVelocity.y;
         mouseOffset.setTarget({
-            std::clamp(engine.mouseVelocity.x * 0.0045f * flipSign, -5.5f, 5.5f),
-            std::clamp(engine.mouseVelocity.y * 0.0045f, -4.5f, 4.5f)
+            std::clamp(rotVelDx * 0.0045f * flipSign, -5.5f, 5.5f),
+            std::clamp(rotVelDy * 0.0045f, -4.5f, 4.5f)
         });
         mouseOffset.step(dt, 120.0f, 16.0f);
         mousePressLeft.step(dt, 400.0f, 24.0f);
@@ -1194,11 +1198,23 @@ public:
 
         float winScale = std::max(0.2f, winW / CanvasWidth);
         float headCanvasX = settings.flipHorizontal ? (CanvasWidth - eyeOrigin.x) : eyeOrigin.x;
+        float headCanvasY = eyeOrigin.y;
+        if (hasRot) {
+            float fitScale = 1.0f - std::fabs(std::sin(rotRad)) * 0.14f;
+            float dx = headCanvasX - CanvasWidth * 0.5f;
+            float dy = headCanvasY - CanvasHeight * 0.5f;
+            headCanvasX = CanvasWidth * 0.5f + (dx * std::cos(rotRad) - dy * std::sin(rotRad)) * fitScale;
+            headCanvasY = CanvasHeight * 0.5f + (dx * std::sin(rotRad) + dy * std::cos(rotRad)) * fitScale;
+        }
         float headScreenX = winX + headCanvasX * winScale;
-        float headScreenY = winY + eyeOrigin.y * winScale;
+        float headScreenY = winY + headCanvasY * winScale;
 
-        float curDx = ((engine.lastCursorPos.x - headScreenX) / 290.0f) * flipSign;
-        float curDy = (engine.lastCursorPos.y - headScreenY) / 260.0f;
+        float rawWorldDx = engine.lastCursorPos.x - headScreenX;
+        float rawWorldDy = engine.lastCursorPos.y - headScreenY;
+        float localWorldDx = hasRot ? (rawWorldDx * std::cos(-rotRad) - rawWorldDy * std::sin(-rotRad)) : rawWorldDx;
+        float localWorldDy = hasRot ? (rawWorldDx * std::sin(-rotRad) + rawWorldDy * std::cos(-rotRad)) : rawWorldDy;
+        float curDx = (localWorldDx / 290.0f) * flipSign;
+        float curDy = localWorldDy / 260.0f;
         float curMag = std::hypot(curDx, curDy);
         float clampedCur = std::min(1.0f, curMag);
         float cursorNX = curMag > 0.001f ? (curDx / curMag) * clampedCur : 0.0f;
